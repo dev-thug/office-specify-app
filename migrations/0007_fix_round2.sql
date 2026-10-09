@@ -9,6 +9,12 @@
 --       approval_decisions row with decision='approved' in the same tx,
 --       'rejected' requires decision='rejected'; any-row existence no
 --       longer approves a request over a recorded rejection.
+--   F3: report_reader loses table-level SELECT on outbound_messages and
+--       message_drafts in favour of column-level SELECT on everything
+--       except the raw content columns (subject/body_text/body_html —
+--       plus message_drafts.variables, the template merge data that
+--       reconstructs body content) — the same tightening 0006 applied to
+--       email_messages.
 --
 -- New SQL only — 0001–0006 are untouched.
 
@@ -74,5 +80,31 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+-- ---------- F3: report_reader must not read message bodies ----------
+-- 0006 column-filtered email_messages but left full SELECT on the two
+-- sibling tables holding the same content. Revoke the table-level grant
+-- and re-grant per column, excluding subject/body_text/body_html — and
+-- message_drafts.variables, which carries the merge inputs that produce
+-- the body. Address snapshots stay granted (analytics identifiers, same
+-- exposure as message_participants.email addresses).
+REVOKE SELECT ON outbound_messages, message_drafts FROM report_reader;
+
+GRANT SELECT (
+    id, workspace_id, mail_account_id, delivery_channel_id,
+    sender_identity_id, to_email_address_id, communication_basis_id,
+    source_draft_id, launch_id, revision_id, enrollment_id, step_id,
+    thread_id, reply_to_message_id, requested_by, source_credential_id,
+    purpose, from_address_snapshot, to_address_snapshot, payload_hash,
+    status, not_before, accepted_at, provider_message_id, failure_code,
+    version, created_at
+) ON outbound_messages TO report_reader;
+
+GRANT SELECT (
+    id, workspace_id, mail_account_id, owner_principal_id, visibility,
+    thread_id, reply_to_message_id, expected_last_inbound_id,
+    to_email_address_id, template_version_id, purpose, status, version,
+    updated_at, created_at
+) ON message_drafts TO report_reader;
 
 COMMIT;

@@ -8,7 +8,7 @@
 mod common;
 
 use chrono::Utc;
-use infrastructure::db::{Db, Tx};
+use infrastructure::db::{Db, ROLE_REPORT, Tx};
 use infrastructure::testing::{TestWorld, seed_workspace};
 use uuid::Uuid;
 
@@ -543,10 +543,7 @@ async fn approval_status_requires_matching_decision() {
     .unwrap();
 
     // Same-tx decision rows while both requests are still pending.
-    for (req, decision) in [
-        (req_rejected, "rejected"),
-        (req_approved, "approved"),
-    ] {
+    for (req, decision) in [(req_rejected, "rejected"), (req_approved, "approved")] {
         sqlx::query(
             "INSERT INTO approval_decisions
                 (workspace_id, approval_request_id, decided_by, decision, snapshot_hash, version_at_decision)
@@ -577,19 +574,14 @@ async fn approval_status_requires_matching_decision() {
     )
     .await;
     // Matching transitions succeed.
-    for (req, status) in [
-        (req_rejected, "rejected"),
-        (req_approved, "approved"),
-    ] {
-        sqlx::query(
-            "UPDATE approval_requests SET status = $3 WHERE workspace_id = $1 AND id = $2",
-        )
-        .bind(ws)
-        .bind(req)
-        .bind(status)
-        .execute(tx.conn())
-        .await
-        .unwrap();
+    for (req, status) in [(req_rejected, "rejected"), (req_approved, "approved")] {
+        sqlx::query("UPDATE approval_requests SET status = $3 WHERE workspace_id = $1 AND id = $2")
+            .bind(ws)
+            .bind(req)
+            .bind(status)
+            .execute(tx.conn())
+            .await
+            .unwrap();
     }
     tx.rollback().await.unwrap();
 }
@@ -707,4 +699,140 @@ async fn grant_matrix_matches_least_privilege() {
         .unwrap();
         assert_eq!(has, expected, "report_reader email_messages.{col}");
     }
+}
+
+// ------------------------------------------------------------- F3
+
+/// F3: report_reader gets only column-level SELECT on outbound_messages
+/// and message_drafts — metadata stays readable, content columns
+/// (subject/body_text/body_html, and drafts' `variables` merge data) are
+/// denied outright (migration 0007).
+#[tokio::test]
+async fn report_reader_cannot_read_message_bodies() {
+    let db = common::test_db().await.unwrap();
+    let world = seed_workspace(&db).await.unwrap();
+    let ws = world.workspace_id;
+
+    // Seed one outbound message + one draft as api_runtime.
+    let (outbound_id, draft_id) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let (_c, _rev, channel) = campaign_chain(&mut tx, &world).await;
+        let ident: Uuid = sqlx::query_scalar(
+            "SELECT sender_identity_id FROM delivery_channels
+              WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(channel)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        let addr = email_addr(&mut tx, "f3").await;
+        let outbound: Uuid = sqlx::query_scalar(
+            "INSERT INTO outbound_messages
+                (workspace_id, mail_account_id, delivery_channel_id, sender_identity_id,
+                 to_email_address_id, requested_by, purpose,
+                 from_address_snapshot, to_address_snapshot, subject, body_text, payload_hash)
+             VALUES ($1, $2, $3, $4, $5, $6, 'marketing',
+                     'shared@test.dev', 'f3@example.com', 'secret subject', 'secret body',
+                     decode(md5(random()::text), 'hex'))
+             RETURNING id",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(channel)
+        .bind(ident)
+        .bind(addr)
+        .bind(world.admin.principal_id)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        let draft: Uuid = sqlx::query_scalar(
+            "INSERT INTO message_drafts
+                (workspace_id, mail_account_id, owner_principal_id, to_email_address_id,
+                 purpose, subject, body_text)
+             VALUES ($1, $2, $3, $4, 'correspondence', 'draft subject', 'draft body')
+             RETURNING id",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(world.admin.principal_id)
+        .bind(addr)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        (outbound, draft)
+    };
+
+    // Privilege matrix — column-level; content columns denied.
+    for (table, col, expected) in [
+        ("outbound_messages", "id", true),
+        ("outbound_messages", "status", true),
+        ("outbound_messages", "to_address_snapshot", true),
+        ("outbound_messages", "subject", false),
+        ("outbound_messages", "body_text", false),
+        ("outbound_messages", "body_html", false),
+        ("message_drafts", "id", true),
+        ("message_drafts", "status", true),
+        ("message_drafts", "subject", false),
+        ("message_drafts", "body_text", false),
+        ("message_drafts", "body_html", false),
+        ("message_drafts", "variables", false),
+    ] {
+        let has: bool = sqlx::query_scalar(&format!(
+            "SELECT has_column_privilege('report_reader', '{table}', '{col}', 'SELECT')"
+        ))
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(has, expected, "report_reader {table}.{col}");
+    }
+
+    // Behavioral: a report_reader-scoped workspace tx reads id/status but
+    // is denied content columns (42501 insufficient_privilege).
+    let url = std::env::var("DATABASE_URL").unwrap();
+    let rdb = Db::connect(&url, Some(ROLE_REPORT)).await.unwrap();
+    let mut rtx = rdb.begin(ws).await.unwrap();
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, status FROM outbound_messages WHERE id = $1")
+            .bind(outbound_id)
+            .fetch_all(rtx.conn())
+            .await
+            .unwrap();
+    assert_eq!(rows.len(), 1, "metadata must stay readable");
+    let drafts: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, status FROM message_drafts WHERE id = $1")
+            .bind(draft_id)
+            .fetch_all(rtx.conn())
+            .await
+            .unwrap();
+    assert_eq!(drafts.len(), 1);
+
+    for sql in [
+        "SELECT body_text FROM outbound_messages",
+        "SELECT subject FROM outbound_messages",
+        "SELECT body_text FROM message_drafts",
+        "SELECT subject, variables FROM message_drafts",
+    ] {
+        // Savepoint per denied statement — a rejected query aborts the tx.
+        sqlx::query("SAVEPOINT f3_check")
+            .execute(rtx.conn())
+            .await
+            .unwrap();
+        let res = sqlx::query(sql).fetch_all(rtx.conn()).await;
+        sqlx::query("ROLLBACK TO SAVEPOINT f3_check")
+            .execute(rtx.conn())
+            .await
+            .unwrap();
+        let err = match res {
+            Err(e) => e,
+            Ok(_) => panic!("{sql} must be denied for report_reader"),
+        };
+        assert!(
+            err.as_database_error()
+                .is_some_and(|d| d.code().as_deref() == Some("42501")),
+            "{sql}: expected 42501, got {err}"
+        );
+    }
+    rtx.rollback().await.unwrap();
 }

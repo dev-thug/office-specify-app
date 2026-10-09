@@ -12,6 +12,9 @@ use crate::error::map_sqlx;
 /// DB roles usable through `SET LOCAL ROLE` (migration 0003).
 pub const ROLE_API: &str = "api_runtime";
 pub const ROLE_WORKER: &str = "worker_runtime";
+/// Read-only analytics role (R22/F3) — used by tests to verify the grant
+/// matrix; no runtime component connects as report_reader yet.
+pub const ROLE_REPORT: &str = "report_reader";
 
 #[derive(Clone)]
 pub struct Db {
@@ -31,7 +34,7 @@ impl Db {
     ) -> Self {
         debug_assert!(matches!(
             runtime_role,
-            None | Some(ROLE_API) | Some(ROLE_WORKER)
+            None | Some(ROLE_API) | Some(ROLE_WORKER) | Some(ROLE_REPORT)
         ));
         Self {
             pool,
