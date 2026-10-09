@@ -265,6 +265,7 @@ export function CampaignBuilder({
     [channels.data, mailAccountId]
   );
   const selectedChannel = channelRows.find((c) => c.id === channelId) ?? null;
+  const isZohoCampaignsChannel = selectedChannel?.provider === "zoho_campaigns";
   const gateReasons = channelGateReasons(selectedChannel);
   const gateBlocked = gateReasons.length > 0 || createdBlocking.length > 0;
 
@@ -338,25 +339,28 @@ export function CampaignBuilder({
   const locked = created !== null; // 초안 생성 후 구성 변경은 새 revision으로만
 
   function buildInput(): CreateCampaignInput {
+    const scheduleRules = isZohoCampaignsChannel
+      ? {}
+      : {
+          weekdays,
+          window_start: windowStart,
+          window_end: windowEnd,
+          ...(dailyCap ? { internal_daily_cap: Number(dailyCap) } : {}),
+          ...(minGap ? { minimum_gap_seconds: Number(minGap) } : {}),
+          ...(localToIso(notBefore)
+            ? { launch_not_before: localToIso(notBefore) }
+            : {}),
+          ...(localToIso(expiresAt)
+            ? { launch_expires_at: localToIso(expiresAt) }
+            : {}),
+        };
     return {
       name: name.trim(),
       objective: objective.trim() || undefined,
       mail_account_id: mailAccountId,
       delivery_channel_id: channelId,
       timezone: timezone.trim(),
-      schedule_rules: withMeetingTypeBinding({
-        weekdays,
-        window_start: windowStart,
-        window_end: windowEnd,
-        ...(dailyCap ? { internal_daily_cap: Number(dailyCap) } : {}),
-        ...(minGap ? { minimum_gap_seconds: Number(minGap) } : {}),
-        ...(localToIso(notBefore)
-          ? { launch_not_before: localToIso(notBefore) }
-          : {}),
-        ...(localToIso(expiresAt)
-          ? { launch_expires_at: localToIso(expiresAt) }
-          : {}),
-      }, meetingTypeId),
+      schedule_rules: withMeetingTypeBinding(scheduleRules, meetingTypeId),
       steps: [
         {
           step_order: 1,
@@ -364,8 +368,8 @@ export function CampaignBuilder({
           delay_hours: 0,
         } satisfies CampaignStepInput,
       ],
-      stop_on_reply: stopOnReply,
-      stop_on_booking: stopOnBooking,
+      stop_on_reply: isZohoCampaignsChannel ? false : stopOnReply,
+      stop_on_booking: isZohoCampaignsChannel ? false : stopOnBooking,
     };
   }
 
@@ -374,7 +378,7 @@ export function CampaignBuilder({
     if (n === 1) {
       if (!name.trim()) errs.push(t("validationName"));
       if (!mailAccountId) errs.push(t("validationMailbox"));
-      if (!channelId) errs.push(t("validationChannel"));
+      if (!channelId || !selectedChannel) errs.push(t("validationChannel"));
     } else if (n === 2) {
       if (audience.size === 0) errs.push(t("validationAudience"));
     } else if (n === 3) {
@@ -383,10 +387,12 @@ export function CampaignBuilder({
       if (bookingUrlBindingIsMissing)
         errs.push(t("validationMeetingTypeRequired"));
     } else if (n === 4) {
-      if (!isValidTimezone(timezone)) errs.push(t("validationTimezone"));
-      if (weekdays.length === 0) errs.push(t("validationWeekdays"));
-      if (windowStart && windowEnd && windowEnd <= windowStart)
-        errs.push(t("validationWindow"));
+      if (!isZohoCampaignsChannel) {
+        if (!isValidTimezone(timezone)) errs.push(t("validationTimezone"));
+        if (weekdays.length === 0) errs.push(t("validationWeekdays"));
+        if (windowStart && windowEnd && windowEnd <= windowStart)
+          errs.push(t("validationWindow"));
+      }
     }
     setErrors(errs);
     return errs.length === 0;
@@ -828,7 +834,9 @@ export function CampaignBuilder({
           <div>
             <h3 className="text-sm font-medium">{t("singleMessage")}</h3>
             <p className="mt-0.5 text-2xs text-muted-foreground">
-              {t("immediateMessageHint")}
+              {isZohoCampaignsChannel
+                ? t("zohoImmediateMessageHint")
+                : t("immediateMessageHint")}
             </p>
           </div>
           {steps.map((s) => (
@@ -981,25 +989,31 @@ export function CampaignBuilder({
               </p>
             ) : null}
           </div>
-          <fieldset className="grid gap-2">
-            <legend className="text-sm font-medium">{t("stopConditions")}</legend>
-            <label className="flex items-center gap-2 text-sm">
-              <Switch
-                checked={stopOnReply}
-                onCheckedChange={(v) => setStopOnReply(v === true)}
-                disabled={locked}
-              />
-              {t("stopOnReply")}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Switch
-                checked={stopOnBooking}
-                onCheckedChange={(v) => setStopOnBooking(v === true)}
-                disabled={locked}
-              />
-              {t("stopOnBooking")}
-            </label>
-          </fieldset>
+          {isZohoCampaignsChannel ? (
+            <Alert variant="info">
+              <AlertDescription>{t("zohoStopConditions")}</AlertDescription>
+            </Alert>
+          ) : (
+            <fieldset className="grid gap-2">
+              <legend className="text-sm font-medium">{t("stopConditions")}</legend>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={stopOnReply}
+                  onCheckedChange={(v) => setStopOnReply(v === true)}
+                  disabled={locked}
+                />
+                {t("stopOnReply")}
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Switch
+                  checked={stopOnBooking}
+                  onCheckedChange={(v) => setStopOnBooking(v === true)}
+                  disabled={locked}
+                />
+                {t("stopOnBooking")}
+              </label>
+            </fieldset>
+          )}
 
           {previewStepKey && selectedVersionForPreview ? (
             <RenderPreview version={selectedVersionForPreview} />
@@ -1010,6 +1024,11 @@ export function CampaignBuilder({
       {/* ── 4. 시간·한도 ─────────────────────────────── */}
       {step === 4 ? (
         <section className="flex flex-col gap-4 rounded-2xl border border-border bg-card px-4 py-4">
+          {isZohoCampaignsChannel ? (
+            <Alert variant="info">
+              <AlertDescription>{t("zohoImmediateOnly")}</AlertDescription>
+            </Alert>
+          ) : <>
           <div className="grid gap-1.5">
             <Label htmlFor="cb-tz">{t("timezone")}</Label>
             <Input
@@ -1113,6 +1132,7 @@ export function CampaignBuilder({
             </div>
           </div>
           <p className="text-2xs text-muted-foreground">{t("internalCapNote")}</p>
+          </>}
         </section>
       ) : null}
 
@@ -1147,11 +1167,17 @@ export function CampaignBuilder({
             </dd>
             <dt className="text-muted-foreground">{t("step4")}</dt>
             <dd>
-              {timezone} ·{" "}
-              {tDetail("scheduleWindow", {
-                start: windowStart,
-                end: windowEnd,
-              })}
+              {isZohoCampaignsChannel ? (
+                t("zohoImmediateOnly")
+              ) : (
+                <>
+                  {timezone} ·{" "}
+                  {tDetail("scheduleWindow", {
+                    start: windowStart,
+                    end: windowEnd,
+                  })}
+                </>
+              )}
             </dd>
           </dl>
 

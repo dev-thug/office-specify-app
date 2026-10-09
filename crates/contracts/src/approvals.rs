@@ -15,6 +15,9 @@ pub struct CreateDecisionRequest {
     pub decision: String,
     /// sha256 hex of the snapshot the approver actually reviewed.
     pub expected_snapshot_hash: String,
+    /// Required when approving a prepared native Campaigns export.
+    #[serde(default)]
+    pub expected_export_hash: Option<String>,
     pub reason: Option<String>,
 }
 
@@ -74,6 +77,10 @@ pub struct ApprovalTargetSummary {
 
 #[derive(Debug, Clone, Serialize, ToSchema, Deserialize, schemars::JsonSchema)]
 pub struct ApprovalRequestDetail {
+    #[serde(default)]
+    pub native_export_required: bool,
+    #[serde(default)]
+    pub native_export: Option<NativeExportApprovalView>,
     #[serde(flatten)]
     pub request: ApprovalRequestSummary,
     pub decision: Option<ApprovalDecisionView>,
@@ -110,4 +117,18 @@ pub struct RevokeResponse {
     pub approval_request_id: Uuid,
     pub status: String,
     pub version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, schemars::JsonSchema)]
+pub struct NativeExportApprovalView {
+    pub id: Uuid,
+    pub export_hash: String,
+    pub state: String,
+    pub subject: String,
+    pub body_html: String,
+    pub field_map: serde_json::Value,
+    pub recipient_count: i64,
+    pub sender_address: String,
+    pub provider_list_key: Option<String>,
+    pub topic_id: Option<String>,
 }

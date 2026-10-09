@@ -1,66 +1,82 @@
-# Zoho setup and recovery
+# Office templates → Zoho Campaigns Free
 
-Office separates Zoho Mail, Campaigns Free OAuth v1.1, and the optional prepaid
-Campaigns Email API v2. See [implementation status](../design/zoho-integration-status.md)
-for application-wired features versus SDK-only methods. No current mock test
-establishes successful live-account connection or delivery.
+Office owns template creation, visual/HTML editing, variable schemas and immutable
+versions through its existing `/api/v1/email-templates` APIs. The free Campaigns
+path does not use Zoho's separately prepaid template-library or Email API product.
+Office publishes a signed immutable HTML URL and Campaigns imports it through
+`createCampaign.content_url`; Zoho performs the actual bulk delivery.
 
-## Fix an Invalid Client page
+## Connect and configure
 
-1. Register a **Server-based Application** in the US [Zoho API Console](https://api-console.zoho.com/).
-2. Copy the exact callback URI shown in Office Settings → Mail accounts → Zoho Campaigns into the client registration. Keep scheme, host, port and path identical. Production callbacks require public HTTPS.
-3. Put `ZOHO_CAMPAIGNS_CLIENT_ID` and `ZOHO_CAMPAIGNS_CLIENT_SECRET` in the private API/worker environment. Optionally set `ZOHO_CAMPAIGNS_REDIRECT_URI` to that exact registered URI.
-4. Restart the API and worker with that environment loaded. The binaries do not automatically read `.env`. Missing/invalid settings disable the authorization button instead of opening a URL without a client ID.
-5. As a human workspace administrator, start a fresh connection and consent. The current Campaigns scopes are read-only. OAuth state expires after ten minutes, is bound to the starting session/workspace, and is consumed once.
-6. Check the connected mailing lists and recent campaign metadata. A successful check confirms those read permissions only; it does not enable marketing sends or verify quota/sender/domain settings.
+1. Register a **Server-based Application** in the US [Zoho API Console](https://api-console.zoho.com/). Register the exact callback shown in Settings → Mail accounts → Zoho Campaigns.
+2. Set the private server environment `ZOHO_CAMPAIGNS_CLIENT_ID`, `ZOHO_CAMPAIGNS_CLIENT_SECRET`, and optionally `ZOHO_CAMPAIGNS_REDIRECT_URI`. The binaries do not automatically load `.env`. Restart the API and worker with the environment loaded. Production requires the encryption/HMAC keys and Redis described in `.env.example`.
+3. Connect as a human workspace administrator. Existing read-only connections must reconnect: the native path requests Campaigns READ/CREATE/UPDATE and contacts READ/CREATE/UPDATE, with no ALL/DELETE scopes. The settings flag records whether these scopes were requested; provider authorization remains authoritative.
+4. Select the Office mailbox used for ownership/ACL. Register an address **already verified in the intended Campaigns organization**, record the verification evidence, and select the sender identity. This records a human verification assertion; it does not send a verification message or claim an undocumented Zoho sender-status API check.
+5. Create a Campaigns **marketing** delivery channel. Review the provider policy with recorded evidence, then enable it using its current version. A paid Zoho Mail plan is not required for this sending API and does not upgrade Campaigns. Office mailbox permissions still govern who can compose, approve and send.
+6. Configure a public HTTPS application origin. Localhost can be used for development OAuth where accepted by Zoho, but Zoho cannot fetch a localhost campaign HTML URL. Native campaign sync therefore rejects a local/private content origin.
 
-Do not paste client secrets, refresh tokens, API keys or callback codes into chat,
-Git, screenshots, issue bodies or browser developer tools. Tokens are stored in
-the encrypted server SecretStore. Production also requires server cryptographic
-keys and Redis as described in `.env.example`.
+Never put secrets, OAuth callback codes, tokens or API keys in the browser,
+Git, issue bodies or verification evidence. Tokens remain in the encrypted
+server SecretStore. There is no paid signup or credit purchase in this flow.
 
-## Mail is a different connection
+## Author, approve and send
 
-Set `ZOHO_MAIL_CLIENT_ID`, `ZOHO_MAIL_CLIENT_SECRET` and the registered
-`ZOHO_MAIL_REDIRECT_URI`. Mail OAuth discovers the real account and binds Inbox
-polling and correspondence send/reply to that workspace mailbox. It is not a
-marketing sender. In-flight OAuth requests started with an older callback URI
-must be restarted after a configuration change.
+1. Create the template and immutable version in **Office → Templates**. The basic editor supports text formatting and links; its existing HTML policy still applies.
+2. Create a campaign selecting the enabled Campaigns marketing channel and that Office version. Campaigns Free uses one immediate step. Scheduling, weekday/time windows, delays and follow-up automation are excluded for this route; an Office meeting type binding is retained where needed.
+3. Choose contacts with recorded **explicit marketing consent**. Office suppression and invalid/expired consent block the export. A reviewed legal exception alone does not establish Zoho opt-in.
+4. Freeze the launch. Office fixes the recipient list, exact template version, resolved variable values and recipient-bound booking links. The existing human approval chain remains in force; approving a native launch never queues individual message dispatches.
+5. Prepare the native export in the launch's **Office template / Zoho delivery** panel. Choose the account topic, where required, from the provider metadata. Values that differ across recipients need an explicit mapping to a Campaigns field and native merge tag. Fields/topics are read from Campaigns; the documented API cannot list native merge tags, so verify those tags in the account rather than guessing them.
+6. Sync contacts. Each request stages at most 25 contact operations and records completed results durably. Continue syncing while the export is `syncing`; confirmed active list membership is checked independently of subscribe acceptance. Pending double opt-in keeps the export unready.
+7. Office creates one dedicated provider list and one native campaign with the signed `content_url`. Review the exact audience counts, Office export HTML, mapping, sender/topic and provider metadata. The export contains one Campaigns-native organization opt-out tag. Office's own unsubscribe URL is not substituted for Zoho's required mechanism.
+8. Obtain the existing Office launch approval from another authorized human. Review the provider campaign in Zoho where required, then use the Office final send confirmation (`SEND`) with the current export hash. The backend rechecks the approval, current session/permissions, sender/channel, consent, suppression, exact provider audience and mapped values before the single bulk send. If more than 100 historical lists need inspection, no send is submitted: repeat the explicit confirmation to continue the same scan within five minutes. A read-only refresh or background poll preserves that checkpoint; an expired scan starts fresh.
 
-Unknown send outcomes are never automatically retried. Zoho Mail does not
-provide this adapter with reliable lookup by Office correlation ID, so inspect
-the account's sent mailbox before deciding any manual recovery.
+`in_progress` means Zoho accepted the campaign for processing; it does not mean
+all recipients received or read it. The UI does not synthesize recipient delivery
+or engagement evidence. A submitted Campaigns campaign cannot be recalled by
+Office's ordinary pause/cancel actions; those actions prevent future local work.
 
-## Optional remote template library
+## Unsubscribe and reports
 
-The documented template CRUD API belongs to the separate prepaid Email API v2
-organization, not the existing Campaigns Free OAuth library. Zoho must enable
-that product. Office does not sign up, change the existing organization, buy
-credits or enable it automatically.
+Office unsubscribe and booking routes remain local. An Office marketing/all
+suppression is committed first, stops local enrollment, and queues a separately
+journaled Campaigns Do-Not-Mail propagation. Native Campaigns opt-outs are polled
+back to Office. Background polling is data synchronization, not a marketing
+workflow or scheduled send.
 
-To enable an already-provisioned account, set `ZOHO_EMAIL_API_ENABLED=true`,
-`ZOHO_EMAIL_API_KEY` and `ZOHO_EMAIL_API_WORKSPACE_ID` on the server. The key is
-available only to human administrators in that exact workspace. Open a local
-Office template's detail screen and select **Zoho templates**.
+The dedicated list's fully paginated unsubscribe status is the primary opt-out
+source. Recipient-report pages are supplemental: their pagination contract is not
+documented, so coverage is marked partial. Explicit `senthardbounce` records can
+establish hard-bounce evidence; generic bounced-list status must not be relabeled
+as a hard bounce without such evidence. Aggregates are provider counts, not proof
+of an individual contact's delivery/open/click.
 
-Prefer copying into a new immutable Office version. Map every Zoho merge field
-explicitly. The basic Office editor cannot represent all native HTML; compatible
-conversion is explicit and does not edit the remote source. The isolated native
-preview blocks external network resources, so remotely hosted images are not
-loaded. Browser/email-client rendering can differ.
+## Unknown outcomes and external edits
 
-Remote update/delete requires the current content hash. Office serializes its
-own writes across API processes; external Zoho clients can still race because
-the provider has no atomic compare-and-swap. If a write outcome is unknown,
-refresh and inspect the remote library before explicitly reconciling it. Never
-blindly repeat create/send operations after a timeout.
+Every provider mutation is journaled before its request. Timeout, reset, ambiguous
+response or lost worker result cannot cause an automatic create/send retry.
+Refresh/reconciliation uses provider reads only. If provider evidence cannot prove
+an unknown result, keep it unknown for operator review; do not use a new key to
+blindly create or send again.
 
-## Marketing delivery remaining gate
+Office serializes its own writes per Campaigns account and verifies metadata,
+exact list membership and mapped values before submission. The Campaigns details
+API does not return saved HTML and has no atomic compare-and-swap. External edits
+in Zoho can therefore race Office checks. Keep the staged native campaign/list
+under this workflow's control and review Zoho's preview before final confirmation.
 
-Campaigns contact/campaign/report SDK methods are present, but the approved bulk
-export, native opt-out synchronization, approval-bound send, and report polling
-application path is not enabled. Production marketing delivery remains disabled.
-See the [Free Campaigns delivery plan](../superpowers/plans/2026-10-10-free-campaigns-delivery-plan.md)
-for the exact account-contract checks and implementation dependencies. Office
-booking and unsubscribe endpoints remain local; Campaigns requires its native
-unsubscribe mechanism as well. A paid Zoho Mail plan does not upgrade Campaigns.
+The official contact-write examples contain inconsistent JSON notation. The
+client sends standard JSON as documented, with loopback tests; actual account
+acceptance, merge rendering, footer behavior, sender/domain verification and
+quotas still require a configured account check. Local mock tests are not live
+Zoho delivery evidence.
+
+Custom contact fields use Zoho’s documented `$[UD:FIELD_NAME]$` merge-tag syntax. Confirm the exact tag in the Campaigns account; Office accepts bare standard tags and `UD:` custom tags without fallback values, and reserves `LI:` for the mandatory native unsubscribe link. See [Zoho personalization documentation](https://help.zoho.com/portal/en/kb/campaigns/user-guide/email-campaigns/create-campaign/articles/how-to-personalize-your-email). Native merge tags must be verified with an actual test-list campaign: Zoho’s test-email preview does not substitute them.
+
+## Privacy maintenance
+
+Office contact erasure also clears frozen native recipient variables, booking links
+and the affected export content. It cancels local export processing and records
+that provider cancellation/deletion was not requested. A live or ambiguous provider
+mutation must be reconciled before erasure can commit; an operator must handle any
+remote data removal separately. Completed provider campaigns cannot be recalled by
+redacting their local snapshots.

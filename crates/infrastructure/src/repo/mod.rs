@@ -22,3 +22,7 @@ pub mod sending;
 pub mod templates;
 
 pub mod zoho_templates;
+
+pub mod marketing_exports;
+
+pub mod marketing_suppressions;

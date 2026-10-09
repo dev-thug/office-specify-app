@@ -29,7 +29,6 @@
     "colCreated": "생성일",
     "colHash": "내용 해시",
     "newVersion": "새 버전",
-    "zohoTemplates": "Zoho 템플릿",
     "archivedBanner": "보관된 템플릿입니다. 새 버전을 만들 수 없습니다.",
     "immutableNote": "버전은 불변입니다. 수정하려면 새 버전을 만드세요.",
     "emptyVersionsTitle": "아직 버전이 없습니다",

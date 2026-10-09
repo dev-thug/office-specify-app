@@ -19,6 +19,10 @@ use uuid::Uuid;
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_setup))
+        .routes(routes!(sender_identities))
+        .routes(routes!(register_sender))
+        .routes(routes!(contact_fields))
+        .routes(routes!(topics))
         .routes(routes!(connect))
         .routes(routes!(callback))
         .routes(routes!(list_lists))
@@ -232,4 +236,105 @@ async fn recent_campaigns(
             .await?,
         &ctx.request_id,
     )))
+}
+
+#[derive(Deserialize)]
+struct SenderQuery {
+    mail_account_id: Uuid,
+}
+#[utoipa::path(get,path="/marketing/sender-identities",params(("mail_account_id"=Uuid, Query)),responses((status=200,body=[MarketingSenderResponse]),(status=403,body=Problem)))]
+async fn sender_identities(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Query(query): Query<SenderQuery>,
+) -> Result<Json<Envelope<Vec<MarketingSenderResponse>>>, ProblemError> {
+    let ctx = auth.into_inner();
+    let rows =
+        application::marketing::sender_identities(&state.db, &ctx, query.mail_account_id).await?;
+    Ok(Json(envelope(rows, &ctx.request_id)))
+}
+
+#[utoipa::path(post,path="/marketing/sender-identities",request_body=RegisterMarketingSenderRequest,responses((status=201,body=MarketingSenderResponse),(status=403,body=Problem),(status=422,body=Problem)))]
+async fn register_sender(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    IdempotencyKey(key): IdempotencyKey,
+    Json(request): Json<RegisterMarketingSenderRequest>,
+) -> Result<(StatusCode, Json<Envelope<MarketingSenderResponse>>), ProblemError> {
+    let ctx = auth.into_inner();
+    application::marketing::authorize_sender_registration(&state.db, &ctx, request.mail_account_id)
+        .await?;
+    let scope = idempotency::Scope {
+        workspace_id: ctx.workspace_id,
+        principal_or_capability: ctx.principal_id.to_string(),
+        endpoint: "POST /api/v1/marketing/sender-identities".into(),
+        key,
+    };
+    let hash = infrastructure::crypto::sha256_bytes(
+        &serde_json::to_vec(&request)
+            .map_err(|_| AppError::internal("could not encode sender request"))?,
+    );
+    let saved = idempotency::run(&state.db, &scope, &hash, {
+        let ctx = ctx.clone();
+        move |mut tx| {
+            let ctx = ctx.clone();
+            let request = request.clone();
+            Box::pin(async move {
+                let body =
+                    application::marketing::register_sender_tx(&mut tx, &ctx, &request).await?;
+                Ok((tx, idempotency::Stored { status: 201, body }))
+            })
+        }
+    })
+    .await?
+    .into_inner();
+    Ok((
+        StatusCode::CREATED,
+        Json(envelope(saved.body, &ctx.request_id)),
+    ))
+}
+
+#[utoipa::path(get,path="/marketing/connections/{id}/fields",params(("id"=Uuid,Path)),responses((status=200,body=[MarketingContactFieldResponse]),(status=403,body=Problem),(status=503,body=Problem)))]
+async fn contact_fields(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Envelope<Vec<MarketingContactFieldResponse>>>, ProblemError> {
+    let ctx = auth.into_inner();
+    let data = application::marketing::contact_fields(
+        &state.db,
+        &ctx,
+        &state.config,
+        state.campaigns.as_deref(),
+        state.operations.as_deref(),
+        id,
+    )
+    .await?;
+    Ok(Json(envelope(data, &ctx.request_id)))
+}
+#[derive(Deserialize)]
+struct TopicQuery {
+    from_index: Option<u32>,
+    limit: Option<u32>,
+}
+#[utoipa::path(get,path="/marketing/connections/{id}/topics",params(("id"=Uuid,Path),("from_index"=Option<u32>,Query),("limit"=Option<u32>,Query)),responses((status=200,body=[MarketingTopicResponse]),(status=403,body=Problem),(status=503,body=Problem)))]
+async fn topics(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Path(id): Path<Uuid>,
+    Query(query): Query<TopicQuery>,
+) -> Result<Json<Envelope<Vec<MarketingTopicResponse>>>, ProblemError> {
+    let ctx = auth.into_inner();
+    let data = application::marketing::topics(
+        &state.db,
+        &ctx,
+        &state.config,
+        state.campaigns.as_deref(),
+        state.operations.as_deref(),
+        id,
+        query.from_index.unwrap_or(1),
+        query.limit.unwrap_or(100),
+    )
+    .await?;
+    Ok(Json(envelope(data, &ctx.request_id)))
 }

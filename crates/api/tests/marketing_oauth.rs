@@ -32,6 +32,9 @@ async fn setup(
     let base = format!("http://{}", listener.local_addr().unwrap());
     let router=axum::Router::new().route("/oauth/v2/token",axum::routing::post(||async{axum::Json(json!({"access_token":"private-access","refresh_token":"private-refresh","expires_in":3600}))}))
       .route("/api/v1.1/getmailinglists",axum::routing::get(||async{axum::Json(json!({"code":"0","list_of_details":[]}))}));
+    let router=router
+        .route("/api/v1.1/contact/allfields",axum::routing::get(||async{axum::Json(json!({"response":{"code":"0","fieldname":[{"DISPLAY_NAME":"First Name","FIELD_NAME":"firstname","FIELD_ID":"1"}]}}))}))
+        .route("/api/v1.1/topics",axum::routing::get(||async{axum::Json(json!({"code":"200","topicDetails":[{"topicId":"topic-1","topicName":"News","primaryList":"list-1"}]}))}));
     let handle = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     if configured {
         config.zoho.campaigns = CampaignsOAuthConfig {
@@ -56,6 +59,10 @@ async fn setup(
         None,
     );
     state.campaigns = provider;
+    state.operations = Some(Arc::new(
+        infrastructure::providers::zoho_campaigns::operations::CampaignsOperations::for_test(&base)
+            .unwrap(),
+    ));
     (TestApp::spawn_with_state(state).await, world, dir, handle)
 }
 async fn login(app: &TestApp, world: &TestWorld) -> String {
@@ -226,5 +233,113 @@ async fn agents_and_non_admins_cannot_read_server_setup_and_denials_are_audited(
     let count:i64=sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE workspace_id=$1 AND action='marketing.oauth_setup' AND details->>'outcome' LIKE 'denied:%'").bind(world.workspace_id).fetch_one(tx.conn()).await.unwrap();
     assert_eq!(count, 2);
     tx.commit().await.unwrap();
+    handle.abort();
+}
+
+#[tokio::test]
+async fn marketing_sender_lookup_lists_only_the_authorized_mailbox() {
+    let (app, world, _dir, handle) = setup(false).await;
+    let csrf = login(&app, &world).await;
+    let _ = csrf;
+    let response = app
+        .client
+        .get(app.url(&format!(
+            "/api/v1/marketing/sender-identities?mail_account_id={}",
+            world.mail_account_id
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let data: serde_json::Value = response.json().await.unwrap();
+    assert!(data["data"].is_array());
+    handle.abort();
+}
+
+#[tokio::test]
+async fn registering_a_campaign_sender_requires_recorded_verification_evidence() {
+    let (app, world, _dir, handle) = setup(false).await;
+    let csrf = login(&app, &world).await;
+    let body = json!({"mail_account_id":world.mail_account_id,"address":"news@sender.example.test","display_name":"Office","verification_evidence_ref":""});
+    let rejected = app
+        .client
+        .post(app.url("/api/v1/marketing/sender-identities"))
+        .header("x-csrf-token", &csrf)
+        .header("idempotency-key", "sender-missing-evidence")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let mut body = body;
+    body["verification_evidence_ref"] =
+        json!("https://campaigns.zoho.com/settings/sender-verification");
+    let created = app
+        .client
+        .post(app.url("/api/v1/marketing/sender-identities"))
+        .header("x-csrf-token", &csrf)
+        .header("idempotency-key", "sender-verified")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let sender: Value = created.json().await.unwrap();
+    assert_eq!(sender["data"]["status"], "verified");
+    let replay = app
+        .client
+        .post(app.url("/api/v1/marketing/sender-identities"))
+        .header("x-csrf-token", &csrf)
+        .header("idempotency-key", "sender-verified")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        replay.json::<Value>().await.unwrap()["data"]["id"],
+        sender["data"]["id"]
+    );
+    handle.abort();
+}
+
+#[tokio::test]
+async fn connected_campaigns_exposes_mapping_fields_and_topics() {
+    let (app, world, _dir, handle) = setup(true).await;
+    let csrf = login(&app, &world).await;
+    let connected = TestApp::data(connect(&app, &csrf, "metadata-connect").await).await;
+    let id = connected["connection_id"].as_str().unwrap();
+    let url = reqwest::Url::parse(connected["authorization_url"].as_str().unwrap()).unwrap();
+    let state = url
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    let callback=app.client.get(app.url(&format!("/api/v1/integrations/zoho-campaigns/callback?state={state}&code=fixture-code&location=us"))).send().await.unwrap();
+    assert_eq!(callback.status(), StatusCode::SEE_OTHER);
+    let fields = app
+        .client
+        .get(app.url(&format!("/api/v1/marketing/connections/{id}/fields")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(fields.status(), StatusCode::OK);
+    assert_eq!(
+        fields.json::<Value>().await.unwrap()["data"][0]["display_name"],
+        "First Name"
+    );
+    let topics = app
+        .client
+        .get(app.url(&format!(
+            "/api/v1/marketing/connections/{id}/topics?from_index=1&limit=100"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(topics.status(), StatusCode::OK);
+    assert_eq!(
+        topics.json::<Value>().await.unwrap()["data"][0]["id"],
+        "topic-1"
+    );
     handle.abort();
 }

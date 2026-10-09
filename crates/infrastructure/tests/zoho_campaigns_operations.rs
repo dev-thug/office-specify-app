@@ -10,8 +10,10 @@ use infrastructure::providers::zoho_campaigns::{
     SecretValue,
     operations::{
         CampaignCloneRequest, CampaignContactStatus, CampaignCreateRequest,
-        CampaignMutationOutcome, CampaignRecipientAction, CampaignsOperations,
-        CampaignsOperationsError, CampaignsSortOrder, ContactInput, SubscriptionStatus,
+        CampaignCustomFieldType, CampaignMutationOutcome, CampaignRecipientAction,
+        CampaignSignupForm, CampaignsOperations, CampaignsOperationsError, CampaignsSortOrder,
+        ContactInput, CreateCampaignCustomFieldRequest, CreateMailingListRequest,
+        SubscriptionStatus,
     },
 };
 use serde_json::{Value, json};
@@ -626,5 +628,253 @@ async fn form_requests_and_json_responses_are_capped_at_one_mib() {
         Err(CampaignsOperationsError::RequestTooLarge)
     ));
     assert_eq!(captured.lock().unwrap().len(), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn create_list_with_contacts_enforces_the_documented_ten_email_limit() {
+    let (client, captured, server) = start_client(
+        vec![MockReply::json(
+            StatusCode::OK,
+            r#"{"status":"success","listkey":"new-list-1","listname":"Native Newsletter","code":"0"}"#,
+        )],
+        Duration::from_secs(2),
+    )
+    .await;
+    let access = SecretValue::new("opaque-access-token");
+    let request = CreateMailingListRequest {
+        list_name: "Native Newsletter".into(),
+        email_addresses: vec!["one@example.test".into(), "two@example.test".into()],
+        signup_form: CampaignSignupForm::Private,
+        description: Some("Office consented audience".into()),
+    };
+    let created = client
+        .create_list_with_contacts(&access, request)
+        .await
+        .unwrap();
+    assert!(matches!(
+        created,
+        CampaignMutationOutcome::Accepted(ref list)
+            if list.list_key == "new-list-1" && list.list_name == "Native Newsletter"
+    ));
+    let too_many = CreateMailingListRequest {
+        list_name: "Too many".into(),
+        email_addresses: (0..11)
+            .map(|index| format!("member{index}@example.test"))
+            .collect(),
+        signup_form: CampaignSignupForm::Private,
+        description: None,
+    };
+    assert!(matches!(
+        client.create_list_with_contacts(&access, too_many).await,
+        Err(CampaignsOperationsError::InvalidRequest)
+    ));
+
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method, Method::POST);
+    assert_eq!(requests[0].path_and_query, "/api/v1.1/addlistandcontacts");
+    let form = form_fields(&requests[0].body);
+    assert_eq!(form["resfmt"], "JSON");
+    assert_eq!(form["mode"], "newlist");
+    assert_eq!(form["signupform"], "private");
+    assert_eq!(form["listname"], "Native Newsletter");
+    assert_eq!(form["listdescription"], "Office consented audience");
+    assert_eq!(form["emailids"], "one@example.test,two@example.test");
+    server.abort();
+}
+
+#[tokio::test]
+async fn bulk_add_to_existing_list_uses_official_route_and_ten_email_limit() {
+    let (client, captured, server) = start_client(
+        vec![MockReply::json(
+            StatusCode::OK,
+            r#"{"status":"success","listkey":"list-1","code":0}"#,
+        )],
+        Duration::from_secs(2),
+    )
+    .await;
+    let access = SecretValue::new("opaque-access-token");
+    let email_addresses = (0..10)
+        .map(|index| format!("member{index}@example.test"))
+        .collect::<Vec<_>>();
+    let result = client
+        .add_contacts_to_existing_list(&access, "list-1", &email_addresses)
+        .await
+        .unwrap();
+    assert!(matches!(result, CampaignMutationOutcome::Accepted(())));
+    let too_many = (0..11)
+        .map(|index| format!("member{index}@example.test"))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        client
+            .add_contacts_to_existing_list(&access, "list-1", &too_many)
+            .await,
+        Err(CampaignsOperationsError::InvalidRequest)
+    ));
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].path_and_query,
+        "/api/v1.1/addlistsubscribersinbulk"
+    );
+    let form = form_fields(&requests[0].body);
+    assert_eq!(form["listkey"], "list-1");
+    assert_eq!(form["resfmt"], "JSON");
+    assert_eq!(form["emailids"], email_addresses.join(","));
+    server.abort();
+}
+
+#[tokio::test]
+async fn full_list_contact_reads_page_through_active_unsubscribed_and_bounced() {
+    let first_page = json!({
+        "status": "success",
+        "code": "0",
+        "requestdetails": {"fromindex": 1, "range": 100},
+        "list_of_details": (0..100)
+            .map(|index| json!({
+                "contact_email": format!("member{index}@example.test"),
+                "contactstatus": "active",
+                "firstname": format!("Member {index}")
+            }))
+            .collect::<Vec<_>>()
+    });
+    let second_page = json!({
+        "status": "success",
+        "code": 0,
+        "requestdetails": {"fromindex": 101, "range": 100},
+        "list_of_details": [{
+            "contact_email": "member100@example.test",
+            "contactstatus": "active"
+        }]
+    });
+    let empty_page = |status: &str| {
+        MockReply::json(
+            StatusCode::OK,
+            &json!({
+                "status": "success",
+                "code": 0,
+                "requestdetails": {"fromindex": 1, "range": 100, "status": status},
+                "list_of_details": []
+            })
+            .to_string(),
+        )
+    };
+    let (client, captured, server) = start_client(
+        vec![
+            MockReply::json(StatusCode::OK, &first_page.to_string()),
+            MockReply::json(StatusCode::OK, &second_page.to_string()),
+            empty_page("unsub"),
+            empty_page("bounce"),
+        ],
+        Duration::from_secs(2),
+    )
+    .await;
+    let access = SecretValue::new("opaque-access-token");
+    let active = client
+        .get_all_list_contacts(&access, "list-1", CampaignContactStatus::Active)
+        .await
+        .unwrap();
+    assert_eq!(active.len(), 101);
+    assert_eq!(active[100].email, "member100@example.test");
+    let unsubscribed = client
+        .get_all_list_contacts(&access, "list-1", CampaignContactStatus::Unsubscribed)
+        .await
+        .unwrap();
+    let bounced = client
+        .get_all_list_contacts(&access, "list-1", CampaignContactStatus::Bounced)
+        .await
+        .unwrap();
+    assert!(unsubscribed.is_empty());
+    assert!(bounced.is_empty());
+
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    assert!(requests[0].path_and_query.contains("fromindex=1"));
+    assert!(requests[0].path_and_query.contains("status=active"));
+    assert!(requests[1].path_and_query.contains("fromindex=101"));
+    assert!(requests[1].path_and_query.contains("status=active"));
+    assert!(requests[2].path_and_query.contains("status=unsub"));
+    assert!(requests[3].path_and_query.contains("status=bounce"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn full_list_contact_reads_fail_on_repeated_pages_instead_of_returning_partial_data() {
+    let rows = (0..100)
+        .map(|index| {
+            json!({
+                "contact_email": format!("member{index}@example.test"),
+                "contactstatus": "active"
+            })
+        })
+        .collect::<Vec<_>>();
+    let repeated_page = |from_index| {
+        MockReply::json(
+            StatusCode::OK,
+            &json!({
+                "status": "success",
+                "code": "0",
+                "requestdetails": {"fromindex": from_index, "range": 100},
+                "list_of_details": rows.clone()
+            })
+            .to_string(),
+        )
+    };
+    let (client, captured, server) = start_client(
+        vec![repeated_page(1), repeated_page(101)],
+        Duration::from_secs(2),
+    )
+    .await;
+    let error = client
+        .get_all_list_contacts(
+            &SecretValue::new("opaque-access-token"),
+            "list-1",
+            CampaignContactStatus::Active,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error, CampaignsOperationsError::PaginationLimitExceeded);
+    assert_eq!(captured.lock().unwrap().len(), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn documented_custom_field_create_uses_contact_create_contract() {
+    let (client, captured, server) = start_client(
+        vec![MockReply::json(
+            StatusCode::OK,
+            r#"{"response":{"message":"Success","code":"200","fieldname":"CustomerStage","fieldtype":"Picklist","fieldlength":"30"}}"#,
+        )],
+        Duration::from_secs(2),
+    )
+    .await;
+    let access = SecretValue::new("opaque-access-token");
+    let field = client
+        .create_custom_field(
+            &access,
+            CreateCampaignCustomFieldRequest {
+                field_name: "CustomerStage".into(),
+                field_type: CampaignCustomFieldType::Picklist,
+                field_length: Some(30),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        field,
+        CampaignMutationOutcome::Accepted(ref value)
+            if value.field_name == "CustomerStage"
+                && value.field_type == CampaignCustomFieldType::Picklist
+                && value.field_length == Some(30)
+    ));
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests[0].method, Method::POST);
+    assert_eq!(requests[0].path_and_query, "/api/v1.1/custom/add");
+    let form = form_fields(&requests[0].body);
+    assert_eq!(form["type"], "json");
+    assert_eq!(form["fieldname"], "CustomerStage");
+    assert_eq!(form["fieldtype"], "Picklist");
+    assert_eq!(form["fieldlength"], "30");
     server.abort();
 }

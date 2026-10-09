@@ -19,8 +19,14 @@ impl std::fmt::Debug for SecretValue {
     }
 }
 
-pub const CAMPAIGNS_SCOPES: &[&str] =
-    &["ZohoCampaigns.campaign.READ", "ZohoCampaigns.contact.READ"];
+pub const CAMPAIGNS_SCOPES: &[&str] = &[
+    "ZohoCampaigns.campaign.READ",
+    "ZohoCampaigns.campaign.CREATE",
+    "ZohoCampaigns.campaign.UPDATE",
+    "ZohoCampaigns.contact.READ",
+    "ZohoCampaigns.contact.CREATE",
+    "ZohoCampaigns.contact.UPDATE",
+];
 
 #[derive(Clone, Debug, Default)]
 pub struct CampaignsOAuthConfig {

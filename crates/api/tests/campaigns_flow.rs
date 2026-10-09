@@ -2272,3 +2272,85 @@ async fn preflight_blocks_a_required_booking_url_without_a_meeting_binding() {
     let problem = TestApp::problem(res, StatusCode::NOT_FOUND).await;
     assert_eq!(problem["code"], "NOT_FOUND");
 }
+
+#[tokio::test]
+async fn native_campaigns_freeze_keeps_office_values_and_approval_never_queues_individual_sends() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let (manager, mcsrf) = login(&app, world.manager.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (_, channel) = marketing_channel(db, &world).await;
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let conn:Uuid=sqlx::query_scalar("INSERT INTO integration_connections(workspace_id,provider,region,secret_ref,scopes,status,connected_by) VALUES($1,'zoho_campaigns','com','native-test-secret',$2,'active',$3) RETURNING id")
+        .bind(world.workspace_id).bind(infrastructure::providers::zoho_campaigns::CAMPAIGNS_SCOPES).bind(world.admin.principal_id).fetch_one(tx.conn()).await.unwrap();
+    sqlx::query("INSERT INTO marketing_connections(id,workspace_id) VALUES($1,$2)")
+        .bind(conn)
+        .bind(world.workspace_id)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE delivery_channels SET provider='zoho_campaigns',connection_id=$3 WHERE workspace_id=$1 AND id=$2")
+        .bind(world.workspace_id).bind(channel).bind(conn).execute(tx.conn()).await.unwrap();
+    tx.commit().await.unwrap();
+    let tv=template_version(db,&world,"Hello","Recipient {{recipient.email}}",json!({"type":"object","properties":{"recipient.email":{"type":"string"}},"required":["recipient.email"]})).await;
+    let address = recipient(db, &world, "native-office", true).await;
+    let (campaign, revision) =
+        create_campaign(&app, &admin, &csrf, &world, channel, tv, "native-campaign").await;
+    let (launch, job) = create_launch(
+        &app,
+        &admin,
+        &csrf,
+        campaign,
+        revision,
+        &[address],
+        "native-launch",
+    )
+    .await;
+    let hash = freeze(db, job, &world, launch).await;
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let values = infrastructure::repo::marketing_exports::list_launch_values(&mut tx, launch)
+        .await
+        .unwrap();
+    assert_eq!(
+        values.len(),
+        1,
+        "native export must use frozen Office variable values"
+    );
+    assert!(
+        values[0].variables["recipient.email"]
+            .as_str()
+            .unwrap()
+            .contains("native-office")
+    );
+    let request: Uuid = sqlx::query_scalar(
+        "SELECT id FROM approval_requests WHERE workspace_id=$1 AND launch_id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(launch)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let response = post(
+        &app,
+        &manager,
+        &mcsrf,
+        &format!("/api/v1/approvals/{request}/decisions"),
+        json!({"decision":"approved","expected_snapshot_hash":hash}),
+        Some("native-approve"),
+        Some(1),
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::CONFLICT,
+        "native approval requires a ready export review first"
+    );
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let count:i64=sqlx::query_scalar("SELECT count(*) FROM jobs WHERE workspace_id=$1 AND kind IN ('sending.dispatch_outbound','campaigns.activate_launch') AND state='queued'")
+        .bind(world.workspace_id).fetch_one(tx.conn()).await.unwrap();
+    assert_eq!(count, 0);
+    tx.commit().await.unwrap();
+}

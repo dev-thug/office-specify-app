@@ -99,6 +99,22 @@ export interface ApprovalDecision {
   [key: string]: unknown;
 }
 
+export interface ApprovalNativeExport {
+  id: string;
+  export_hash: string;
+  state: string;
+  subject: string;
+  body_html: string;
+  field_map: Record<
+    string,
+    { contact_field: string; merge_tag: string }
+  >;
+  recipient_count: number;
+  sender_address: string;
+  provider_list_key: string | null;
+  topic_id: string | null;
+}
+
 /** GET /approvals/{id} — 동결 스냅샷·policy·권한 (B.2). */
 export interface ApprovalRequestDetail extends ApprovalListItem {
   target?: ApprovalTargetSummary;
@@ -110,12 +126,16 @@ export interface ApprovalRequestDetail extends ApprovalListItem {
   can_decide?: boolean;
   recipients_count?: number;
   manifest_hash?: string;
+  /** True when approval must bind to the transformed Zoho Campaigns export. */
+  native_export_required?: boolean;
+  native_export?: ApprovalNativeExport | null;
 }
 
 /** POST /approvals/{id}/decisions 요청 (B.3.9). */
 export interface ApprovalDecisionInput {
   decision: ApprovalDecisionValue;
   expected_snapshot_hash: string;
+  expected_export_hash?: string;
   reason?: string;
 }
 

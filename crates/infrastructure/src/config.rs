@@ -340,3 +340,113 @@ mod public_origin_tests {
         }
     }
 }
+
+/// Campaigns fetches this origin from outside Office; development loopback
+/// allowances for OAuth do not apply to campaign content publishing.
+pub fn validate_campaign_content_origin(
+    raw: &str,
+    allow_test_hosts: bool,
+) -> Result<String, contracts::AppError> {
+    let validated = validate_public_origin(raw)?;
+    let url = reqwest::Url::parse(&validated).map_err(|_| {
+        contracts::AppError::dependency_unavailable("invalid Campaigns content origin")
+    })?;
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_matches(['[', ']'])
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let invalid = url.scheme() != "https"
+        || if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            !public_campaign_ip(ip)
+        } else {
+            !host.contains('.')
+                || host == "localhost"
+                || [
+                    ".localhost",
+                    ".local",
+                    ".internal",
+                    ".lan",
+                    ".home",
+                    ".localdomain",
+                    ".invalid",
+                ]
+                .iter()
+                .any(|suffix| host.ends_with(suffix))
+                || (!allow_test_hosts
+                    && [".test", ".example"]
+                        .iter()
+                        .any(|suffix| host.ends_with(suffix)))
+        };
+    if invalid {
+        return Err(contracts::AppError::dependency_unavailable(
+            "Campaigns HTML requires a public HTTPS origin; loopback and private origins cannot be fetched by Zoho",
+        ));
+    }
+    Ok(validated)
+}
+fn public_campaign_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || a == 0
+                || a >= 240
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 198 && (18..=19).contains(&b)))
+        }
+        std::net::IpAddr::V6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return public_campaign_ip(std::net::IpAddr::V4(v4));
+            }
+            let segments = ip.segments();
+            !ip.is_loopback()
+                && !ip.is_unspecified()
+                && !ip.is_unique_local()
+                && !ip.is_unicast_link_local()
+                && !ip.is_multicast()
+                && (segments[0] & 0xe000) == 0x2000
+                && !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+        }
+    }
+}
+
+#[cfg(test)]
+mod campaign_content_origin_tests {
+    #[test]
+    fn campaign_content_rejects_private_https_and_keeps_test_domains_explicit() {
+        for origin in [
+            "https://localhost",
+            "https://localhost.",
+            "https://127.0.0.1",
+            "https://10.1.2.3",
+            "https://192.168.2.2",
+            "https://[::1]",
+            "https://[fd00::1]",
+            "https://printer",
+            "https://office.internal",
+            "http://public.example.com",
+        ] {
+            assert!(
+                super::validate_campaign_content_origin(origin, true).is_err(),
+                "{origin}"
+            );
+        }
+        assert!(
+            super::validate_campaign_content_origin("https://office.specify.app", false).is_ok()
+        );
+        assert!(
+            super::validate_campaign_content_origin("https://office.example.test", false).is_err()
+        );
+        assert!(
+            super::validate_campaign_content_origin("https://office.example.test", true).is_ok()
+        );
+    }
+}

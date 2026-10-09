@@ -163,3 +163,23 @@ async fn mailing_list_verification_reads_all_pages_without_silent_truncation() {
     assert_eq!(result[100].name, "Final list");
     task.abort();
 }
+
+#[test]
+fn campaign_delivery_consent_requests_only_required_read_create_update_scopes() {
+    use infrastructure::providers::zoho_campaigns::CAMPAIGNS_SCOPES;
+    for scope in [
+        "ZohoCampaigns.campaign.READ",
+        "ZohoCampaigns.campaign.CREATE",
+        "ZohoCampaigns.campaign.UPDATE",
+        "ZohoCampaigns.contact.READ",
+        "ZohoCampaigns.contact.CREATE",
+        "ZohoCampaigns.contact.UPDATE",
+    ] {
+        assert!(CAMPAIGNS_SCOPES.contains(&scope), "missing {scope}");
+    }
+    assert!(
+        !CAMPAIGNS_SCOPES
+            .iter()
+            .any(|s| s.ends_with("ALL") || s.ends_with("DELETE"))
+    );
+}

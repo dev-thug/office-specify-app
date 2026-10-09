@@ -15,7 +15,9 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env().map_err(|e| anyhow::anyhow!("{e}"))?;
     let db = Db::connect(&config.database_url, Some(ROLE_WORKER)).await?;
     let context = worker::WorkerContext::from_config(db.clone(), &config);
-    let mut runner = worker::Runner::new(db, worker::registry_with_context(&context));
+    let mut registry = worker::registry_with_context(&context);
+    worker::handlers::marketing::register(&mut registry, &db, &config);
+    let mut runner = worker::Runner::new(db, registry);
     runner.concurrency = config.worker_concurrency;
     tracing::info!(owner = %runner.owner, "outreach-worker started");
     runner.run().await?;

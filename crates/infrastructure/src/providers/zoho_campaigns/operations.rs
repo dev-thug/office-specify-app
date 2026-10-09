@@ -10,7 +10,10 @@ use reqwest::{
     header::{HeaderValue, RETRY_AFTER},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 use thiserror::Error;
 
 const API_BASE: &str = "https://campaigns.zoho.com/api/v1.1/";
@@ -18,6 +21,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_JSON_BYTES: usize = 1024 * 1024;
 const MAX_PAGE_SIZE: u32 = 100;
+const MAX_FULL_LIST_PAGES: u32 = 100;
+const MAX_FULL_LIST_CONTACTS: usize = MAX_PAGE_SIZE as usize * MAX_FULL_LIST_PAGES as usize;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum CampaignsOperationsError {
@@ -41,6 +46,8 @@ pub enum CampaignsOperationsError {
     RequestTooLarge,
     #[error("Zoho Campaigns response exceeds the allowed size")]
     ResponseTooLarge,
+    #[error("Zoho Campaigns contact pagination exceeded its configured limit")]
+    PaginationLimitExceeded,
     #[error("Zoho Campaigns rejected the operation with code {code}")]
     Rejected { code: String },
 }
@@ -113,6 +120,88 @@ pub struct CampaignContactField {
     pub field_id: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CampaignSignupForm {
+    Public,
+    Private,
+}
+impl CampaignSignupForm {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Private => "private",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateMailingListRequest {
+    pub list_name: String,
+    pub email_addresses: Vec<String>,
+    pub signup_form: CampaignSignupForm,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatedMailingList {
+    pub list_key: String,
+    pub list_name: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CampaignCustomFieldType {
+    Text,
+    Integer,
+    Phone,
+    Date,
+    Picklist,
+    Email,
+    Checkbox,
+    LongInteger,
+    Url,
+    Textarea,
+    RadioOption,
+    Multiselect,
+    DateTime,
+    Decimal,
+    Percent,
+}
+impl CampaignCustomFieldType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "Text",
+            Self::Integer => "Integer",
+            Self::Phone => "Phone",
+            Self::Date => "Date",
+            Self::Picklist => "Picklist",
+            Self::Email => "Email",
+            Self::Checkbox => "Checkbox",
+            Self::LongInteger => "LongInteger",
+            Self::Url => "URL",
+            Self::Textarea => "textarea",
+            Self::RadioOption => "RadioOption",
+            Self::Multiselect => "Multiselect",
+            Self::DateTime => "DateTime",
+            Self::Decimal => "Decimal",
+            Self::Percent => "Percent",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreateCampaignCustomFieldRequest {
+    pub field_name: String,
+    pub field_type: CampaignCustomFieldType,
+    pub field_length: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CreatedCampaignCustomField {
+    pub field_name: String,
+    pub field_type: CampaignCustomFieldType,
+    pub field_length: Option<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CampaignTopic {
     pub id: String,
@@ -150,6 +239,8 @@ impl CampaignType {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CampaignDetails {
+    /// Provider metadata and status only. Zoho's documented endpoint does not
+    /// return the campaign HTML body.
     pub status: Option<String>,
     pub details: BTreeMap<String, Value>,
     pub associated_lists: Vec<BTreeMap<String, Value>>,
@@ -408,6 +499,93 @@ impl CampaignsOperations {
         })
     }
 
+    /// Fetch the complete page sequence for one documented list-contact
+    /// status, capped at 10,000 rows. A repeated/over-limit page fails rather
+    /// than returning a partial audience as though it were complete.
+    pub async fn get_all_list_contacts(
+        &self,
+        access: &SecretValue,
+        list_key: &str,
+        status: CampaignContactStatus,
+    ) -> Result<Vec<CampaignContactRecord>, CampaignsOperationsError> {
+        let mut contacts = Vec::new();
+        let mut seen_emails = BTreeSet::new();
+        for page_number in 0..MAX_FULL_LIST_PAGES {
+            let from_index = page_number * MAX_PAGE_SIZE + 1;
+            let page = self
+                .get_list_contacts(access, list_key, from_index, MAX_PAGE_SIZE, Some(status))
+                .await?;
+            let page_len = page.entries.len();
+            let previous_len = contacts.len();
+            for contact in page.entries {
+                if seen_emails.insert(contact.email.to_ascii_lowercase()) {
+                    contacts.push(contact);
+                    if contacts.len() > MAX_FULL_LIST_CONTACTS {
+                        return Err(CampaignsOperationsError::PaginationLimitExceeded);
+                    }
+                }
+            }
+            if page_len < MAX_PAGE_SIZE as usize {
+                return Ok(contacts);
+            }
+            if contacts.len() == previous_len || page_number + 1 == MAX_FULL_LIST_PAGES {
+                return Err(CampaignsOperationsError::PaginationLimitExceeded);
+            }
+        }
+        Err(CampaignsOperationsError::PaginationLimitExceeded)
+    }
+
+    /// Create one mailing list with up to ten email-only contacts, as
+    /// documented by addlistandcontacts.
+    pub async fn create_list_with_contacts(
+        &self,
+        access: &SecretValue,
+        request: CreateMailingListRequest,
+    ) -> Result<CampaignMutationOutcome<CreatedMailingList>, CampaignsOperationsError> {
+        validate_new_list_request(&request)?;
+        let params = vec![
+            ("resfmt", "JSON".to_owned()),
+            ("emailids", request.email_addresses.join(",")),
+            ("listname", request.list_name),
+            ("signupform", request.signup_form.as_str().to_owned()),
+            ("mode", "newlist".to_owned()),
+        ];
+        let mut params = params;
+        if let Some(description) = request.description {
+            params.push(("listdescription", description));
+        }
+        let outcome = self
+            .mutate_json("addlistandcontacts", &params, access, &["0"])
+            .await?;
+        Ok(try_map_mutation(outcome, |value| {
+            let root = data_root(&value);
+            Some(CreatedMailingList {
+                list_key: string_field(root, "listkey").ok()?,
+                list_name: string_field(root, "listname").ok()?,
+            })
+        }))
+    }
+
+    /// Add up to ten email-only contacts to a previously created list.
+    pub async fn add_contacts_to_existing_list(
+        &self,
+        access: &SecretValue,
+        list_key: &str,
+        email_addresses: &[String],
+    ) -> Result<CampaignMutationOutcome<()>, CampaignsOperationsError> {
+        validate_key(list_key)?;
+        validate_email_batch(email_addresses)?;
+        let params = vec![
+            ("resfmt", "JSON".to_owned()),
+            ("listkey", list_key.to_owned()),
+            ("emailids", email_addresses.join(",")),
+        ];
+        let outcome = self
+            .mutate_json("addlistsubscribersinbulk", &params, access, &["0"])
+            .await?;
+        Ok(map_mutation(outcome, |_| ()))
+    }
+
     /// Reads Zoho's documented contact/allfields schema, used to map the
     /// campaign merge fields exposed for a contact.
     pub async fn get_contact_fields(
@@ -433,6 +611,41 @@ impl CampaignsOperations {
                 })
             })
             .collect()
+    }
+
+    /// Create a documented Campaigns custom contact field. No merge-tag API
+    /// is inferred from this operation.
+    pub async fn create_custom_field(
+        &self,
+        access: &SecretValue,
+        request: CreateCampaignCustomFieldRequest,
+    ) -> Result<CampaignMutationOutcome<CreatedCampaignCustomField>, CampaignsOperationsError> {
+        validate_custom_field_request(&request)?;
+        let mut params = vec![
+            ("type", "json".to_owned()),
+            ("fieldname", request.field_name.clone()),
+            ("fieldtype", request.field_type.as_str().to_owned()),
+        ];
+        if let Some(length) = request.field_length {
+            params.push(("fieldlength", length.to_string()));
+        }
+        let outcome = self
+            .mutate_json("custom/add", &params, access, &["200"])
+            .await?;
+        Ok(try_map_mutation(outcome, |value| {
+            let root = data_root(&value);
+            let field_name = string_field(root, "fieldname").ok()?;
+            let field_type = parse_custom_field_type(&string_field(root, "fieldtype").ok()?)?;
+            let field_length = optional_u32_field(root, "fieldlength")
+                .ok()
+                .flatten()
+                .or(request.field_length);
+            Some(CreatedCampaignCustomField {
+                field_name,
+                field_type,
+                field_length,
+            })
+        }))
     }
 
     pub async fn get_topics(
@@ -914,6 +1127,70 @@ fn validate_email(value: &str) -> Result<(), CampaignsOperationsError> {
         return Err(CampaignsOperationsError::InvalidRequest);
     }
     Ok(())
+}
+
+fn validate_email_batch(emails: &[String]) -> Result<(), CampaignsOperationsError> {
+    if emails.is_empty() || emails.len() > 10 {
+        return Err(CampaignsOperationsError::InvalidRequest);
+    }
+    let mut unique = BTreeSet::new();
+    for email in emails {
+        validate_email(email)?;
+        if !unique.insert(email.to_ascii_lowercase()) {
+            return Err(CampaignsOperationsError::InvalidRequest);
+        }
+    }
+    Ok(())
+}
+
+fn validate_new_list_request(
+    request: &CreateMailingListRequest,
+) -> Result<(), CampaignsOperationsError> {
+    if request.list_name.trim().is_empty()
+        || request
+            .description
+            .as_deref()
+            .is_some_and(|description| description.trim().is_empty())
+    {
+        return Err(CampaignsOperationsError::InvalidRequest);
+    }
+    validate_email_batch(&request.email_addresses)
+}
+
+fn validate_custom_field_request(
+    request: &CreateCampaignCustomFieldRequest,
+) -> Result<(), CampaignsOperationsError> {
+    if request.field_name.is_empty()
+        || !request
+            .field_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric())
+        || request.field_length == Some(0)
+    {
+        return Err(CampaignsOperationsError::InvalidRequest);
+    }
+    Ok(())
+}
+
+fn parse_custom_field_type(value: &str) -> Option<CampaignCustomFieldType> {
+    match value {
+        "Text" => Some(CampaignCustomFieldType::Text),
+        "Integer" => Some(CampaignCustomFieldType::Integer),
+        "Phone" => Some(CampaignCustomFieldType::Phone),
+        "Date" => Some(CampaignCustomFieldType::Date),
+        "Picklist" => Some(CampaignCustomFieldType::Picklist),
+        "Email" => Some(CampaignCustomFieldType::Email),
+        "Checkbox" => Some(CampaignCustomFieldType::Checkbox),
+        "LongInteger" => Some(CampaignCustomFieldType::LongInteger),
+        "URL" => Some(CampaignCustomFieldType::Url),
+        "textarea" => Some(CampaignCustomFieldType::Textarea),
+        "RadioOption" => Some(CampaignCustomFieldType::RadioOption),
+        "Multiselect" => Some(CampaignCustomFieldType::Multiselect),
+        "DateTime" => Some(CampaignCustomFieldType::DateTime),
+        "Decimal" => Some(CampaignCustomFieldType::Decimal),
+        "Percent" => Some(CampaignCustomFieldType::Percent),
+        _ => None,
+    }
 }
 
 fn validate_contact(contact: &ContactInput) -> Result<(), CampaignsOperationsError> {

@@ -29,7 +29,6 @@
     "colCreated": "Created",
     "colHash": "Content hash",
     "newVersion": "New version",
-    "zohoTemplates": "Zoho templates",
     "archivedBanner": "This template is archived. You cannot add versions.",
     "immutableNote": "Versions are immutable. Create a new version to change content.",
     "emptyVersionsTitle": "No versions yet",

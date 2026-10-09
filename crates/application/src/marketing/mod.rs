@@ -61,6 +61,9 @@ fn store(config: &Config) -> Result<FileSecretStore, AppError> {
 fn response(row: repo::ConnectionRow) -> MarketingConnectionResponse {
     MarketingConnectionResponse {
         id: row.id,
+        write_scopes_ready: CAMPAIGNS_SCOPES
+            .iter()
+            .all(|scope| row.scopes.iter().any(|granted| granted == scope)),
         name: row.name,
         status: row.status,
         plan: row.plan,
@@ -418,3 +421,320 @@ pub async fn recent_campaigns(
 }
 
 pub mod email_templates;
+
+pub mod content;
+
+pub async fn sender_identities(
+    db: &Db,
+    ctx: &Ctx,
+    mail_account_id: Uuid,
+) -> Result<Vec<MarketingSenderResponse>, AppError> {
+    authorize(db, ctx, "marketing.sender_list").await?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    crate::authz::require_mailbox(
+        &mut tx,
+        ctx,
+        mail_account_id,
+        crate::authz::MailboxPerm::Read,
+    )
+    .await?;
+    let rows: Vec<(Uuid,String,String,String)> = sqlx::query_as(
+        "SELECT id,address,display_name,status FROM sender_identities WHERE workspace_id=$1 AND mail_account_id=$2 ORDER BY address LIMIT 100"
+    ).bind(ctx.workspace_id).bind(mail_account_id).fetch_all(tx.conn()).await.map_err(infrastructure::error::map_sqlx)?;
+    tx.commit().await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, address, display_name, status)| MarketingSenderResponse {
+                id,
+                address,
+                display_name,
+                status,
+            },
+        )
+        .collect())
+}
+
+pub mod delivery;
+
+pub async fn authorize_sender_registration(
+    db: &Db,
+    ctx: &Ctx,
+    account: Uuid,
+) -> Result<(), AppError> {
+    authorize(db, ctx, "marketing.sender_register").await?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    crate::authz::require_mailbox(&mut tx, ctx, account, crate::authz::MailboxPerm::Send).await?;
+    tx.commit().await
+}
+pub async fn register_sender_tx(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    req: &RegisterMarketingSenderRequest,
+) -> Result<MarketingSenderResponse, AppError> {
+    revalidate_admin_session_tx(tx, ctx).await?;
+    crate::authz::require_mailbox(
+        tx,
+        ctx,
+        req.mail_account_id,
+        crate::authz::MailboxPerm::Send,
+    )
+    .await?;
+    let address = domain::email_address::normalize(
+        &req.address,
+        domain::email_address::LocalPartPolicy::Preserve,
+    )
+    .map_err(|_| AppError::validation("sender address is invalid", vec![]).with_status(422))?
+    .original;
+    if address.contains(['\r', '\n'])
+        || req.display_name.trim().is_empty()
+        || req.display_name.contains(['\r', '\n'])
+        || req.display_name.len() > 300
+        || req.verification_evidence_ref.trim().is_empty()
+        || req.verification_evidence_ref.len() > 2000
+    {
+        return Err(AppError::validation(
+            "sender name and recorded Zoho verification evidence are required",
+            vec![],
+        )
+        .with_status(422));
+    }
+    if repo::find_sender_by_address(tx, req.mail_account_id, &address)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::conflict(
+            "sender identity already exists; select the existing identity",
+        ));
+    }
+    let id = infrastructure::repo::mailboxes::insert_sender_identity(
+        tx,
+        req.mail_account_id,
+        &address,
+        req.display_name.trim(),
+        true,
+    )
+    .await?;
+    let mut entry = AuditEntry::new(
+        ctx.principal_id,
+        "marketing.sender_registered_with_evidence",
+        "sender_identity",
+        &ctx.request_id,
+    )
+    .with_target(id);
+    entry.metadata = serde_json::json!({"verification_source":"human_recorded_zoho_evidence","evidence_ref":req.verification_evidence_ref,"mail_account_id":req.mail_account_id});
+    audit::record(tx, entry).await?;
+    Ok(MarketingSenderResponse {
+        id,
+        address,
+        display_name: req.display_name.trim().into(),
+        status: "verified".into(),
+    })
+}
+
+/// Reserve capacity before taking a database-backed account lock: each
+/// provider operation journals on another short-lived connection.
+static CONNECTION_WRITERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+pub struct ConnectionOperationGuard<'db> {
+    _tx: Tx<'db>,
+    _permit: tokio::sync::SemaphorePermit<'static>,
+}
+pub async fn lock_connection_operation<'db>(
+    db: &'db Db,
+    workspace_id: Uuid,
+    _connection_id: Uuid,
+) -> Result<ConnectionOperationGuard<'db>, AppError> {
+    let permit = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        CONNECTION_WRITERS.acquire(),
+    )
+    .await
+    .map_err(|_| AppError::dependency_unavailable("Campaigns account writers are busy"))?
+    .map_err(|_| AppError::dependency_unavailable("Campaigns account writer unavailable"))?;
+    let hash =
+        crypto::sha256_bytes(format!("office-campaigns-workspace:{workspace_id}").as_bytes());
+    let key = i64::from_be_bytes(
+        hash[..8]
+            .try_into()
+            .map_err(|_| AppError::internal("invalid account lock"))?,
+    );
+    let mut tx = db.begin(workspace_id).await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(key)
+        .fetch_one(tx.conn())
+        .await
+        .map_err(infrastructure::error::map_sqlx)?;
+    if !locked {
+        return Err(AppError::conflict(
+            "another operation is updating this Campaigns account",
+        ));
+    }
+    Ok(ConnectionOperationGuard {
+        _tx: tx,
+        _permit: permit,
+    })
+}
+pub async fn revalidate_admin_session_tx(tx: &mut Tx<'_>, ctx: &Ctx) -> Result<(), AppError> {
+    let session = require_admin(ctx)?;
+    let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM principals p JOIN user_sessions s ON s.workspace_id=p.workspace_id AND s.principal_id=p.id WHERE p.workspace_id=$1 AND p.id=$2 AND p.kind='human' AND p.role='admin' AND p.status='active' AND p.permission_version=$3 AND s.id=$4 AND s.revoked_at IS NULL AND s.expires_at>now() FOR SHARE OF p,s)")
+        .bind(ctx.workspace_id).bind(ctx.principal_id).bind(ctx.permission_version).bind(session).fetch_one(tx.conn()).await.map_err(infrastructure::error::map_sqlx)?;
+    if !active {
+        return Err(AppError::forbidden(
+            "Campaigns administrator session or permissions changed",
+        ));
+    }
+    Ok(())
+}
+
+pub mod suppressions;
+
+fn mapping_metadata_error(
+    error: infrastructure::providers::zoho_campaigns::operations::CampaignsOperationsError,
+) -> AppError {
+    use infrastructure::providers::zoho_campaigns::operations::CampaignsOperationsError as E;
+    match error {
+        E::ReauthRequired => AppError::new(
+            ErrorCode::IntegrationReauthRequired,
+            "Campaigns authorization must be renewed",
+        ),
+        E::RateLimited {
+            retry_after_seconds,
+        } => AppError::new(ErrorCode::RateLimited, "Campaigns rate limit reached")
+            .with_retry_after(retry_after_seconds.unwrap_or(60)),
+        E::InvalidRequest => AppError::validation("invalid Campaigns metadata page", vec![]),
+        _ => AppError::dependency_unavailable("Campaigns mapping metadata could not be read"),
+    }
+}
+pub async fn contact_fields(
+    db: &Db,
+    ctx: &Ctx,
+    config: &Config,
+    http: Option<&CampaignsHttp>,
+    operations: Option<&infrastructure::providers::zoho_campaigns::operations::CampaignsOperations>,
+    connection: Uuid,
+) -> Result<Vec<MarketingContactFieldResponse>, AppError> {
+    authorize(db, ctx, "marketing.contact_fields_read").await?;
+    let http =
+        http.ok_or_else(|| AppError::dependency_unavailable("Campaigns OAuth is not configured"))?;
+    let operations = operations
+        .ok_or_else(|| AppError::dependency_unavailable("Campaigns client is not configured"))?;
+    let tokens = access_tokens(db, ctx, config, http, connection).await?;
+    Ok(operations
+        .get_contact_fields(&tokens.access_token)
+        .await
+        .map_err(mapping_metadata_error)?
+        .into_iter()
+        .map(|field| MarketingContactFieldResponse {
+            display_name: field.display_name,
+            field_name: field.field_name,
+            field_id: field.field_id,
+        })
+        .collect())
+}
+#[allow(clippy::too_many_arguments)]
+pub async fn topics(
+    db: &Db,
+    ctx: &Ctx,
+    config: &Config,
+    http: Option<&CampaignsHttp>,
+    operations: Option<&infrastructure::providers::zoho_campaigns::operations::CampaignsOperations>,
+    connection: Uuid,
+    from_index: u32,
+    limit: u32,
+) -> Result<Vec<MarketingTopicResponse>, AppError> {
+    authorize(db, ctx, "marketing.topics_read").await?;
+    if from_index == 0 || !(1..=100).contains(&limit) || from_index > 10000 {
+        return Err(AppError::validation("invalid topic page", vec![]));
+    }
+    let http =
+        http.ok_or_else(|| AppError::dependency_unavailable("Campaigns OAuth is not configured"))?;
+    let operations = operations
+        .ok_or_else(|| AppError::dependency_unavailable("Campaigns client is not configured"))?;
+    let tokens = access_tokens(db, ctx, config, http, connection).await?;
+    Ok(operations
+        .get_topics(&tokens.access_token, from_index, limit)
+        .await
+        .map_err(mapping_metadata_error)?
+        .into_iter()
+        .map(|topic| MarketingTopicResponse {
+            id: topic.id,
+            name: topic.name,
+            primary_list: topic.primary_list,
+        })
+        .collect())
+}
+
+/// Controls follow the send gate's lock order: approval -> export -> launch.
+/// A submitted/uncertain provider request cannot be recalled by local controls.
+pub async fn lock_native_launch_control_tx(
+    tx: &mut Tx<'_>,
+    launch_id: Uuid,
+) -> Result<Option<infrastructure::repo::marketing_exports::MarketingExportRow>, AppError> {
+    let Some(launch) = infrastructure::repo::campaigns::get_launch(tx, launch_id).await? else {
+        return Ok(None);
+    };
+    if !infrastructure::repo::campaigns::get_channel(tx, launch.delivery_channel_id)
+        .await?
+        .is_some_and(|channel| channel.provider == "zoho_campaigns")
+    {
+        return Ok(None);
+    }
+    if let Some(approval) =
+        infrastructure::repo::approvals::active_request_for_launch(tx, launch_id).await?
+    {
+        infrastructure::repo::approvals::get_request_for_update(tx, approval.id).await?;
+    }
+    let Some(export) =
+        infrastructure::repo::marketing_exports::get_export_by_launch(tx, launch_id).await?
+    else {
+        return Ok(None);
+    };
+    let export = infrastructure::repo::marketing_exports::get_export_for_update(tx, export.id)
+        .await?
+        .ok_or_else(|| AppError::not_found("native export not found"))?;
+    let submitted = infrastructure::repo::marketing_exports::get_operation(
+        tx,
+        export.id,
+        "send_campaign",
+        "send_campaign",
+    )
+    .await?
+    .is_some_and(|operation| {
+        matches!(
+            operation.status.as_str(),
+            "started" | "unknown" | "completed"
+        )
+    });
+    if submitted
+        || matches!(
+            export.state.as_str(),
+            "submitting" | "in_progress" | "completed"
+        )
+    {
+        return Err(AppError::conflict(
+            "Zoho Campaigns submission has started; local pause, cancel or revoke cannot recall it",
+        ));
+    }
+    Ok(Some(export))
+}
+pub async fn cancel_unsubmitted_native_export_tx(
+    tx: &mut Tx<'_>,
+    export: Option<&infrastructure::repo::marketing_exports::MarketingExportRow>,
+) -> Result<(), AppError> {
+    if let Some(export) = export {
+        let state = domain::marketing::MarketingExportState::from_str(&export.state)
+            .ok_or_else(|| AppError::internal("invalid native export state"))?;
+        if state != domain::marketing::MarketingExportState::Canceled
+            && state.can_transition(domain::marketing::MarketingExportState::Canceled)
+        {
+            infrastructure::repo::marketing_exports::update_state(
+                tx,
+                export.id,
+                export.version,
+                domain::marketing::MarketingExportState::Canceled,
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}

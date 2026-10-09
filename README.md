@@ -4,9 +4,9 @@ Office is a Rust workspace for the API, background worker, MCP server, and opera
 
 For a local setup, see [Local development](docs/runbooks/local-development.md). Operator procedures are in [Unknown send reconciliation](docs/runbooks/unknown-send-reconciliation.md) and [Database restore](docs/runbooks/restore.md). The current test evidence and uncovered requirements are listed in [the T01–T36 matrix](docs/design/test-matrix.md).
 
-Explicit test fixtures and unconfigured development use fake providers. Configured US Zoho Mail and Campaigns connections have real HTTP adapters, but live-account delivery has not been verified. Production marketing delivery, legal, security, and backup/restore release gates remain closed.
+Explicit test fixtures and unconfigured development use fake providers. Configured US Zoho Mail and Campaigns connections have real HTTP adapters, but live-account delivery has not been verified. Live-provider acceptance, legal, security, and backup/restore release checks remain required. The native Campaigns bulk path is separate from the disabled generic marketing adapter.
 
-The approved spec names these closed gates: L01 (legal basis; marketing stays blocked), P01 (provider permission; production delivery channels stay disabled), Z01 (Zoho account/plan/region; live-account verification remains required), Z02 (webhook verification; polling-only or blocked), C01 (calendar authorization; real booking confirmation stays disabled), E01 (sender authentication and RFC headers; one-click stays disabled), A01 (OIDC/MCP client compatibility; OAuth discovery is unsupported), O01 (backup/restore; production launch stays on hold), and S01 (security/privacy review; production launch stays on hold). See §20 of the [source design](docs/design/source/outreach-os-design-v1.0.md) for the evidence required to close each gate.
+The approved spec names these closed gates: L01 (legal basis; marketing stays blocked), P01 (provider permission; each channel requires current review evidence), Z01 (Zoho account/plan/region; live-account verification remains required), Z02 (webhook verification; polling-only or blocked), C01 (calendar authorization; real booking confirmation stays disabled), E01 (sender authentication and RFC headers; one-click stays disabled), A01 (OIDC/MCP client compatibility; OAuth discovery is unsupported), O01 (backup/restore; production launch stays on hold), and S01 (security/privacy review; production launch stays on hold). See §20 of the [source design](docs/design/source/outreach-os-design-v1.0.md) for the evidence required to close each gate.
 
 ## Implementation and verification
 
@@ -42,26 +42,26 @@ formatting, paragraphs, lists and links; arbitrary CSS and images are rejected.
 
 ## Zoho integration
 
-The server now supports configured US Zoho Mail OAuth and Campaigns OAuth.
-Missing client configuration is reported before redirecting to Zoho. Mailbox
-operations and marketing are separate integrations; a paid Mail plan does not
-upgrade Campaigns Free.
+Office owns its templates, visual/HTML editor, variables and immutable versions.
+The native **Campaigns Free** route exports an approved Office launch as one
+provider list and one campaign. Zoho imports Office's signed public HTTPS HTML
+URL and performs the bulk send; no paid Zoho template API is required.
 
-The optional Zoho template library supports list/read/create/copy/update/delete,
-HTML source and isolated preview, and import into a new Office template version
-with explicit variable mapping. This uses **Zoho Email API v2**, a separate
-prepaid organization, and is disabled by default. Enable it only with the three
-`ZOHO_EMAIL_API_*` settings in `.env.example`; never expose the API key to the
-browser. Campaigns Free OAuth does not unlock that template API. Office's basic
-editor filters unsupported imported HTML in the Office copy and preserves the
-remote source.
+The flow includes resumable contact staging, explicit-consent and suppression
+checks, provider field/topic metadata, recipient-bound booking values, human
+approval and final confirmation, durable unknown-write handling, and background
+opt-out/report synchronization. Immediate single-step campaigns are supported;
+marketing automation, delayed steps and scheduling are excluded. Provider
+acceptance is separate from delivery/read evidence.
 
-See the [Zoho setup runbook](docs/runbooks/zoho-campaigns.md),
-[verified capability matrix](docs/design/zoho-api-capability-matrix.md)
-and [implementation status](docs/design/zoho-integration-status.md). API availability
-in the matrix does not mean every feature is implemented or enabled. Provider
-mock tests do not establish live delivery. Office booking and suppression remain
-local; marketing automation and delayed multi-step campaign authoring are disabled.
+Configure the US OAuth client and a public HTTPS origin using the
+[setup runbook](docs/runbooks/zoho-campaigns.md). Live-account credentials,
+permissions, sender verification, merge rendering, footer behavior and quota
+acceptance remain operator checks. Mock tests do not prove real delivery.
+Zoho Mail correspondence is a separate adapter. The optional prepaid Email API
+backend remains separate and is not used by the Office template or Free sending
+workflow. See [implementation status](docs/design/zoho-integration-status.md) and
+[the API capability matrix](docs/design/zoho-api-capability-matrix.md).
 
 ## License
 

@@ -40,6 +40,7 @@ import {
   type CampaignLaunch,
   type LaunchMessageSnapshot,
 } from "@/lib/api/campaigns";
+import { useDeliveryChannels, type DeliveryChannel } from "@/lib/api/settings";
 import { readEtag } from "@/lib/api/mutate";
 import { ApiError } from "@/lib/api/problem";
 
@@ -52,6 +53,7 @@ import {
   launchActions,
 } from "./rules";
 import { useIdempotencyKey } from "./use-idempotency-key";
+import { MarketingExportPanel } from "@/features/marketing/export-panel";
 
 export function CampaignDetail({ campaignId }: { campaignId: string }) {
   const t = useTranslations("campaigns.detail");
@@ -71,6 +73,7 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
     },
     retry: false,
   });
+  const deliveryChannels = useDeliveryChannels();
 
   const campaign = detail.data;
   const revision = useMemo(
@@ -86,6 +89,7 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
       (campaign?.launch ? [campaign.launch] : []),
     [campaign]
   );
+  const channels = deliveryChannels.data?.pages.flatMap((page) => page.data) ?? [];
   const gateBlocked = channelBlocked(campaign);
   const actions = campaignActions(campaign, {
     allowedActions: campaign?.allowed_actions,
@@ -363,23 +367,38 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
       <section className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4">
         <h2 className="text-sm font-medium">{t("launches")}</h2>
         {launches.length === 0 ? (
-          <EmptyState compact title={t("noLaunches")} />
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {launches.map((l) => (
-              <LaunchRow
-                key={l.id}
-                launch={l}
-                campaignId={campaign.id}
-                gateBlocked={gateBlocked}
-                expanded={expandedLaunch === l.id}
-                onToggle={() =>
-                  setExpandedLaunch((cur) => (cur === l.id ? null : l.id))
-                }
-                onError={handleError}
-                onChanged={refetch}
-              />
-            ))}
+            <EmptyState compact title={t("noLaunches")} />
+          ) : (
+            <ul className="flex flex-col gap-2">
+            {launches.map((l) => {
+              const launchRevision =
+                campaign.revisions?.find((candidate) => candidate.id === l.revision_id) ??
+                revision;
+              const channel = channels.find(
+                (candidate) =>
+                  candidate.id ===
+                  (l.delivery_channel_id ?? launchRevision?.delivery_channel_id)
+              );
+              return (
+                <LaunchRow
+                  key={l.id}
+                  launch={l}
+                  campaignId={campaign.id}
+                  gateBlocked={gateBlocked}
+                  marketingChannel={
+                    channel?.provider === "zoho_campaigns" && channel.purpose === "marketing"
+                      ? channel
+                      : null
+                  }
+                  expanded={expandedLaunch === l.id}
+                  onToggle={() =>
+                    setExpandedLaunch((cur) => (cur === l.id ? null : l.id))
+                  }
+                  onError={handleError}
+                  onChanged={refetch}
+                />
+              );
+            })}
           </ul>
         )}
       </section>
@@ -391,6 +410,7 @@ function LaunchRow({
   launch,
   campaignId,
   gateBlocked,
+  marketingChannel,
   expanded,
   onToggle,
   onError,
@@ -399,6 +419,7 @@ function LaunchRow({
   launch: CampaignLaunch;
   campaignId: string;
   gateBlocked: boolean;
+  marketingChannel: DeliveryChannel | null;
   expanded: boolean;
   onToggle: () => void;
   onError: (err: unknown) => void;
@@ -579,6 +600,17 @@ function LaunchRow({
             {t("goToApprovals")}
           </Link>
         </p>
+      ) : null}
+
+      {marketingChannel ? (
+        <div className="px-3 pb-3">
+          <MarketingExportPanel
+            launchId={launch.id}
+            sourceStatus={launch.status}
+            sourceManifestHash={launch.manifest_hash}
+            connectionId={marketingChannel.connection_id}
+          />
+        </div>
       ) : null}
 
       {expanded ? <LaunchDetailPanel launchId={launch.id} /> : null}

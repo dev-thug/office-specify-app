@@ -178,7 +178,26 @@ impl JobHandler for PauseEnrollments {
         let addr = payload_uuid(&payload, "email_address_id")?;
         let suppression_id = payload_uuid(&payload, "suppression_id").ok();
         let actor = system_actor(tx).await?;
-        application::campaigns::pause_enrollments(tx, actor, ctx.job_id, addr, suppression_id).await
+        application::campaigns::pause_enrollments(tx, actor, ctx.job_id, addr, suppression_id)
+            .await?;
+        // Office suppression is already committed; provider propagation is a
+        // separate journaled operation and never delays the local opt-out.
+        if infrastructure::repo::marketing::has_active_campaign_connection(tx).await? {
+            infrastructure::jobs::enqueue(
+                tx,
+                "marketing.push_suppression",
+                1,
+                serde_json::json!({"email_address_id":addr}),
+                chrono::Utc::now(),
+                Some(&format!(
+                    "marketing-suppression:{}:{}",
+                    addr,
+                    suppression_id.unwrap_or(ctx.job_id)
+                )),
+            )
+            .await?;
+        }
+        Ok(())
     }
 }
 

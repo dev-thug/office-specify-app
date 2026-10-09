@@ -454,6 +454,20 @@ pub async fn freeze_launch(
             None,
         )
         .await?;
+        if channel.provider == "zoho_campaigns" {
+            let mut frozen_values = user_variables.clone();
+            frozen_values.extend(system_vars.clone());
+            infrastructure::repo::marketing_exports::record_launch_values(
+                tx,
+                launch_id,
+                &[infrastructure::repo::marketing_exports::NewLaunchValue {
+                    email_address_id: *addr_id,
+                    variables: serde_json::to_value(&frozen_values)
+                        .map_err(|_| AppError::internal("could not freeze marketing variables"))?,
+                }],
+            )
+            .await?;
+        }
         let mut step_hashes = Vec::with_capacity(rendered.len());
         for snapshot in rendered {
             let outbound_id = repo::insert_step_outbound(

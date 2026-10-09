@@ -458,6 +458,7 @@ pub async fn pause_launch(
     expected_version: i64,
     reason: Option<&str>,
 ) -> Result<LaunchSummary, AppError> {
+    let native_export = crate::marketing::lock_native_launch_control_tx(tx, launch_id).await?;
     let Some(launch) = repo::get_launch_for_update(tx, launch_id).await? else {
         return Err(AppError::not_found("campaign launch not found"));
     };
@@ -486,6 +487,7 @@ pub async fn pause_launch(
         }
         _ => {}
     }
+    crate::marketing::cancel_unsubmitted_native_export_tx(tx, native_export.as_ref()).await?;
     quiesce_launch(tx, launch_id, "campaign_paused").await?;
     repo::transition_launch(
         tx,
@@ -530,6 +532,7 @@ pub async fn cancel_launch(
     expected_version: i64,
     reason: Option<&str>,
 ) -> Result<LaunchSummary, AppError> {
+    let native_export = crate::marketing::lock_native_launch_control_tx(tx, launch_id).await?;
     let Some(launch) = repo::get_launch_for_update(tx, launch_id).await? else {
         return Err(AppError::not_found("campaign launch not found"));
     };
@@ -555,6 +558,7 @@ pub async fn cancel_launch(
         }
         _ => {}
     }
+    crate::marketing::cancel_unsubmitted_native_export_tx(tx, native_export.as_ref()).await?;
     quiesce_launch(tx, launch_id, "campaign_canceled").await?;
     repo::transition_launch(
         tx,

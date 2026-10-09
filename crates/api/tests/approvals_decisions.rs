@@ -599,6 +599,7 @@ async fn agent_cannot_decide() {
         &contracts::approvals::CreateDecisionRequest {
             decision: "approved".to_string(),
             expected_snapshot_hash: hex(&hash),
+            expected_export_hash: None,
             reason: None,
         },
     )

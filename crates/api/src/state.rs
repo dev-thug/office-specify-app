@@ -21,6 +21,8 @@ pub struct AppState {
     pub mail: Arc<dyn MailProvider>,
     pub calendar: Arc<dyn CalendarProvider>,
     pub delivery: Arc<dyn DeliveryProvider>,
+    pub operations:
+        Option<Arc<infrastructure::providers::zoho_campaigns::operations::CampaignsOperations>>,
     pub campaigns: Option<Arc<infrastructure::providers::zoho_campaigns::http::CampaignsHttp>>,
     pub email_api: Option<Arc<infrastructure::providers::zoho_email_api::ZohoEmailApi>>,
     /// When the mail provider is the in-memory fake, the dev endpoint uses
@@ -77,6 +79,10 @@ impl AppState {
             .map(|provider| provider.clone() as Arc<dyn DeliveryProvider>)
             .unwrap_or_else(|| Arc::new(DisabledDeliveryProvider));
         Self {
+            operations:
+                infrastructure::providers::zoho_campaigns::operations::CampaignsOperations::new()
+                    .ok()
+                    .map(Arc::new),
             email_api: if config.zoho.email_api.enabled
                 && config.zoho.email_api.api_key.is_some()
                 && config.zoho.email_api.workspace_id.is_some()

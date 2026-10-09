@@ -55,6 +55,12 @@ pub struct ErasureReport {
     pub contact_id: Uuid,
     pub email_addresses_suppressed: u64,
     pub messages_scrubbed: u64,
+    /// Native Campaigns exports whose local snapshots were redacted. This
+    /// does not claim that a provider-accepted campaign was recalled.
+    pub marketing_exports_redacted: u64,
+    /// True when local exports were redacted without requesting cancellation
+    /// from the external provider.
+    pub provider_cancel_not_requested: bool,
     pub attachments_removed: u64,
     /// Shared source objects whose application access was revoked because
     /// they contain a row belonging to the erased contact.
@@ -106,6 +112,89 @@ pub async fn erase_contact(
     .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)?;
+
+    // Native send reservation locks the export before it locks recipient
+    // identities. Prelock a conservative set of exports before the email
+    // address locks below to preserve that order. This is only a lock superset:
+    // ownership and the final redaction set are still recomputed from exclusive
+    // addresses and frozen outbound IDs after those identities are locked.
+    let potential_thread_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT t.id
+           FROM email_threads t
+          WHERE t.workspace_id = $1
+            AND (t.contact_id = $2
+                 OR t.id IN (
+                    SELECT o.thread_id FROM outbound_messages o
+                     WHERE o.workspace_id = $1 AND o.thread_id IS NOT NULL
+                       AND o.to_email_address_id = ANY($3))
+                 OR t.id IN (
+                    SELECT m.thread_id FROM email_messages m
+                    JOIN message_participants p
+                      ON p.workspace_id = m.workspace_id AND p.email_message_id = m.id
+                     WHERE m.workspace_id = $1 AND p.email_address_id = ANY($3)))
+          ORDER BY t.id",
+    )
+    .bind(request.workspace_id)
+    .bind(request.contact_id)
+    .bind(&linked_email_ids)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let potential_outbound_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT o.id FROM outbound_messages o
+          WHERE o.workspace_id = $1
+            AND (o.thread_id = ANY($2)
+                 OR o.to_email_address_id = ANY($3)
+                 OR o.enrollment_id IN (
+                    SELECT e.id FROM campaign_enrollments e
+                     WHERE e.workspace_id = $1 AND e.contact_id = $4))
+          ORDER BY o.id",
+    )
+    .bind(request.workspace_id)
+    .bind(&potential_thread_ids)
+    .bind(&linked_email_ids)
+    .bind(request.contact_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let potential_export_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT e.id FROM marketing_exports e
+          WHERE e.workspace_id = $1
+            AND (EXISTS (
+                    SELECT 1 FROM campaign_enrollments ce
+                     WHERE ce.workspace_id = e.workspace_id
+                       AND ce.launch_id = e.launch_id
+                       AND (ce.contact_id = $2
+                            OR ce.email_address_id = ANY($3)))
+                 OR EXISTS (
+                    SELECT 1 FROM marketing_export_recipients r
+                     WHERE r.workspace_id = e.workspace_id
+                       AND r.export_id = e.id
+                       AND (r.email_address_id = ANY($3)
+                            OR r.outbound_message_id = ANY($4))))
+          ORDER BY e.id",
+    )
+    .bind(request.workspace_id)
+    .bind(request.contact_id)
+    .bind(&linked_email_ids)
+    .bind(&potential_outbound_ids)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let prelocked_export_ids: Vec<Uuid> = if potential_export_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_scalar(
+            "SELECT id FROM marketing_exports
+              WHERE workspace_id = $1 AND id = ANY($2)
+              ORDER BY id FOR UPDATE",
+        )
+        .bind(request.workspace_id)
+        .bind(&potential_export_ids)
+        .fetch_all(tx.conn())
+        .await
+        .map_err(map_sqlx)?
+    };
 
     // Lock every linked identity before checking which addresses are shared.
     // Contact-email inserts take a key-share lock on these rows, so a new
@@ -230,21 +319,184 @@ pub async fn erase_contact(
         .map_err(map_sqlx)?
     };
 
-    let outbound_ids: Vec<Uuid> = if thread_ids.is_empty() && exclusive_email_ids.is_empty() {
+    // Frozen campaign enrollments may retain the erased contact even when
+    // their email address is shared and has no thread. Include those owned
+    // outbounds explicitly; another enrollment for the same shared address
+    // but a different contact remains outside this set.
+    let outbound_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT o.id FROM outbound_messages o
+          WHERE o.workspace_id = $1
+            AND (o.thread_id = ANY($2)
+                 OR o.to_email_address_id = ANY($3)
+                 OR EXISTS (
+                    SELECT 1 FROM campaign_enrollments e
+                     WHERE e.workspace_id = o.workspace_id
+                       AND e.id = o.enrollment_id
+                       AND e.contact_id = $4))
+          ORDER BY o.id",
+    )
+    .bind(request.workspace_id)
+    .bind(&thread_ids)
+    .bind(&exclusive_email_ids)
+    .bind(request.contact_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+
+    // Redact any native Campaigns export whose frozen recipient map contains
+    // an exclusively erased address or an outbound scrubbed above. The export
+    // rows are already locked ahead of the email-address locks; read their
+    // operation states before deciding whether erasure may proceed.
+    let export_candidates: Vec<Uuid> = if exclusive_email_ids.is_empty() && outbound_ids.is_empty()
+    {
         Vec::new()
     } else {
         sqlx::query_scalar(
-            "SELECT id FROM outbound_messages
+            "SELECT DISTINCT export_id
+               FROM marketing_export_recipients
               WHERE workspace_id = $1
-                AND (thread_id = ANY($2) OR to_email_address_id = ANY($3))
-              ORDER BY id",
+                AND (email_address_id = ANY($2) OR outbound_message_id = ANY($3))
+              ORDER BY export_id",
         )
         .bind(request.workspace_id)
-        .bind(&thread_ids)
         .bind(&exclusive_email_ids)
+        .bind(&outbound_ids)
         .fetch_all(tx.conn())
         .await
         .map_err(map_sqlx)?
+    };
+    if export_candidates
+        .iter()
+        .any(|export_id| !prelocked_export_ids.contains(export_id))
+    {
+        return Err(AppError::conflict(
+            "native marketing export targets changed during privacy erasure; retry the request",
+        ));
+    }
+    let marketing_export_rows: Vec<(Uuid, String)> = if export_candidates.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            "SELECT id, state FROM marketing_exports
+              WHERE workspace_id = $1 AND id = ANY($2)
+              ORDER BY id FOR UPDATE",
+        )
+        .bind(request.workspace_id)
+        .bind(&export_candidates)
+        .fetch_all(tx.conn())
+        .await
+        .map_err(map_sqlx)?
+    };
+    let marketing_export_ids: Vec<Uuid> = marketing_export_rows.iter().map(|(id, _)| *id).collect();
+    let operation_states: Vec<(Uuid, String, String)> = if marketing_export_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            "SELECT export_id, kind, status FROM marketing_operations
+              WHERE workspace_id = $1 AND export_id = ANY($2)
+              ORDER BY export_id, id",
+        )
+        .bind(request.workspace_id)
+        .bind(&marketing_export_ids)
+        .fetch_all(tx.conn())
+        .await
+        .map_err(map_sqlx)?
+    };
+    let unresolved_export = marketing_export_rows.iter().find(|(export_id, state)| {
+        let has_in_flight_write =
+            operation_states
+                .iter()
+                .any(|(operation_export_id, kind, status)| {
+                    operation_export_id == export_id
+                        && matches!(
+                            kind.as_str(),
+                            "create_list"
+                                | "add_contacts"
+                                | "subscribe"
+                                | "create_campaign"
+                                | "send_campaign"
+                        )
+                        && matches!(status.as_str(), "started" | "unknown")
+                });
+        let has_completed_send_before_terminal_export =
+            !matches!(state.as_str(), "completed" | "rejected" | "canceled")
+                && operation_states
+                    .iter()
+                    .any(|(operation_export_id, kind, status)| {
+                        operation_export_id == export_id
+                            && kind == "send_campaign"
+                            && status == "completed"
+                    });
+        matches!(state.as_str(), "submitting" | "in_progress")
+            || has_in_flight_write
+            || has_completed_send_before_terminal_export
+    });
+    if unresolved_export.is_some() {
+        return Err(AppError::conflict(
+            "native Campaigns provider operation must be reconciled before privacy erasure",
+        ));
+    }
+
+    // Launch values are recipient-level data. Exclusive identities are
+    // scrubbed across launches; outbounds selected through an erased thread
+    // scrub only the matching launch/address values.
+    if !exclusive_email_ids.is_empty() || !outbound_ids.is_empty() {
+        sqlx::query(
+            "UPDATE marketing_launch_values v
+                SET variables = '{}'::jsonb
+              WHERE v.workspace_id = $1
+                AND (v.email_address_id = ANY($2)
+                     OR EXISTS (
+                        SELECT 1 FROM outbound_messages o
+                         WHERE o.workspace_id = v.workspace_id
+                           AND o.launch_id = v.launch_id
+                           AND o.to_email_address_id = v.email_address_id
+                           AND o.id = ANY($3)))",
+        )
+        .bind(request.workspace_id)
+        .bind(&exclusive_email_ids)
+        .bind(&outbound_ids)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+    }
+
+    let marketing_exports_redacted = if marketing_export_ids.is_empty() {
+        0
+    } else {
+        sqlx::query(
+            "UPDATE marketing_export_recipients
+                SET variables = '{}'::jsonb,
+                    normalized_address = 'privacy-erased:' || email_address_id::text,
+                    sync_status = 'excluded', updated_at = now()
+              WHERE workspace_id = $1 AND export_id = ANY($2)
+                AND (email_address_id = ANY($3) OR outbound_message_id = ANY($4))",
+        )
+        .bind(request.workspace_id)
+        .bind(&marketing_export_ids)
+        .bind(&exclusive_email_ids)
+        .bind(&outbound_ids)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+        sqlx::query(
+            "UPDATE marketing_exports
+                SET state = 'canceled',
+                    source_manifest_hash = decode(repeat('00', 32), 'hex'),
+                    content_hash = decode(repeat('00', 32), 'hex'),
+                    audience_hash = decode(repeat('00', 32), 'hex'),
+                    export_hash = decode(repeat('00', 32), 'hex'),
+                    subject = '', body_text = '', body_html = '', field_map = '{}'::jsonb,
+                    report = '{\"privacy_erased\":true,\"provider_cancel_not_requested\":true}'::jsonb,
+                    recipient_count = 0, version = version + 1
+              WHERE workspace_id = $1 AND id = ANY($2)",
+        )
+        .bind(request.workspace_id)
+        .bind(&marketing_export_ids)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?
+        .rows_affected()
     };
 
     // Collect only objects exclusively referenced by the messages being
@@ -659,6 +911,8 @@ pub async fn erase_contact(
     let metadata = json!({
         "email_addresses_suppressed": suppressed_count,
         "messages_scrubbed": messages_scrubbed,
+        "marketing_exports_redacted": marketing_exports_redacted,
+        "provider_cancel_not_requested": marketing_exports_redacted > 0,
         "attachments_removed": attachments_removed,
         "source_objects_access_revoked": source_objects_access_revoked,
         "notes_removed": notes_removed,
@@ -699,6 +953,8 @@ pub async fn erase_contact(
         contact_id: request.contact_id,
         email_addresses_suppressed: suppressed_count,
         messages_scrubbed,
+        marketing_exports_redacted,
+        provider_cancel_not_requested: marketing_exports_redacted > 0,
         attachments_removed,
         source_objects_access_revoked,
         object_cleanup_pending: pending,

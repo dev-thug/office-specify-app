@@ -123,7 +123,7 @@ pub async fn create_delivery_channel(
     }
     if !matches!(
         conn.provider.as_str(),
-        "zoho_mail" | "delivery_provider" | "transactional_provider"
+        "zoho_mail" | "delivery_provider" | "transactional_provider" | "zoho_campaigns"
     ) {
         let _ = tx.rollback().await;
         return Err(AppError::validation(
@@ -132,6 +132,12 @@ pub async fn create_delivery_channel(
                 field: "connection_id".into(),
                 code: "invalid".into(),
             }],
+        ));
+    }
+    if conn.provider == "zoho_campaigns" && req.purpose.as_str() != "marketing" {
+        return Err(AppError::validation(
+            "provider does not support this channel purpose",
+            vec![],
         ));
     }
     let (account, _g) = repo::get_mail_account(&mut tx, ctx.principal_id, req.mail_account_id)

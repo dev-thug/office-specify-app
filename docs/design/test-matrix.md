@@ -74,3 +74,28 @@ behavior, or delivery. Marketing send remains application-disabled.
 See [integration status](zoho-integration-status.md) for intentionally unwired
 SDK operations and [the setup runbook](../runbooks/zoho-campaigns.md) for live-account
 prerequisites. Provider SDK method availability is not an application feature.
+
+## Office-owned templates / native Campaigns verification (2026-10-10)
+
+The native Campaigns path is exercised with real Office HTTP APIs and a stateful
+loopback provider, not live Zoho credentials. Coverage includes immutable local
+template versions and frozen variables, independent export-hash approval, exact
+list/field readback, one bulk send, signed HTML/tamper rejection, opt-out import
+and propagation, ambiguous acceptance without resend, concurrent revoke/pause/
+cancel, and persistent contact-field leases between in-flight exports.
+
+Database checks cover recipient/address binding, immutable reviews, API/worker
+privileges and local privacy redaction. Browser checks cover Office visual/source
+editing, sample-only recipient preview, local version persistence, native export
+controls, independent approval and unknown-outcome locking. Account entitlements,
+remote merge rendering, native footers and actual email delivery require a real
+configured account and are not established by these checks.
+
+Verified in the local synthetic environment: workspace regression run **487/487**;
+after final hardening, schema **8/8**, native privacy **4/4**, existing retention
+**3/3**, marketing application units **18/18**, and marketing worker **7/7**.
+Web **387/387** across 48 files, TypeScript, ESLint/design lint and production build
+passed. Playwright **13/13** passed against the running local application. The
+native flow suite **7/7** and native delivery API **4/4** passed. The flow suite covers a 101-list final scan with a refresh between
+pages and exactly one provider send after complete coverage. These are loopback
+provider results, not live Zoho delivery results.

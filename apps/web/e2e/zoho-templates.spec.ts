@@ -1,75 +1,66 @@
 import { expect, test } from "@playwright/test";
 
-test("Zoho templates are a mocked cloud source for an immutable Office version", async ({ page }) => {
+test("Office template authoring is the source and never loads remote Zoho templates", async ({ page }) => {
   await page.goto("/login");
   await page.locator("#login-email").fill(process.env.E2E_ADMIN_EMAIL!);
   await page.locator("#login-password").fill(process.env.E2E_ADMIN_PASSWORD!);
   await page.locator('button[type="submit"]').click();
   await expect(page).toHaveURL(/\/app\/dashboard/);
-  const signedInMe = await page.evaluate(async () => {
-    const response = await fetch("/api/v1/me");
-    return response.json();
+
+  let remoteTemplateCalls = 0;
+  await page.route("**/api/v1/zoho-email-api/**", (route) => {
+    remoteTemplateCalls += 1;
+    return route.abort();
   });
-  const workspaceId = signedInMe.data.workspace_id as string;
-  expect(workspaceId).toBeTruthy();
 
   await page.goto("/app/templates");
   await page.getByRole("button", { name: "New template", exact: true }).click();
   const create = page.getByRole("dialog");
-  const name = "Zoho import fixture " + crypto.randomUUID();
+  const name = `Office-owned source ${crypto.randomUUID()}`;
   await create.getByLabel("Template name", { exact: true }).fill(name);
   await create.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/templates\/[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Zoho templates", exact: true })).toHaveCount(0);
 
-  // The test uses only synthetic API responses; it never contacts Zoho or requires its paid product.
-  let externalLoads = 0;
-  await page.route("https://example.invalid/**", (route) => {
-    externalLoads += 1;
-    return route.abort();
-  });
-  await page.route("**/api/v1/integrations/zoho-campaigns", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ data: { email_api_configured: true, workspace_id: workspaceId } }),
-  }));
-  await page.route("**/api/v1/zoho-email-api/templates/remote-fixture", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    headers: { etag: '"fixture-hash"' },
-    body: JSON.stringify({ data: {
-      id: "remote-fixture",
-      name: "Fixture welcome",
-      content: '<style>.welcome { color: teal; }</style><p class="welcome">Hello $[Contact Name]$</p><img src="https://example.invalid/pixel">',
-      content_type: "html",
-      content_hash: "fixture-hash",
-    } }),
-  }));
-  await page.route("**/api/v1/zoho-email-api/templates**", (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (path !== "/api/v1/zoho-email-api/templates") return route.fallback();
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ data: [{ id: "remote-fixture", name: "Fixture welcome" }], page: { next_cursor: null, has_more: false } }),
-    });
-  });
-
-  await page.getByRole("button", { name: "Zoho templates", exact: true }).click();
-  const library = page.getByRole("dialog");
-  await library.getByRole("button", { name: "Fixture welcome", exact: true }).click();
-  await expect(library.getByTitle("Zoho template preview")).toHaveAttribute("sandbox", "");
-  await page.screenshot({ path: "test-artifacts/zoho-template-native-preview.png", fullPage: true, animations: "disabled" });
-  await expect(library.getByTitle("Zoho template preview")).toBeVisible();
-  expect(externalLoads).toBe(0);
-  await library.getByRole("button", { name: "Import as new Office version", exact: true }).click();
-  await expect(library.getByText("Unsupported HTML will be removed from the Office copy", { exact: true })).toBeVisible();
-  await library.getByLabel("Office mapping for Contact Name", { exact: true }).selectOption("contact.name");
-  await library.getByRole("button", { name: "Continue to Office editor", exact: true }).click();
-
+  await page.getByRole("button", { name: "New version", exact: true }).click();
   const editor = page.getByRole("dialog");
-  await expect(editor.getByLabel("Subject", { exact: true })).toHaveValue("Fixture welcome");
-  await expect(editor.getByLabel("Body (text)", { exact: true })).toHaveValue("Hello {{contact.name}}");
+  await editor.getByLabel("Subject", { exact: true }).fill("Hello {{company.name}}");
+  const body = editor.getByRole("textbox", { name: "Email message", exact: true });
+  await body.fill("Hello ");
+  await body.press("End");
+  await editor.getByRole("button", { name: "Insert Contact name", exact: true }).click();
+  await body.press("End");
+  await body.press("Enter");
+  await body.pressSequentially("Welcome to Office");
+
+  await editor.getByRole("tab", { name: "HTML code", exact: true }).click();
+  const code = editor.getByRole("textbox", { name: "HTML code", exact: true });
+  await expect(code).toHaveValue(/\{\{contact\.name\}\}/);
+  const officeHtml = "<p>Hello <strong>{{contact.name}}</strong> at {{company.name}}.</p>";
+  await code.fill(officeHtml);
+  await editor.getByRole("tab", { name: "Compose", exact: true }).click();
+  await expect(body.locator("strong")).toHaveText("{{contact.name}}");
+  await expect(editor.getByLabel("Body (text)", { exact: true })).toHaveValue("Hello {{contact.name}} at {{company.name}}.");
+
+  await editor.getByRole("tab", { name: "Recipient preview", exact: true }).click();
+  const preview = editor.frameLocator('iframe[title="Recipient email preview"]');
+  await expect(preview.getByText("Hello Jina Kim at Example Company.", { exact: true })).toBeVisible();
+
+  const saveRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.endsWith("/versions")
+  );
   await editor.getByRole("button", { name: "Save version", exact: true }).click();
+  const saved = (await saveRequest).postDataJSON();
+  expect(saved.body_html).toBe(officeHtml);
+  expect(saved.body_text).toBe("Hello {{contact.name}} at {{company.name}}.");
+  expect(Object.keys(saved.variable_schema.properties).sort()).toEqual([
+    "company.name",
+    "contact.name",
+  ]);
   await expect(editor).toHaveCount(0);
-  await expect(page.getByText("Hello {{contact.name}}", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("Hello {{contact.name}} at {{company.name}}.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Zoho templates", exact: true })).toHaveCount(0);
+  expect(remoteTemplateCalls).toBe(0);
 });

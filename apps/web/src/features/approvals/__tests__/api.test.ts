@@ -50,6 +50,7 @@ describe("approvals API", () => {
       {
         decision: "approved",
         expected_snapshot_hash: "cd".repeat(32),
+        expected_export_hash: "ef".repeat(32),
         reason: "확인",
       },
       { etag: 3, idempotencyKey: "dec-1" }
@@ -62,6 +63,7 @@ describe("approvals API", () => {
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.decision).toBe("approved");
     expect(body.expected_snapshot_hash).toBe("cd".repeat(32));
+    expect(body.expected_export_hash).toBe("ef".repeat(32));
     // execution_status는 비동기 실행 — 발송 완료가 아니다.
     expect(res.data.execution_status).toBe("queued");
   });

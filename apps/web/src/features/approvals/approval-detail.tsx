@@ -86,12 +86,16 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
   const self = isSelfRequest(req, me.data?.principal_id);
   const expired = approvalExpired(req);
   const requiresMailPreview = req?.action_type === "campaign_launch" || req?.action_type === "message_submit";
+  const nativeExportRequired = req?.native_export_required === true;
+  const nativeExport = nativeExportRequired ? req?.native_export ?? null : null;
+  const nativeExportReady = nativeExport?.state.toLowerCase() === "ready";
   const earlyPreview = req?.target?.preview ?? req?.snapshot ?? null;
   const previewMessages = earlyPreview?.messages ?? earlyPreview?.items ?? [];
   const reviewableMailContent = Boolean(
     earlyPreview?.body_text ||
       earlyPreview?.body_html ||
-      previewMessages.some((message) => message.body_text || message.body_html)
+      previewMessages.some((message) => message.body_text || message.body_html) ||
+      (nativeExportReady && nativeExport?.body_html)
   );
   const actions = useMemo(() => {
     const result = approvalActions(req, { mePrincipalId: me.data?.principal_id });
@@ -111,8 +115,11 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
         reject: { visible: false, disabled: true },
       };
     }
+    if (nativeExportRequired && !nativeExportReady && result.approve.visible) {
+      return { ...result, approve: { ...result.approve, disabled: true } };
+    }
     return result;
-  }, [req, me.data, me.isSuccess, requiresMailPreview, reviewableMailContent]);
+  }, [req, me.data, me.isSuccess, requiresMailPreview, reviewableMailContent, nativeExportRequired, nativeExportReady]);
 
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -269,6 +276,17 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
           <AlertDescription>{t("snapshotUnavailable")}</AlertDescription>
         </Alert>
       ) : null}
+      {nativeExportRequired && !nativeExportReady && req.status === "pending" ? (
+        <Alert variant="warning">
+          <ShieldAlertIcon />
+          <AlertTitle>{t("nativeExportRequiredTitle")}</AlertTitle>
+          <AlertDescription>
+            {nativeExport
+              ? t("nativeExportNotReady", { state: nativeExport.state })
+              : t("nativeExportUnavailable")}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {!self && req.can_decide === false && req.status === "pending" ? (
         <Alert variant="warning">
           <ShieldAlertIcon />
@@ -354,6 +372,73 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
           </dd>
         </dl>
       </section>
+
+      {nativeExportRequired ? (
+        <section className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="grid gap-1">
+              <h2 className="text-sm font-medium">{t("nativeExportTitle")}</h2>
+              <p className="text-2xs text-muted-foreground">{t("nativeExportDescription")}</p>
+            </div>
+            {nativeExport ? <Badge variant="secondary">{nativeExport.state}</Badge> : null}
+          </div>
+          {nativeExport ? (
+            <>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr_auto_1fr]">
+                <dt className="text-muted-foreground">{t("nativeExportRecipients")}</dt>
+                <dd className="font-medium">{t("recipientsCount", { count: nativeExport.recipient_count })}</dd>
+                <dt className="text-muted-foreground">{t("nativeExportSender")}</dt>
+                <dd className="font-medium">{nativeExport.sender_address}</dd>
+                <dt className="text-muted-foreground">{t("nativeExportSubject")}</dt>
+                <dd className="font-medium">{nativeExport.subject}</dd>
+                <dt className="text-muted-foreground">{t("nativeExportHash")}</dt>
+                <dd className="break-all font-mono text-ui">{nativeExport.export_hash}</dd>
+                {nativeExport.provider_list_key ? <>
+                  <dt className="text-muted-foreground">{t("nativeExportList")}</dt>
+                  <dd>{nativeExport.provider_list_key}</dd>
+                </> : null}
+                {nativeExport.topic_id ? <>
+                  <dt className="text-muted-foreground">{t("nativeExportTopic")}</dt>
+                  <dd>{nativeExport.topic_id}</dd>
+                </> : null}
+              </dl>
+              <div className="grid gap-1.5">
+                <h3 className="text-xs font-medium text-muted-foreground">{t("nativeExportFieldMap")}</h3>
+                {Object.entries(nativeExport.field_map ?? {}).length > 0 ? (
+                  <div className="grid gap-1.5">
+                    <div className="grid grid-cols-3 gap-2 px-3 text-2xs text-muted-foreground">
+                      <span>{t("nativeExportOfficeVariable")}</span>
+                      <span>{t("nativeExportContactField")}</span>
+                      <span>{t("nativeExportMergeTag")}</span>
+                    </div>
+                    <ul className="flex flex-col gap-1.5">
+                      {Object.entries(nativeExport.field_map).map(([variable, mapping]) => (
+                        <li key={variable} className="grid grid-cols-3 gap-2 rounded-lg border border-border px-3 py-2 text-2xs">
+                          <code className="break-all font-mono">{variable}</code>
+                          <span>{mapping.contact_field}</span>
+                          <code className="break-all font-mono text-muted-foreground">{mapping.merge_tag}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : <p className="text-sm text-muted-foreground">{t("nativeExportNoFieldMap")}</p>}
+              </div>
+              {nativeExport.body_html ? (
+                <div className="grid gap-1">
+                  <h3 className="text-xs font-medium text-muted-foreground">{t("nativeExportHtml")}</h3>
+                  <iframe
+                    sandbox=""
+                    title={t("nativeExportHtml")}
+                    srcDoc={nativeExport.body_html}
+                    className="h-64 w-full rounded-lg border border-border bg-card"
+                  />
+                  <p className="text-2xs text-muted-foreground">{t("htmlSandboxNote")}</p>
+                </div>
+              ) : null}
+            </>
+          ) : <p className="text-sm text-muted-foreground">{t("nativeExportUnavailable")}</p>}
+        </section>
+      ) : null}
 
       {/* 동결 스냅샷 — 실제 수신자·발신 주소·렌더링된 본문 */}
       <section className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4">
@@ -490,8 +575,8 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
         open={approveOpen}
         onOpenChange={setApproveOpen}
         request={req}
-        recipientsCount={recipientsCount}
-        sender={sender}
+        recipientsCount={nativeExportRequired && nativeExport ? nativeExport.recipient_count : recipientsCount}
+        sender={nativeExportRequired && nativeExport ? nativeExport.sender_address : sender}
         snapshotHash={snapshotHash}
         etag={etag}
         onError={handleMutationError}
@@ -592,9 +677,18 @@ function ApproveDialog({
   const t = useTranslations("approvals.detail");
   const idem = useIdempotencyKey();
   const [pending, setPending] = useState(false);
-  const snapshot = request.snapshot ?? undefined;
+  const snapshot = request.target?.preview ?? request.snapshot ?? undefined;
+  const nativeExportHash = request.native_export_required
+    ? request.native_export?.state.toLowerCase() === "ready"
+      ? request.native_export.export_hash
+      : undefined
+    : undefined;
 
   async function confirm() {
+    if (request.native_export_required && !nativeExportHash) {
+      onOpenChange(false);
+      return;
+    }
     setPending(true);
     try {
       const res = await postApprovalDecision(
@@ -602,6 +696,7 @@ function ApproveDialog({
         {
           decision: "approved",
           expected_snapshot_hash: snapshotHash,
+          ...(nativeExportHash ? { expected_export_hash: nativeExportHash } : {}),
         },
         { etag: etag(), idempotencyKey: idem.key() }
       );
@@ -625,13 +720,25 @@ function ApproveDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={t("approveTitle")}
-      description={t("approveDescription")}
+      description={
+        request.native_export_required
+          ? t("nativeApproveDescription")
+          : t("approveDescription")
+      }
       recipientsCount={recipientsCount}
       sender={sender}
-      purpose={snapshot?.purpose ?? request.action_type}
+      purpose={
+        request.native_export_required
+          ? snapshot?.purpose ?? "marketing"
+          : snapshot?.purpose ?? request.action_type
+      }
       contentPreview={{
-        subject: snapshot?.subject,
-        body: snapshot?.body_text,
+        subject: request.native_export_required
+          ? request.native_export?.subject
+          : snapshot?.subject,
+        body: request.native_export_required
+          ? t("nativeApprovePreviewNote")
+          : snapshot?.body_text,
       }}
       confirmText={t("approveConfirmPhrase")}
       confirmLabel={pending ? t("submitting") : t("submitApprove")}
