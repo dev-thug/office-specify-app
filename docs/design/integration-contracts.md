@@ -136,3 +136,16 @@ remain summaries. `GET /template-versions/{id}` provides immutable subject,
 bodies and variable schema under `templates.read` and workspace isolation, so
 both the template editor preview and campaign step picker use the same version
 content. Frontend template DTOs derive their identifier fields from OpenAPI.
+
+The template version editor has Compose, HTML code, and Recipient preview modes
+sharing one HTML value. Visual edits and pasted content use a conservative
+browser-side HTML allowlist matching the current basic-mail policy; server
+validation remains authoritative. Recipient preview uses an isolated sandbox,
+blocks remote resources, and disables link navigation. Plain-text fallback is
+HTML-derived until the user edits it separately; regeneration is explicit.
+
+The predefined variable palette contains `company.name`, `contact.name`,
+`sender.display_name`, `meeting.booking_url`, and `compliance.unsubscribe_url`.
+Insertion or typing a known placeholder registers its schema once. Localized
+sample recipient values are preview-only and never stored as schema defaults or
+sent in version-create requests. System URL values remain server-generated.

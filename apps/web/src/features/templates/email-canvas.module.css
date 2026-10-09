@@ -1,0 +1,12 @@
+/* A recipient email surface stays light independently of the application's theme. */
+.canvas {
+  color-scheme: light;
+  color: CanvasText;
+  background: Canvas;
+  font: 15px/1.7 Arial, sans-serif;
+  overflow-wrap: anywhere;
+}
+.canvas:empty::before { color: GrayText; }
+.canvas a { color: LinkText; }
+.canvas blockquote { border-left: 3px solid GrayText; padding-left: 12px; margin-left: 0; }
+.canvas table { border-collapse: collapse; }

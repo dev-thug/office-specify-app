@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { PlusIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,6 +33,9 @@ import {
 } from "@/lib/api/templates";
 import { ApiError } from "@/lib/api/problem";
 
+import { EmailCanvas, type EmailCanvasHandle } from "./email-canvas";
+import { cleanEmailHtml, DEFAULT_EMAIL_VARIABLES, emailHtmlToText, escapeEmailText, renderSampleEmail } from "./email-authoring";
+
 import { useApiErrorMessage } from "./api-error-message";
 import { useIdempotencyKey } from "./use-idempotency-key";
 
@@ -44,7 +47,7 @@ export interface VariableRow {
   /** 로컬 행 키 — 서버 필드가 아니다. */
   key: string;
   name: string;
-  type: "string" | "number" | "boolean" | "uri";
+  type: "string" | "uri";
   required: boolean;
   maxLength: string;
 }
@@ -118,6 +121,7 @@ export function VersionEditor({
 }) {
   const t = useTranslations("templates.editor");
   const tCommon = useTranslations("common");
+  const a = useTranslations("templates.authoring");
   const errorMessage = useApiErrorMessage("templates");
   const idem = useIdempotencyKey();
 
@@ -128,6 +132,48 @@ export function VersionEditor({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
+  const canvas = useRef<EmailCanvasHandle>(null);
+  const subjectInput = useRef<HTMLInputElement>(null);
+  const textInput = useRef<HTMLTextAreaElement>(null);
+  const insertTarget = useRef<"subject" | "text" | "body">("body");
+  const [autoText, setAutoText] = useState(true);
+  const [samples, setSamples] = useState<Record<string, string>>({
+    "company.name": a("sampleCompany"), "contact.name": a("sampleContact"),
+    "sender.display_name": a("sampleSender"),
+    "meeting.booking_url": "https://example.invalid/booking/sample",
+    "compliance.unsubscribe_url": "https://example.invalid/unsubscribe/sample",
+  });
+  function registerPresets(...texts: string[]) {
+    const used = new Set(texts.flatMap(text => [...text.matchAll(PLACEHOLDER)].map(match => match[1])));
+    setRows(current => {
+      const added = DEFAULT_EMAIL_VARIABLES.filter(preset => used.has(preset.name) && !current.some(row => row.name.trim() === preset.name));
+      return added.length ? [...current, ...added.map(preset => ({...newRow(), name: preset.name, type: preset.type, maxLength: preset.maxLength, required: true}))] : current;
+    });
+  }
+  function updateHtml(html: string) {
+    setBodyHtml(html);
+    registerPresets(html);
+    if (autoText) setBodyText(emailHtmlToText(html));
+  }
+  function insertPreset(preset: typeof DEFAULT_EMAIL_VARIABLES[number]) {
+    setRows(current => current.some(row => row.name.trim() === preset.name) ? current : [...current, {
+      ...newRow(), name: preset.name, type: preset.type, maxLength: preset.maxLength, required: true,
+    }]);
+    const value = "{{" + preset.name + "}}";
+    const target = insertTarget.current;
+    const input = target === "subject" ? subjectInput.current : target === "text" ? textInput.current : null;
+    if (input) {
+      const start = input.selectionStart ?? input.value.length;
+      const next = input.value.slice(0, start) + value + input.value.slice(input.selectionEnd ?? start);
+      if (target === "subject") setSubject(next);
+      else { setBodyText(next); setAutoText(false); }
+      input.focus();
+      requestAnimationFrame(() => input.setSelectionRange(start + value.length, start + value.length));
+    } else { canvas.current?.insertVariable(preset.name); }
+  }
+  const sampleSubject = subject.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}/g, (token, name: string) => samples[name] ?? token);
+  const sampleHtml = typeof document === "undefined" ? "" : renderSampleEmail(bodyHtml || "<p>" + escapeEmailText(bodyText).replaceAll("\n", "<br>") + "</p>", samples);
+
 
   // 본문 자리표시자 ↔ 스키마 정합 경고 (저장은 막지 않고 서버가 최종 검증한다).
   const outsideSchema = useMemo(
@@ -139,6 +185,7 @@ export function VersionEditor({
     const errs: string[] = [];
     if (!subject.trim()) errs.push(t("subjectRequired"));
     if (!bodyText.trim()) errs.push(t("bodyRequired"));
+    if (cleanEmailHtml(bodyHtml).removed) errs.push(a("unsupportedHtml"));
     const seen = new Set<string>();
     for (const row of rows) {
       const name = row.name.trim();
@@ -176,6 +223,7 @@ export function VersionEditor({
       setBodyText("");
       setBodyHtml("");
       setRows([]);
+      setAutoText(true);
       onOpenChange(false);
       onCreated(res.data.template_version_id);
     } catch (err) {
@@ -196,47 +244,78 @@ export function VersionEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
+        <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>{t("description")}</DialogDescription>
         </DialogHeader>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+        <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div data-slot="email-editor-scroll" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-5">
           <div className="grid gap-1.5">
             <Label htmlFor="tv-subject">{t("subject")}</Label>
             <Input
+              ref={subjectInput}
+              onFocus={() => { insertTarget.current = "subject"; }}
               id="tv-subject"
               required
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => { setSubject(e.target.value); registerPresets(e.target.value); }}
               placeholder={t("subjectPlaceholder")}
             />
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="tv-body-text">{t("bodyText")}</Label>
-            <Textarea
-              id="tv-body-text"
-              required
-              rows={6}
-              value={bodyText}
-              onChange={(e) => setBodyText(e.target.value)}
-              placeholder={t("bodyTextPlaceholder")}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="tv-body-html">{t("bodyHtml")}</Label>
-            <Textarea
-              id="tv-body-html"
-              rows={4}
-              value={bodyHtml}
-              onChange={(e) => setBodyHtml(e.target.value)}
-              className="font-mono text-ui"
-              spellCheck={false}
-            />
-            <p className="text-2xs text-muted-foreground">{t("bodyHtmlHint")}</p>
-          </div>
 
-          <fieldset className="grid gap-2">
+          <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_16rem]">
+            <div className="flex min-w-0 flex-col gap-4">
+              <EmailCanvas ref={canvas} html={bodyHtml} previewHtml={sampleHtml} previewSubject={sampleSubject}
+                onChange={updateHtml} onFocus={() => { insertTarget.current = "body"; }} />
+              <div className="grid gap-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="tv-body-text">{t("bodyText")}</Label>
+                  <span className="text-2xs text-muted-foreground">{a(autoText ? "autoText" : "manualText")}</span>
+                </div>
+                <Textarea ref={textInput} id="tv-body-text" required rows={3} value={bodyText}
+                  onFocus={() => { insertTarget.current = "text"; }}
+                  onChange={event => { setBodyText(event.target.value); setAutoText(false); registerPresets(event.target.value); }}
+                  placeholder={t("bodyTextPlaceholder")} />
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-2xs text-muted-foreground">{a("textHint")}</p>
+                  {!autoText ? <Button type="button" size="xs" variant="ghost" onClick={() => {
+                    setBodyText(emailHtmlToText(bodyHtml)); setAutoText(true);
+                  }}>{a("regenerateText")}</Button> : null}
+                </div>
+              </div>
+            </div>
+            <aside className="flex min-w-0 flex-col gap-5 rounded-xl border bg-muted/20 p-4">
+              <div>
+                <h3 className="text-sm font-medium">{a("presets")}</h3>
+                <p className="mt-1 text-2xs text-muted-foreground">{a("presetsHint")}</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                {DEFAULT_EMAIL_VARIABLES.map(preset => <Button key={preset.name} type="button" variant="outline"
+                  className="h-auto justify-start gap-2 py-2 text-left" onMouseDown={event => event.preventDefault()}
+                  onClick={() => insertPreset(preset)} aria-label={a("insertPreset", {name: a(preset.label)})}>
+                  <PlusIcon className="size-3.5 shrink-0" aria-hidden />
+                  <span className="min-w-0"><span className="block text-xs">{a(preset.label)}</span><code className="block break-all text-2xs font-normal text-muted-foreground">{preset.name}</code></span>
+                </Button>)}
+              </div>
+              <p className="text-2xs text-muted-foreground">{a("systemHint")}</p>
+              <details className="border-t pt-3">
+                <summary className="cursor-pointer text-xs font-medium">{a("sampleValues")}</summary>
+                <p className="mt-2 text-2xs text-muted-foreground">{a("sampleOnly")}</p>
+                <div className="mt-3 grid gap-3">
+                  {DEFAULT_EMAIL_VARIABLES.filter(preset => !preset.system).map(preset => <div key={preset.name} className="grid gap-1">
+                    <Label htmlFor={"sample-" + preset.label} className="text-xs">{a(preset.label)}</Label>
+                    <Input id={"sample-" + preset.label} aria-label={a("sampleInput", {name: a(preset.label)})} value={samples[preset.name]}
+                      onChange={event => setSamples(current => ({...current, [preset.name]: event.target.value}))} />
+                  </div>)}
+                </div>
+              </details>
+            </aside>
+          </div>
+          <details className="rounded-xl border px-4 py-3">
+            <summary className="cursor-pointer text-sm font-medium">{t("variablesTitle")} ({rows.length})</summary>
+
+          <fieldset className="mt-3 grid gap-2">
             <legend className="text-sm font-medium">{t("variablesTitle")}</legend>
             <p className="text-2xs text-muted-foreground">
               {t("variablesHint")}
@@ -280,8 +359,6 @@ export function VersionEditor({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="string">string</SelectItem>
-                    <SelectItem value="number">number</SelectItem>
-                    <SelectItem value="boolean">boolean</SelectItem>
                     <SelectItem value="uri">uri</SelectItem>
                   </SelectContent>
                 </Select>
@@ -341,6 +418,7 @@ export function VersionEditor({
               </Button>
             </div>
           </fieldset>
+          </details>
 
           {outsideSchema.length > 0 ? (
             <Alert variant="warning">
@@ -369,7 +447,8 @@ export function VersionEditor({
             </p>
           ) : null}
 
-          <DialogFooter>
+          </div>
+          <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
             <Button
               type="button"
               variant="outline"
