@@ -621,3 +621,19 @@ pub async fn first_workspace_id(db: &Db) -> Result<Option<Uuid>, AppError> {
         .await
         .map_err(map_sqlx)
 }
+
+/// Least-privilege worker check: authority bits only, never credential hashes.
+pub async fn credential_authorizes(
+    tx: &mut Tx<'_>,
+    credential_id: Uuid,
+    principal_id: Option<Uuid>,
+    required_scopes: &[&str],
+) -> Result<bool, AppError> {
+    sqlx::query_scalar("SELECT credential_authorizes($1,$2,$3)")
+        .bind(credential_id)
+        .bind(principal_id)
+        .bind(required_scopes)
+        .fetch_one(tx.conn())
+        .await
+        .map_err(map_sqlx)
+}

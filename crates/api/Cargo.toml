@@ -33,6 +33,8 @@ base64.workspace = true
 reqwest.workspace = true
 
 [dev-dependencies]
+sqlx.workspace = true
+chrono-tz.workspace = true
 rand.workspace = true
 tempfile = "3"
 # Enable the fixture module for integration tests only (R2).

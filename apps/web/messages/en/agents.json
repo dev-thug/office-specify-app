@@ -1,1 +1,117 @@
-{}
+{
+  "tabs": {
+    "runs": "Runs",
+    "proposals": "Lead proposals",
+    "agents": "Agents"
+  },
+  "runs": {
+    "newRun": "Request run",
+    "columns": {
+      "objective": "Objective",
+      "agent": "Agent",
+      "status": "Status",
+      "requestedBy": "Requested by",
+      "createdAt": "Requested at",
+      "actions": "Actions"
+    },
+    "filterStatus": "Status filter",
+    "allStatuses": "All statuses",
+    "empty": "No agent runs yet",
+    "emptyDescription": "Request a research run with an objective and limits.",
+    "detail": "Detail",
+    "refresh": "Refresh"
+  },
+  "newRun": {
+    "title": "New agent run request",
+    "description": "Set the objective, scope, and budget. Agents never perform external effects without approval.",
+    "objective": "Objective",
+    "objectivePlaceholder": "e.g. Research North American manufacturing leads",
+    "objectiveRequired": "Enter an objective",
+    "agent": "Agent",
+    "selectAgent": "Select an active agent…",
+    "agentRequired": "Select an active agent.",
+    "noAgents": "No active agents are available. Ask an administrator to register one.",
+    "scopeIndustry": "Target industry (optional)",
+    "scopeCountry": "Target country code (optional, e.g. KR)",
+    "maxProposals": "Max proposals",
+    "budgetTitle": "Budget limits (optional)",
+    "budgetToolCalls": "Max tool calls",
+    "budgetSearches": "Max external searches",
+    "budgetCost": "Cost cap (USD, estimated)",
+    "submit": "Request run",
+    "submitting": "Requesting…",
+    "success": "Run requested",
+    "error": "Could not request the run"
+  },
+  "detail": {
+    "runInfo": "Run details",
+    "objective": "Objective",
+    "agent": "Agent",
+    "requestedBy": "Requested by",
+    "createdAt": "Requested at",
+    "startedAt": "Started",
+    "finishedAt": "Finished",
+    "cancelRequestedAt": "Cancel requested at",
+    "budgetTitle": "Budget",
+    "usageTitle": "Usage",
+    "budgetKey": {
+      "max_tool_calls": "Max tool calls",
+      "max_proposals": "Max proposals",
+      "max_external_searches": "Max external searches",
+      "max_input_tokens": "Max input tokens",
+      "max_output_tokens": "Max output tokens",
+      "max_cost_usd": "Cost cap"
+    },
+    "usageKey": {
+      "tool_calls": "Tool calls",
+      "proposals_submitted": "Proposals submitted",
+      "external_searches": "External searches",
+      "input_tokens": "Input tokens",
+      "output_tokens": "Output tokens",
+      "estimated_cost_usd": "Cost (estimated)",
+      "actual_cost_usd": "Cost (actual)"
+    },
+    "costEstimatedBadge": "Estimated",
+    "costEstimateOnly": "No provider billing data — cost is an estimate.",
+    "actionsTitle": "Tool calls",
+    "actionsEmpty": "No tool calls recorded",
+    "colTool": "Tool",
+    "colResult": "Result code",
+    "colExternalEffect": "External effect",
+    "colApproval": "Approval",
+    "colStarted": "Started",
+    "colDuration": "Duration",
+    "externalEffect": "External effect",
+    "internalOnly": "Internal",
+    "viewApproval": "Approval request",
+    "investigate": "Outcome unknown — investigate",
+    "traceId": "Trace ID",
+    "argsHash": "Arguments hash",
+    "redactedArgs": "Arguments (redacted)",
+    "proposalsTitle": "Lead proposals from this run",
+    "cancel": "Cancel run",
+    "cancelRequested": "Cancellation requested",
+    "cancelTitle": "Cancel agent run",
+    "cancelDescription": "Stops new tool calls. Already-submitted external effects cannot be undone and are shown separately.",
+    "cancelReason": "Cancellation reason (optional)",
+    "cancelConfirm": "Request cancellation",
+    "canceling": "Requesting cancellation…",
+    "cancelSuccess": "Cancellation requested",
+    "cancelFailed": "Could not cancel the run",
+    "cancelForbidden": "You do not have permission to cancel this run.",
+    "notFound": "Run not found",
+    "loadFailed": "Could not load the run"
+  },
+  "agentsList": {
+    "columns": {
+      "name": "Name",
+      "status": "Status",
+      "scopes": "Allowed scopes",
+      "id": "ID"
+    },
+    "empty": "No agents registered",
+    "emptyDescription": "Agent principals and credentials are managed in settings.",
+    "noScopes": "No scopes",
+    "loadFailed": "Could not load agents"
+  }
+}

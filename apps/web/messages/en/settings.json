@@ -1,1 +1,252 @@
-{}
+{
+  "errors": {
+    "generic": "The request could not be processed. Try again shortly.",
+    "conflict": "Someone else changed it first. The latest state was reloaded.",
+    "precondition": "This request needs a concurrency header. Reload the latest state and try again.",
+    "inProgress": "The same operation is already in progress. Check its state instead of creating a new one.",
+    "emergencyStop": "Submission is blocked while emergency stop is active.",
+    "forbidden": "You do not have permission for this action.",
+    "notFound": "The resource was not found or is not accessible.",
+    "providerBlocked": "Blocked — the provider policy does not allow this.",
+    "invalidCredentials": "The current password is incorrect.",
+    "agentGrantForbidden": "Agents cannot be granted send or approve permissions."
+  },
+  "common": {
+    "adminOnly": "Requires Admin",
+    "version": "Version {version}",
+    "copy": "Copy",
+    "copied": "Copied",
+    "open": "Open"
+  },
+  "members": {
+    "title": "Members",
+    "description": "Manage members, roles, agent principals, and invitations.",
+    "sectionMembers": "Members",
+    "sectionInvitations": "Invitations",
+    "sectionAgents": "Agents & service credentials",
+    "kindAll": "All",
+    "loadMore": "Load more",
+    "kind": {
+      "human": "Human",
+      "agent": "Agent",
+      "system": "System"
+    },
+    "columns": {
+      "name": "Name",
+      "kind": "Kind",
+      "email": "Email",
+      "role": "Role",
+      "status": "Status",
+      "createdAt": "Created",
+      "actions": "Actions"
+    },
+    "role": {
+      "admin": "Admin",
+      "manager": "Manager",
+      "member": "Member",
+      "agent": "Agent",
+      "system": "System"
+    },
+    "roleChangeSuccess": "Role updated",
+    "disable": "Request disable",
+    "disableTitle": "Request principal disable",
+    "disableDescription": "Disabling is accepted as a job (202) together with a reassignment / pending-work policy.",
+    "disablePolicy": "Pending work policy",
+    "disablePolicyReassign": "Reassign to another member",
+    "disablePolicyCancel": "Cancel pending work",
+    "disableReassignTo": "Reassign to",
+    "disableReason": "Reason (optional)",
+    "disableSubmit": "Send disable request",
+    "disableSuccess": "Disable request accepted",
+    "emptyTitle": "No members",
+    "emptyDescription": "Add members with an admin-issued invite link.",
+    "invite": "Invite member",
+    "inviteTitle": "Invite member",
+    "inviteEmail": "Email",
+    "inviteRole": "Role",
+    "inviteSubmit": "Create invite link",
+    "inviteCreatedTitle": "Invite link created",
+    "inviteCreatedDescription": "This link is shown only once. It cannot be viewed again after you share it.",
+    "inviteMissingLink": "The response contained no invite link. Check the invitation list for status.",
+    "invitation": {
+      "email": "Email",
+      "role": "Role",
+      "expiresAt": "Expires",
+      "state": "State",
+      "statePending": "Pending",
+      "stateAccepted": "Accepted",
+      "stateRevoked": "Revoked",
+      "stateExpired": "Expired",
+      "emptyTitle": "No invitations in flight",
+      "emptyDescription": "Invitation status appears here once a link is created."
+    },
+    "agents": {
+      "new": "Add agent",
+      "emptyTitle": "No agents registered",
+      "emptyDescription": "Create an agent principal and issue service credentials.",
+      "columns": {
+        "name": "Name",
+        "createdAt": "Created"
+      },
+      "credentials": "Credentials",
+      "nameLabel": "Name",
+      "scopesLabel": "Allowed scopes",
+      "createSubmit": "Create agent",
+      "createSuccess": "Agent created"
+    },
+    "credentials": {
+      "new": "Issue credential",
+      "newTitle": "Issue credential for {name}",
+      "nameLabel": "Name",
+      "expiresAtLabel": "Expires at",
+      "createSubmit": "Issue",
+      "createdTitle": "Credential issued",
+      "createdDescription": "This secret is shown only once. Store it somewhere safe.",
+      "empty": "No credentials issued",
+      "never": "Never used",
+      "columns": {
+        "name": "Name",
+        "scopes": "Scopes",
+        "lastUsed": "Last used"
+      },
+      "revoke": "Revoke",
+      "revokeTitle": "Revoke credential",
+      "revokeDescription": "Auth is rejected immediately, and pending work requested by this credential is stopped (default).",
+      "revokeCancel": "Cancel",
+      "revokeConfirm": "Revoke",
+      "revokeSuccess": "Credential revoked"
+    }
+  },
+  "mailAccounts": {
+    "title": "Mail accounts",
+    "description": "Shared mailbox connections and per-mailbox grants.",
+    "oauthNotice": "OAuth secrets are never stored or displayed. Only connection state is shown.",
+    "connect": "Connect mailbox",
+    "connectTitle": "Start mailbox connection",
+    "connectDescription": "You are issued a provider auth URL to visit. Secrets are never displayed.",
+    "regionLabel": "Zoho region",
+    "connectSubmit": "Start OAuth",
+    "reconnect": "Reconnect",
+    "reconnectDone": "Reauth started. Check the connection status.",
+    "manageGrants": "Manage grants",
+    "columns": {
+      "name": "Name",
+      "provider": "Provider",
+      "status": "Status",
+      "lastSync": "Last synced",
+      "actions": "Actions"
+    },
+    "provider": {
+      "zoho_mail": "Zoho Mail",
+      "zoho_calendar": "Zoho Calendar",
+      "delivery_provider": "Delivery provider",
+      "transactional_provider": "Transactional provider"
+    },
+    "emptyTitle": "No mailboxes connected",
+    "emptyDescription": "Connect a mailbox to grant read, compose, send, approve, and assign permissions.",
+    "grants": {
+      "title": "Mailbox grants",
+      "rulesNotice": "Grants apply as an intersection with role permissions. A child permission cannot be on without its parent.",
+      "readOnly": "Changing this requires Admin",
+      "save": "Save",
+      "saveSuccess": "Grants saved",
+      "keys": {
+        "can_read": "Read",
+        "can_compose": "Compose",
+        "can_send": "Send",
+        "can_approve": "Approve",
+        "can_assign": "Assign"
+      },
+      "blockAgent": "Agents cannot hold send or approve permissions",
+      "blockRole": "Approve can only be granted to Admin or Manager",
+      "addTitle": "Add principal",
+      "principal": "Principal",
+      "principalPlaceholder": "Select a principal to grant",
+      "addSubmit": "Grant",
+      "emptyTitle": "No grants yet"
+    }
+  },
+  "calendars": {
+    "title": "Calendars",
+    "description": "Per-host calendar connections and sync state.",
+    "privacyNotice": "Private event details are never shown. Only connection metadata is visible.",
+    "connect": "Connect calendar",
+    "columns": {
+      "host": "Host",
+      "calendar": "Calendar",
+      "provider": "Provider",
+      "status": "Status",
+      "busy": "Busy calc",
+      "createdAt": "Connected"
+    },
+    "busyYes": "Included",
+    "busyNo": "Excluded",
+    "emptyTitle": "No calendars connected",
+    "emptyDescription": "Connect a calendar to offer public booking slots."
+  },
+  "security": {
+    "title": "Security",
+    "description": "Manage your sessions, password, and security records.",
+    "sessions": {
+      "title": "Your sessions",
+      "current": "Current session",
+      "revoke": "Revoke",
+      "revokeTitle": "Revoke session",
+      "revokeDescription": "This session's authentication is rejected immediately.",
+      "revokeCancel": "Cancel",
+      "revokeConfirm": "Revoke",
+      "revokeSuccess": "Session revoked",
+      "columns": {
+        "session": "Session",
+        "createdAt": "Signed in",
+        "lastSeen": "Last active",
+        "expiresAt": "Expires",
+        "status": "Status"
+      },
+      "emptyTitle": "Session info unavailable",
+      "emptyDescription": "Active sessions appear here."
+    },
+    "password": {
+      "title": "Change password",
+      "current": "Current password",
+      "next": "New password",
+      "hint": "Use 12–128 characters.",
+      "submit": "Change password",
+      "success": "Password changed"
+    }
+  },
+  "policies": {
+    "title": "Policies",
+    "description": "Read-only view of send-basis, channel policy, and emergency-stop state.",
+    "consentNotice": "This screen is read-only. A UI checkbox is not evidence of a send basis or consent; changes are made in each area of Operations and Settings by users with permission.",
+    "manageLink": "Manage in Operations > Integrations",
+    "emergency": {
+      "on": "Emergency stop active — new external submissions are blocked",
+      "off": "Emergency stop off — normal state",
+      "description": "Emergency stop blocks all new external submissions (sends, booking confirmations, etc.) immediately."
+    },
+    "channels": {
+      "title": "Delivery channel policy",
+      "enabledYes": "Enabled",
+      "enabledNo": "Disabled",
+      "columns": {
+        "name": "Channel",
+        "purpose": "Purpose",
+        "policy": "Policy status",
+        "enabled": "Enabled"
+      },
+      "emptyTitle": "No delivery channels",
+      "emptyDescription": "Only channels whose policy review is 'allowed' can be enabled."
+    },
+    "accounts": {
+      "title": "Connection state",
+      "columns": {
+        "address": "Mail address",
+        "status": "Connection status",
+        "lastSync": "Last synced"
+      },
+      "emptyTitle": "No accounts connected",
+      "emptyDescription": "Connections needing reauth appear here with a warning state."
+    }
+  }
+}

@@ -15,6 +15,8 @@ pub const ROLE_WORKER: &str = "worker_runtime";
 /// Read-only analytics role (R22/F3) — used by tests to verify the grant
 /// matrix; no runtime component connects as report_reader yet.
 pub const ROLE_REPORT: &str = "report_reader";
+/// Audited maintenance only; never used by API or worker connections.
+pub const ROLE_RETENTION: &str = "retention_operator";
 
 #[derive(Clone)]
 pub struct Db {
@@ -34,7 +36,7 @@ impl Db {
     ) -> Self {
         debug_assert!(matches!(
             runtime_role,
-            None | Some(ROLE_API) | Some(ROLE_WORKER) | Some(ROLE_REPORT)
+            None | Some(ROLE_API) | Some(ROLE_WORKER) | Some(ROLE_REPORT) | Some(ROLE_RETENTION)
         ));
         Self {
             pool,

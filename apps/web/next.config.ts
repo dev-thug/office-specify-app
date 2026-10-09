@@ -9,6 +9,9 @@ const API_ORIGIN = process.env.API_ORIGIN ?? "http://127.0.0.1:8080";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Public booking/invitation capabilities must not appear in dev access logs.
+  logging: { incomingRequests: false },
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   reactStrictMode: true,
   async rewrites() {
     return [

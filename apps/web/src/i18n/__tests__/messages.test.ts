@@ -48,4 +48,17 @@ describe("i18n 네임스페이스 파일", () => {
     const onlyEn = [...en].filter((k) => !ko.has(k));
     expect({ onlyKo, onlyEn }).toEqual({ onlyKo: [], onlyEn: [] });
   });
+
+  it("company lifecycle stages are directly translatable in both locales", () => {
+    const stages = ["prospect", "engaged", "qualified", "customer", "inactive"];
+    for (const locale of routing.locales) {
+      const companies = readNamespace(locale, "companies") as {
+        stages?: Record<string, unknown>;
+      };
+      for (const stage of stages) {
+        expect(companies.stages?.[stage], `${locale}: companies.stages.${stage}`).toEqual(expect.any(String));
+        expect(companies.stages?.[stage]).not.toBe("");
+      }
+    }
+  });
 });

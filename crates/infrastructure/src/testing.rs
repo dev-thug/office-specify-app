@@ -81,6 +81,10 @@ pub fn ctx_for_credential(
 /// the `Db` was built with a runtime role.
 pub async fn seed_workspace(db: &Db) -> Result<TestWorld, AppError> {
     let workspace_id = auth_repo::insert_workspace(db, "Test Workspace").await?;
+    let mut origin_tx = db.begin(workspace_id).await?;
+    sqlx::query("UPDATE workspaces SET settings = settings || '{\"public_base_url\":\"http://localhost:3000\"}'::jsonb WHERE id=$1")
+        .bind(workspace_id).execute(origin_tx.conn()).await.map_err(map_sqlx)?;
+    origin_tx.commit().await?;
     // users.email is globally UNIQUE and the test DB persists across runs —
     // namespace every seeded address.
     let suffix = &workspace_id.simple().to_string()[..8];

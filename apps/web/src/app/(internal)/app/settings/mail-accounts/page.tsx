@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { MailAccountsScreen } from "@/features/settings";
 
 export default function SettingsMailAccountsPage() {
-  return <ScreenStub screen="settingsMailAccounts" />;
+  return <MailAccountsScreen />;
 }

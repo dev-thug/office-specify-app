@@ -1,58 +1,55 @@
-# Test matrix — T01–T36 (source §18.1)
+# Acceptance test coverage — T01–T36
 
-Each row maps to named tests in the owning crate. `cargo nextest run
---workspace` with `DATABASE_URL=postgres://…/outreach_test` runs everything
-marked **implemented**.
+This maps the approved source design §18.1 to tests currently present across the Rust crates. **Coverage records test presence and scope, not the latest pass/fail result.** `Covered` means a named automated test directly exercises the stated behavior; `Partial` means the test covers only part of the acceptance scenario; `Gate only` means the fail-closed path is tested while the gated success path remains disabled; `Missing` means no matching test was found. No absent test is marked complete.
 
-| T | Requirement (§18.1) | Owner | Test location | Status |
+Run database-backed tests against a dedicated test database as described in the [local development runbook](../runbooks/local-development.md). Frontend unit tests are listed after the matrix but do not substitute for these server-side and PostgreSQL checks.
+
+| ID | Source requirement | Coverage | Existing test(s) | Gap / limit |
 |---|---|---|---|---|
-| T01 | Cross-workspace id → 404/403, zero rows | foundation | `infrastructure/tests/foundation.rs::t01_cross_workspace_isolation` | ✅ |
-| T02 | Admin without mailbox grant sees nothing | mailboxes (Task 3) | `api/tests/` module tests | pending |
-| T03 | Agent approve/grant/submit → deny + audit | org/agents (Task 3/12) | — | pending |
-| T04 | 20× same idempotency key + same request → 1 exec | foundation | `foundation.rs::t04_t05_idempotency_concurrency_and_reuse` | ✅ |
-| T05 | Same key, different body → 409 | foundation | same test | ✅ |
-| T06 | Step/enrollment on different revision → FK fail | campaigns (Task 7) | — | pending |
-| T07 | Thread/message mailbox mismatch → FK fail | inbox (Task 9) | — | pending |
-| T08 | Post-approval snapshot/target change → unusable | approvals (Task 8) | — | pending |
-| T09 | Self-approval → reject | approvals (Task 8) | — | pending (DB trigger exists: `reject_self_approval`) |
-| T10 | Approver/requester perms revoked before dispatch | sending (Task 9) | — | pending |
-| T11 | Suppression commit then new send permit → deny | compliance (Task 10) | — | pending |
-| T12 | Suppression during in-flight submit → record, no new submits | sending (Task 9) | — | pending |
-| T13 | Worker crash after provider accept → unknown → reconcile | sending (Task 9) | — | pending |
-| T14 | Webhook dup/out-of-order/replay → no dupes | inbox (Task 9) | — | pending |
-| T15 | Two users submit same-thread reply → 1 claim | sending (Task 9) | — | pending |
-| T16 | New inbound during draft → 409 re-review | sending (Task 9) | — | pending |
-| T17 | Per-principal read state isolation | inbox (Task 9) | — | pending |
-| T18 | 50 concurrent overlapping holds → 1 wins | booking (Task 11) | — | pending (EXCLUDE constraint exists) |
-| T19 | Buffer overlap blocked | booking (Task 11) | — | pending |
-| T20 | DST duplicate/nonexistent local time | booking (Task 11) | — | pending |
-| T21 | Calendar-create timeout → unknown, slot not auto-released | booking (Task 11) | — | pending |
-| T22 | Hold expiry → expired; confirming not auto-released | booking (Task 11) | — | pending |
-| T23 | Unsubscribe GET/HEAD/prefetch → no state change | compliance (Task 10) | — | pending |
-| T24 | Valid token repeated POST → same success, no scope creep | compliance (Task 10) | — | pending |
-| T25 | RFC one-click POST without cookies → works | compliance (Task 10) | — | pending |
-| T26 | Inbound HTML script/form/remote image blocked | inbox (Task 9) | — | pending |
-| T27 | Private IP/redirect/DNS-rebinding research URL → blocked | research (Task 5) | — | pending |
-| T28 | Inbound-mail prompt injection → no tool/scope change | agents (Task 12) | — | pending |
-| T29 | Redis init/outage → limits fail-safe, no lost jobs | operations (Task 11) | — | pending (fail-mode enum exists) |
-| T30 | Old-DB restore → send workers stay locked pending reconcile | operations (Task 11) | — | pending |
-| T31 | One address on N contacts → 1 enrollment per launch | crm (Task 4) | — | pending |
-| T32 | Suppression survives contact delete/re-import | compliance (Task 10) | — | pending |
-| T33 | marketing + Zoho channel activation → blocked | mailboxes (Task 3) | — | pending |
-| T34 | accepted-but-undelivered → no delivered/read UI claim | sending (Task 9) | — | pending |
-| T35 | Agent unsubstantiated email candidate → storable, unsendable | research (Task 5) | — | pending |
-| T36 | Retention delete → nothing left in search/attachments/cache | operations (Task 11) | — | pending |
+| T01 | Cross-workspace company/mailbox IDs return 404/403 and expose no rows | Covered | `crates/infrastructure/tests/foundation.rs::t01_cross_workspace_isolation`; `crates/api/tests/crm.rs::t01_company_other_workspace_404`; `crates/api/tests/acceptance_gaps.rs::t01_cross_workspace_mail_account_detail_is_404` | — |
+| T02 | Admin without a mailbox grant cannot read mail content, search, or export | Covered | `crates/infrastructure/tests/org_security.rs::t02_grant_allows_denies_without_grant_even_for_admin`; `crates/api/tests/mailboxes_admin.rs::t02_grantless_principals_get_no_mailbox_access`; `crates/api/tests/inbox.rs::mailbox_acl_hides_ungranted_thread_and_content`; `crates/api/tests/acceptance_gaps.rs::t02_grantless_admin_mail_search_and_export_do_not_expose_content` | Export validation is checked against a CRM-only field allowlist; no email export feature exists. |
+| T03 | Agent approval, grant changes, or direct submit are denied and audited | Covered | `crates/api/tests/org_admin.rs::t03_agent_admin_endpoints_denied_and_audited`; `crates/api/tests/approvals_decisions.rs::agent_cannot_decide`; `crates/worker/tests/sending_pipeline.rs::submit_guards_snapshot_approval_agent` | Direct submit denial is tested at the application/worker path; no real provider call is involved. |
+| T04 | Twenty concurrent identical idempotency requests execute once | Covered | `crates/infrastructure/tests/foundation.rs::t04_t05_idempotency_concurrency_and_reuse` | The test launches 20 identical concurrent calls and checks one fresh execution and 19 replays. |
+| T05 | Same idempotency key with a different request returns 409 and preserves the first result | Covered | `crates/infrastructure/tests/foundation.rs::t04_t05_idempotency_concurrency_and_reuse` | — |
+| T06 | Campaign step and enrollment cannot reference different revisions | Covered | `crates/infrastructure/tests/campaigns.rs::t06_enrollment_on_different_revision_fails_fk`; `t06_enrollment_step_from_wrong_revision_fails_fk`; `t06_outbound_step_from_wrong_revision_fails_fk` | — |
+| T07 | Thread and message cannot reference different mailboxes | Covered | `crates/infrastructure/tests/inbox.rs::t07_thread_message_mailbox_mismatch_fk_fails` | — |
+| T08 | Content, target, or sender-route changes make an existing approval unusable | Covered | `crates/infrastructure/tests/campaigns.rs::t08_frozen_rows_and_request_snapshot_are_immutable`; `crates/api/tests/approvals_decisions.rs::t08_snapshot_mismatch_blocks_decision`; `crates/worker/tests/acceptance_gaps.rs::t08_approved_outbound_body_recipient_and_sender_route_are_immutable` | Tests exercise DB rejection of post-approval body, recipient, and route edits and verify the approved hash remains pinned. |
+| T09 | Requester cannot approve their own request | Covered | `crates/infrastructure/tests/campaigns.rs::t09_self_approval_decision_rejected_by_trigger`; `crates/api/tests/approvals_decisions.rs::t09_self_approval_forbidden` | — |
+| T10 | Revoked requester/approver permission prevents queued dispatch | Covered | `crates/worker/tests/sending_dispatch.rs::t10_requester_grant_revoked_before_dispatch_cancels`; `t10_approver_grant_revoked_before_dispatch_cancels` | Tests assert cancellation, audit where applicable, and no provider send. |
+| T11 | Committed suppression blocks a new send permit and pauses campaign work | Covered | `crates/infrastructure/tests/compliance_suppression.rs::t11_suppression_blocks_and_scope_confined`; `crates/worker/tests/sending_dispatch.rs::t11_suppression_denies_at_dispatch_and_submit`; `crates/worker/tests/acceptance_gaps.rs::t11_committed_suppression_runs_registered_pause_enrollments_handler` | Exercises both the send gate and the registered enrollment-pause handler. |
+| T12 | Suppression during submission is recorded; later sends are blocked | Covered | `crates/infrastructure/tests/compliance_suppression.rs::t12_suppression_committed_midflight_blocks_permit_check`; `crates/worker/tests/sending_dispatch.rs::t12_suppression_during_inflight_is_recorded` | The in-flight acceptance is retained and audited; a later submission to that address is denied. |
+| T13 | Provider acceptance followed by worker loss becomes unknown and is reconciled without resubmission | Covered | `crates/worker/tests/sending_dispatch.rs::t13_crash_after_accept_isolated_to_unknown_then_reconciled`; `crates/worker/tests/sending_dispatch.rs::t13_expired_dispatch_lease_isolated_and_reconciled_without_resubmit`; `crates/infrastructure/tests/fix_round1.rs::reclaim_external_effect_and_max_attempts` | Lease-expiry recovery is tested through database state and a controllable provider stub; no real provider adapter or process kill is used. |
+| T14 | Duplicate, out-of-order, and replayed webhooks create no duplicate messages/events | Covered | `crates/worker/tests/inbox_jobs.rs::t14_webhook_dup_out_of_order_and_replay_no_duplicates`; `crates/api/tests/inbox.rs::webhook_ingress_verifies_signature_and_dedupes` | Worker test exercises provider-message ordering and replay; API test covers ingress signature/dedupe. |
+| T15 | Two employees submitting the same thread reply create one reply claim | Covered | `crates/worker/tests/sending_pipeline.rs::t15_two_users_one_reply_claim` | — |
+| T16 | New inbound mail during draft requires a fresh review | Covered | `crates/worker/tests/sending_pipeline.rs::t16_new_inbound_during_draft_forces_rereview`; `crates/api/tests/inbox.rs::t16_reply_draft_requires_fresh_inbound_context` | — |
+| T17 | One employee's read state does not change another's | Covered | `crates/infrastructure/tests/inbox.rs::t17_read_state_is_per_principal_and_monotonic` | — |
+| T18 | Fifty overlapping booking holds for one host have one winner | Covered | `crates/infrastructure/tests/booking_holds.rs::t18_concurrent_overlapping_holds_have_one_winner` | Exercises PostgreSQL exclusion constraint with 50 concurrent attempts. |
+| T19 | Overlapping booking buffers block a second hold | Covered | `crates/infrastructure/tests/booking_holds.rs::t19_buffer_overlap_blocks_second_hold` | — |
+| T20 | Ambiguous/nonexistent DST local times are not exposed or confirmed as a single valid slot | Covered | `crates/domain/src/booking.rs::tests::spring_gap_has_no_local_instant_and_fall_back_has_two`; `crates/api/tests/booking_api.rs::public_slots_distinguish_repeated_time_and_skip_dst_gap` | Public availability distinguishes repeated UTC instants and skips the nonexistent local-time gap. |
+| T21 | Calendar-create timeout leaves an unknown booking and occupied hold | Covered | `crates/worker/tests/booking_saga.rs::t21_calendar_create_unknown_retains_hold_and_is_not_retried` | Fake calendar outcome exercises the unknown saga and no-retry behavior; no real calendar account is connected. |
+| T22 | Expiring a held booking does not release a confirming booking | Covered | `crates/worker/tests/booking_saga.rs::t22_hold_expiry_leaves_confirming_booking_occupied` | — |
+| T23 | Unsubscribe GET/HEAD or link prefetch does not change state | Covered | `crates/api/tests/compliance_api.rs::t23_get_and_head_unsubscribe_no_state_change`; `t23_unknown_token_generalized_404` | HEAD is used to model link prefetch; repeated GET and token state are checked. |
+| T24 | Repeated POST for a valid unsubscribe token returns the same success and scope | Covered | `crates/api/tests/compliance_api.rs::t24_repeat_post_same_success` | Checks one suppression row, same response on repeat, and rejects nonempty scope-changing bodies. |
+| T25 | RFC one-click unsubscribe works without cookies | Gate only | `crates/api/tests/compliance_api.rs::t25_one_click_returns_disabled_until_gated` | The cookie-free form request is tested only for the documented fail-closed response. Successful one-click remains disabled pending E01. |
+| T26 | Inbound HTML scripts, forms, handlers, and remote images are blocked | Covered | `crates/infrastructure/tests/inbox.rs::t26_inbound_html_strips_scripts_forms_and_remote_images`; `crates/infrastructure/src/repo/inbox.rs::tests::sanitize_strips_script_style_handlers_and_remote_images` | — |
+| T27 | Private-IP, redirect, and DNS-rebinding research URLs are blocked | Partial | `crates/infrastructure/src/repo/research.rs::tests::t27_research_url_rejects_private_targets`; `t27_public_urls_pass` | Input validation rejects private/reserved IP forms and accepts public examples; live DNS resolution, redirect, and rebinding behavior is not exercised. |
+| T28 | Inbound-mail prompt injection cannot change agent tools or scope | Partial | `crates/mcp/tests/transport.rs::transport_auth_origin_protocol_and_scoped_tools` | Stored hostile inbound mail is returned as explicitly untrusted content; malicious tool-call data cannot add a forbidden tool or override workspace identity. This tests the server scope boundary, not a model-behavior evaluation. |
+| T29 | Redis failure keeps limits safe and does not lose queued work | Partial | `crates/worker/tests/sending_dispatch.rs::t29_daily_cap_uses_durable_attempt_rows_and_keeps_job_runnable`; `crates/api/tests/operations_agents.rs::t29_database_job_queue_remains_visible_without_redis`; `crates/api/tests/compliance_api.rs::agent_suppression_create_quota_429` | Infrastructure tests `ratelimit::tests::redis_outage_fails_closed_at_connection_or_limit_check` and `closed_rate_limit_fails_when_redis_is_unavailable` verify unavailable-Redis and fail-mode behavior. Durable daily-cap and DB job visibility are tested independently of Redis. A combined production outage drill has not been run. |
+| T30 | Restored database keeps send workers locked until reconciliation | Partial | `crates/worker/tests/sending_dispatch.rs::t30_restore_lock_defers_a_prequeued_send_then_resumes_it`; `crates/api/tests/operations_agents.rs::t30_restore_lock_release_requires_reason_and_records_no_raw_reason` | Dispatch deferral and the audited Admin release route are tested; no actual backup/restore reconciliation drill has been run, so O01 remains closed. |
+| T31 | Shared email address creates one enrollment per address per launch | Covered | `crates/infrastructure/tests/campaigns.rs::t31_one_enrollment_per_address_per_launch`; `t31_second_active_enrollment_for_address_is_blocked`; `crates/api/tests/campaigns_flow.rs::t31_one_address_two_contacts_single_enrollment`; `crates/api/tests/crm.rs::t31_shared_address_single_row`; `crates/worker/tests/crm_jobs.rs::t31_shared_address_single_row` | — |
+| T32 | Suppression survives contact deletion and re-import | Covered | `crates/infrastructure/tests/compliance_suppression.rs::t32_suppression_survives_contact_delete_and_reimport`; `crates/worker/tests/imports_jobs.rs::t32_reimported_suppressed_address_stays_suppressed_contact_recreated` | — |
+| T33 | Zoho Mail marketing channel cannot be activated | Covered | `crates/domain/src/mailboxes.rs::tests::t33_zoho_mail_marketing_is_never_enableable`; `crates/api/tests/mailboxes_admin.rs::t33_zoho_marketing_activation_blocked` | The integration test also verifies a positive review cannot override the provider/purpose block. |
+| T34 | Provider accepted does not imply delivered/read in the UI | Covered | `crates/worker/tests/sending_dispatch.rs::t34_accepted_is_not_delivered` | DTO reports accepted until a provider-confirmed delivered event is recorded. |
+| T35 | Agent-proposed email can be stored but cannot satisfy send eligibility | Covered | `crates/worker/tests/research.rs::t35_accepted_candidate_email_stored_with_pending_basis_unsendable`; `crates/api/tests/campaigns_flow.rs::preflight_reports_suppressed_and_unbased_recipients`; `crates/worker/tests/acceptance_gaps.rs::t35_accepted_candidate_fails_preflight_and_dispatch_send_basis_check` | The acceptance-gap test checks preflight and worker dispatch stop before creating a send attempt. |
+| T36 | Erasure removes person-owned search/attachment data and invalidates caches | Partial | `crates/infrastructure/tests/retention.rs::t36_erases_contact_owned_content_keeps_suppression_and_preserves_other_contact`; `retention_requires_operator_role_and_cannot_cross_workspaces`; `t36_failed_object_delete_leaves_retryable_tombstone` | Synthetic DB/object-store records verify content scrubbing, attachment removal, suppression retention, cache invalidator invocation, and retryable object deletion. The current runtime has no person-data cache. Erasure removes the contact's canonical import row and revokes access to its shared source CSV while retaining bytes; unlinked webhook payloads still need a separate deletion workflow. |
 
-## Foundation-level tests beyond the T rows (Task 1 step 9)
+## Supporting tests outside the T rows
 
-| Requirement | Test |
-|---|---|
-| Migrations apply on empty DB | `migrations_applied_cleanly` + `sqlx migrate run` verified on fresh `outreach_test`/`outreach_dev` |
-| RLS context never leaks across pooled connections | inside `t01_cross_workspace_isolation` |
-| Lease fencing (stale token can't complete) | `job_lease_fencing_and_reclaim` |
-| Lease expiry reclaim + retry/dead transitions | same test |
-| Append-only audit guard | `append_only_guard_blocks_audit_mutation` |
-| Login lockout after 5 failures | `api/tests/auth_flows.rs::login_lockout_after_five_failures` |
-| CSRF rejection on session mutations | `session_mutation_without_csrf_is_rejected` |
-| `/me` unauthenticated → 401 problem+json | `me_requires_auth` |
-| Login sets session+CSRF cookies | `login_sets_cookies_and_me_returns_principal` |
+These tests cover important framework behavior but do not replace an acceptance row:
+
+- `crates/infrastructure/tests/foundation.rs::migrations_applied_cleanly` checks successful SQLx migration records on the configured test database; `job_lease_fencing_and_reclaim` checks stale-token fencing and expired lease reclaim; `append_only_guard_blocks_audit_mutation` checks the audit mutation guard.
+- `crates/api/tests/org_admin.rs` additionally covers self-only session metadata/revocation, password-change HMAC replay, global session revocation, and concurrent password changes without deadlock.
+- `crates/api/tests/auth_flows.rs` covers unauthenticated `/me`, login cookies, five-failure lockout, and CSRF rejection. `crates/application/tests/authz_mailbox.rs` covers member approval/grant denial and missing credential scopes.
+- `crates/mcp/tests/transport.rs::transport_auth_origin_protocol_and_scoped_tools` covers MCP bearer authentication, Origin/protocol handling, and scoped tools. OAuth discovery remains intentionally unsupported under the approved spec deviation X5.
+- `crates/cli/tests/bootstrap.rs` checks that bootstrap fails before writing when its password source/destination is unsafe.
+- `apps/web/src/**/__tests__` contains Vitest coverage for API request shapes, error mapping, feature rules/state, sanitized message rendering, i18n namespaces, and status badges. Those tests verify client behavior; they do not prove the Rust authorization, transaction, or database invariants above.

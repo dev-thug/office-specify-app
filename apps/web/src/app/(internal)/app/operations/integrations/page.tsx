@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { IntegrationsScreen } from "@/features/operations";
 
 export default function OperationsIntegrationsPage() {
-  return <ScreenStub screen="operationsIntegrations" />;
+  return <IntegrationsScreen />;
 }

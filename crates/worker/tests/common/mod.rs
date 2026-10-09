@@ -21,6 +21,7 @@ pub async fn test_db() -> Option<Db> {
 /// Fixtures run as `api_runtime` — `worker_runtime` correctly cannot write
 /// workspaces/users after the R22 grant tightening, so seeding must not use
 /// the worker connection.
+#[allow(dead_code)] // Not every integration-test binary needs API-role fixture writes.
 pub async fn seed_db() -> Db {
     let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for DB tests");
     Db::connect(&url, Some(ROLE_API))

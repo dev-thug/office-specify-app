@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail};
 use clap::{Parser, Subcommand};
 use infrastructure::config::Config;
-use infrastructure::db::{Db, ROLE_API};
+use infrastructure::db::{Db, ROLE_API, ROLE_RETENTION};
 use infrastructure::repo::auth as auth_repo;
 
 #[derive(Parser)]
@@ -41,6 +41,23 @@ enum Cmd {
         /// Write a generated admin password to this path (mode 0600).
         #[arg(long)]
         password_out: Option<PathBuf>,
+    },
+    /// Erase one contact through the audited maintenance role. Defaults to preview.
+    EraseContact {
+        #[arg(long)]
+        workspace_id: uuid::Uuid,
+        #[arg(long)]
+        contact_id: uuid::Uuid,
+        /// Apply the deletion; without this flag only existence is checked.
+        #[arg(long)]
+        execute: bool,
+    },
+    /// Retry inaccessible privacy-erasure object tombstones after a store outage.
+    RetryPrivacyObjectCleanup {
+        #[arg(long)]
+        workspace_id: uuid::Uuid,
+        #[arg(long)]
+        execute: bool,
     },
     /// Export the OpenAPI document to contracts/openapi/openapi.json.
     Openapi {
@@ -86,6 +103,68 @@ async fn main() -> anyhow::Result<()> {
                 password_out,
             )
             .await?
+        }
+        Cmd::EraseContact {
+            workspace_id,
+            contact_id,
+            execute,
+        } => {
+            let config = Config::from_env()?;
+            let db = Db::connect(&config.database_url, Some(ROLE_RETENTION)).await?;
+            if !execute {
+                let mut tx = db.begin(workspace_id).await?;
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM contacts WHERE workspace_id=$1 AND id=$2)",
+                )
+                .bind(workspace_id)
+                .bind(contact_id)
+                .fetch_one(tx.conn())
+                .await?;
+                tx.rollback().await?;
+                if !exists {
+                    bail!("contact not found in this workspace");
+                }
+                println!(
+                    "preview: contact {contact_id} in workspace {workspace_id}; pass --execute to erase"
+                );
+            } else {
+                let store = application::imports::object_store(&config)?;
+                let report = infrastructure::retention::erase_contact(
+                    &db,
+                    infrastructure::retention::ErasureRequest {
+                        workspace_id,
+                        contact_id,
+                        actor_principal_id: None,
+                        request_id: uuid::Uuid::new_v4().to_string(),
+                        trace_id: None,
+                    },
+                    &store,
+                    &UncachedContactViews,
+                )
+                .await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+        }
+        Cmd::RetryPrivacyObjectCleanup {
+            workspace_id,
+            execute,
+        } => {
+            if !execute {
+                println!(
+                    "preview: retry privacy object cleanup in workspace {workspace_id}; pass --execute to apply"
+                );
+            } else {
+                let config = Config::from_env()?;
+                let db = Db::connect(&config.database_url, Some(ROLE_RETENTION)).await?;
+                let store = application::imports::object_store(&config)?;
+                let pending = infrastructure::retention::retry_pending_object_deletions(
+                    &db,
+                    workspace_id,
+                    &store,
+                )
+                .await?;
+                println!("object_cleanup_pending = {pending}");
+            }
         }
         Cmd::Openapi { out } => {
             let doc = api::openapi_document();
@@ -144,9 +223,7 @@ async fn bootstrap(
     // is undisclosable, so failing after committing workspace + admin +
     // credential would leave a real account nobody can log into.
     let (password, generated) = if password_stdin {
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf)?;
-        (buf.trim().to_string(), false)
+        (read_password_stdin()?, false)
     } else if let Ok(p) = std::env::var("OUTREACH_ADMIN_PASSWORD") {
         (p, false)
     } else {
@@ -258,4 +335,71 @@ fn write_json(path: &PathBuf, value: &serde_json::Value) -> anyhow::Result<()> {
     }
     std::fs::write(path, serde_json::to_string_pretty(value)? + "\n")?;
     Ok(())
+}
+
+/// Contact/search/body responses use no-store reads. The runtime currently
+/// caches permissions only, so there are no person-data cache entries to evict.
+struct UncachedContactViews;
+#[async_trait::async_trait]
+impl infrastructure::retention::CacheInvalidator for UncachedContactViews {
+    async fn invalidate_contact(
+        &self,
+        _workspace_id: uuid::Uuid,
+        _contact_id: uuid::Uuid,
+        _email_address_ids: &[uuid::Uuid],
+    ) -> Result<(), contracts::AppError> {
+        Ok(())
+    }
+}
+
+/// Pipes are read directly; terminal input disables echo before any byte is read.
+fn read_password_stdin() -> anyhow::Result<String> {
+    use std::io::IsTerminal;
+    let interactive = std::io::stdin().is_terminal();
+    #[cfg(unix)]
+    let guard = if interactive {
+        Some(TerminalEchoGuard::new()?)
+    } else {
+        None
+    };
+    #[cfg(not(unix))]
+    if interactive {
+        bail!("use piped stdin, OUTREACH_ADMIN_PASSWORD, or --password-out on this platform");
+    }
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+    #[cfg(unix)]
+    drop(guard);
+    if interactive {
+        eprintln!();
+    }
+    read?;
+    Ok(line.trim().to_string())
+}
+
+#[cfg(unix)]
+struct TerminalEchoGuard(rustix::termios::Termios);
+#[cfg(unix)]
+impl TerminalEchoGuard {
+    fn new() -> anyhow::Result<Self> {
+        let original = rustix::termios::tcgetattr(std::io::stdin())?;
+        let mut hidden = original.clone();
+        hidden.local_modes.remove(rustix::termios::LocalModes::ECHO);
+        rustix::termios::tcsetattr(
+            std::io::stdin(),
+            rustix::termios::OptionalActions::Now,
+            &hidden,
+        )?;
+        Ok(Self(original))
+    }
+}
+#[cfg(unix)]
+impl Drop for TerminalEchoGuard {
+    fn drop(&mut self) {
+        let _ = rustix::termios::tcsetattr(
+            std::io::stdin(),
+            rustix::termios::OptionalActions::Now,
+            &self.0,
+        );
+    }
 }

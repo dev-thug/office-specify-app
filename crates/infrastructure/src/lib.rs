@@ -16,6 +16,7 @@ pub mod public_tokens;
 pub mod ratelimit;
 pub mod redis;
 pub mod repo;
+pub mod retention;
 pub mod secrets;
 pub mod storage;
 /// Dev/test fixtures — behind the `testing` cargo feature so release

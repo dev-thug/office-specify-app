@@ -161,6 +161,7 @@ pub trait CalendarProvider: Send + Sync {
 
 #[derive(Debug, Clone, Default)]
 pub struct DeliveryCapabilities {
+    pub supports_send: bool,
     pub one_click_unsubscribe: bool,
     pub custom_headers: bool,
     /// Provider-level idempotency keys accepted.

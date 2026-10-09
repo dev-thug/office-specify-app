@@ -1,5 +1,10 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { ImportDetailPage } from "@/features/imports";
 
-export default function ImportDetailPage() {
-  return <ScreenStub screen="importDetail" />;
+interface Props {
+  params: Promise<{ id: string }>;
+}
+
+export default async function ImportRoutePage({ params }: Props) {
+  const { id } = await params;
+  return <ImportDetailPage importId={id} />;
 }

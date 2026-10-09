@@ -1,1 +1,55 @@
-{}
+{
+  "title": "대시보드",
+  "description": "오늘 처리할 답장·승인·미팅과 발송 상태를 확인합니다.",
+  "emergencyStopBanner": "긴급 중지가 켜져 있어 새 발송·외부 제출이 차단된 상태입니다.",
+  "emergencyStopLink": "운영에서 확인",
+  "sendWorkersLockedBanner": "불명 발송 상태를 대조할 때까지 발송 워커가 잠겨 있습니다.",
+  "scopeLabel": "표시 범위",
+  "scope": {
+    "team": "팀 전체",
+    "mine": "본인 담당"
+  },
+  "queueSection": "오늘 처리할 일",
+  "queue": {
+    "inbox_unhandled": "처리할 답장",
+    "approvals_pending": "승인 대기",
+    "meetings_today": "오늘의 미팅",
+    "outbound_unknown": "발송 불명 조사",
+    "sync_lag": "동기화 지연",
+    "reauth_required": "재인증이 필요한 메일함",
+    "dead_jobs": "실패한 작업",
+    "outbox_backlog": "미발행 outbox 잔량",
+    "other": "기타"
+  },
+  "queueEmptyTitle": "오늘 처리할 항목이 없습니다",
+  "queueEmptyDescription": "새 답장·승인 요청·예정된 미팅·발송 불명이 생기면 여기에 표시됩니다.",
+  "queueItemAria": "{label} {count}건 — 해당 영역으로 이동",
+  "operationalSection": "운영 상태",
+  "operational": {
+    "unknownOutboundMessages": "상태 불명 발송 메시지",
+    "unknownJobs": "상태 불명 작업",
+    "deadJobs": "실패한 작업",
+    "outboxBacklog": "미발행 outbox 잔량",
+    "reauthRequiredMailboxes": "재인증이 필요한 메일함"
+  },
+  "operationalAllInQueues": "모든 운영 카운터를 위 작업 큐에서 확인할 수 있습니다.",
+  "kpiSection": "코호트 성과",
+  "kpi": {
+    "eligible_contacted_companies": "적격 접촉 기업",
+    "reply_company_ratio": "답장 기업 비율",
+    "valid_meeting_ratio": "유효 미팅 전환율",
+    "first_reply_handling_seconds": "최초 답장 처리 시간",
+    "agent_candidate_accept_ratio": "에이전트 후보 채택률"
+  },
+  "denominator": "분모 {count}건",
+  "sampleSize": "표본 {count}건",
+  "observationWindow": "관측 {from} ~ {to}",
+  "refreshedAt": "갱신 {time}",
+  "notAvailable": "N/A",
+  "notAvailableReason": "관측 데이터가 없어 계산하지 않습니다",
+  "unknownNotDelivered": "공급자 수락은 받은편지함 도착이나 읽음을 뜻하지 않습니다",
+  "secondsShort": "{count}초",
+  "minutesShort": "{count}분",
+  "hoursShort": "{count}시간",
+  "daysShort": "{count}일"
+}

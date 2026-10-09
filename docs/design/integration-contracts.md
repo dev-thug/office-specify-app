@@ -33,6 +33,13 @@ Every payload has `payload_version = 1`. Unknown fields must be ignored by consu
 
 | event_type | producer | payload | consumers |
 |---|---|---|---|
+| `company.created`, `company.updated`, `company.archived` | crm | `{company_id, version}` | optional operations consumers |
+| `company.merge_requested`, `company.merged` | crm | `{source_id, target_id, job_id?}` | optional operations consumers |
+| `contact.created`, `contact.updated`, `contact.email_linked`, `contact.email_unlinked`, `contact.primary_email_changed` | crm | entity/address IDs + version | optional operations consumers |
+| `note.created`, `task.created`, `task.updated` | crm | entity/target IDs + version where present | optional operations consumers |
+| `lead.proposed` | research | `{lead_proposal_id, agent_run_id?}` | optional operations consumers |
+| `research.evidence_created` | research | `{research_evidence_id, lead_proposal_id?}` | optional operations consumers |
+| `research.evidence_reviewed` | research | `{research_evidence_id}` | optional operations consumers |
 | `lead.accepted` | research | `{lead_proposal_id, company_id, contact_id?}` | crm activity projector |
 | `campaign.frozen` | campaigns | `{campaign_launch_id, manifest_hash_hex, approval_request_id}` | operations (dashboard) |
 | `approval.decided` | approvals | `{approval_request_id, target_type, target_id, decision}` | crm projector, operations |
@@ -41,6 +48,7 @@ Every payload has `payload_version = 1`. Unknown fields must be ignored by consu
 | `outbound.failed` | sending | `{outbound_message_id, permanent}` | campaigns |
 | `message.received` | inbox | `{email_message_id, thread_id, mail_account_id, from_email_address_id?, classification}` | campaigns (pause per §8.4 rules), crm projector |
 | `suppression.created` | foundation compliance_core | `{email_address_id, purpose_scope, reason}` | crm projector |
+| `booking.link_created` | booking | `{booking_link_id, meeting_type_id, email_address_id}` | optional operations consumers |
 | `booking.requested` | booking | `{booking_id, email_address_id?}` | campaigns (pause follow-ups) |
 | `booking.confirmed` | booking | `{booking_id, company_id?, contact_id?}` | crm projector |
 | `principal.disabled` | org | `{principal_id}` | operations |
@@ -70,3 +78,54 @@ booking change → enqueue `booking.apply_change`; suppression release → enque
 (UNIQUE with `kind`, so re-delivery is idempotent), the domain ids (`thread_id`, `booking_id`, …) and, for mail-derived rows, `mail_account_id`
 so reads filter by mailbox grant (§5.6). `summary` holds only non-sensitive labels (no subject/body for mail rows; the read path joins and
 re-checks the grant before revealing subject).
+
+## UI contract completion
+
+UI09 permits recording attendance independently of calendar delivery state. The
+internal human-only `POST /bookings/{id}/attendance` uses `If-Match` and stores
+`attendance_status` (`attended` or `no_show`) plus an optional 2,000-character
+`outcome_note`; it is available only after a confirmed meeting has ended.
+This completes the UI requirement omitted from the original B.2 endpoint table.
+Public booking input additionally stores the optional guest memo from §7.6;
+the public link publishes the exact privacy notice version required on booking.
+
+Privacy erasure is an audited maintenance operation under `retention_operator`,
+not an ordinary API delete. It preserves the minimum normalized identity needed
+to enforce suppression on future imports. No automatic retention period or legal
+retention-policy approval is implied by this operator path.
+
+The UI11 imports history uses `GET /imports` with a signed cursor and validated
+status filter. Administrators/Managers can list workspace metadata; other
+scoped callers list only their own jobs. It exposes no import-row contents.
+
+External orchestrators can end their own credential-bound run through
+`POST /agent-runs/{id}/finish` with an `outcome` of `completed` or `failed`.
+The handler rejects unfinished actions and canceled runs; a human Administrator
+may use it for recovery. MCP callers can bind calls to an exact run with
+`X-Agent-Run-Id`, which activates ownership, cancellation, budget, and redacted
+action recording checks. Calls without a run still produce audit entries.
+
+The UI13 operation queue uses `GET /jobs`, with the same signed cursor and
+resource visibility rules as job detail, and returns metadata summaries only.
+
+Templates can request a generated `meeting.booking_url`. Draft freeze binds an
+optional `meeting_type_id`; campaign revisions bind it in `schedule_rules`.
+The booking use case validates the host/scopes and creates a hashed capability
+bound to the exact recipient in the freeze transaction. Raw URLs appear only
+in the frozen content, never in audit/outbox metadata. Missing or unauthorized
+bindings fail before a sendable snapshot is committed.
+
+Recipient-facing system URLs use the public Next.js origin (`PUBLIC_BASE_URL`,
+or an explicit workspace override). HTTPS is required except for exact local
+loopback origins; credentials, paths, query strings and fragments are rejected.
+Marketing snapshots always contain an address-bound unsubscribe URL and a
+visible footer, even without a template placeholder. The human URL uses
+`/public/unsubscribe/{token}`; the RFC 8058 header uses the gated API endpoint.
+
+Account security settings use self-service human session authentication:
+`GET /me/sessions`, `POST /me/sessions/{id}/revoke`, and `PUT /me/password`.
+Session DTOs contain identifiers and timestamps only. Password change preserves
+the current session and revokes the user's other sessions across workspaces via
+a narrowly granted database function. Mutation replay stores status-only results;
+password request fingerprints use a server-keyed HMAC, and passwords never enter
+audit metadata or cached responses. Bearer credentials cannot use these routes.

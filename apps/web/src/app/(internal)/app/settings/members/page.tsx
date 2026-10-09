@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { MembersScreen } from "@/features/settings";
 
 export default function SettingsMembersPage() {
-  return <ScreenStub screen="settingsMembers" />;
+  return <MembersScreen />;
 }

@@ -479,6 +479,7 @@ impl FakeDeliveryProvider {
 impl DeliveryProvider for FakeDeliveryProvider {
     fn capabilities(&self) -> DeliveryCapabilities {
         DeliveryCapabilities {
+            supports_send: true,
             one_click_unsubscribe: true,
             custom_headers: true,
             idempotency: true,

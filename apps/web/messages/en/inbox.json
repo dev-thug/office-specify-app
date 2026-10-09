@@ -1,1 +1,150 @@
-{}
+{
+  "title": "Shared Inbox",
+  "description": "Assign and work threads from shared mailboxes. Accepted is not the same as delivered.",
+  "filters": {
+    "mailbox": "Mailbox",
+    "allMailboxes": "All mailboxes",
+    "assignee": "Assignee",
+    "assigneeAll": "All",
+    "assigneeUnassigned": "Unassigned",
+    "assigneeMine": "Mine",
+    "status": "Status",
+    "statusAll": "All statuses",
+    "searchPlaceholder": "Search threads or addresses…",
+    "searchLabel": "Search threads"
+  },
+  "list": {
+    "caption": "Thread list",
+    "empty": "No threads to work on",
+    "emptyDescription": "New replies will appear here.",
+    "unread": "Unread",
+    "unassigned": "Unassigned",
+    "noSubject": "(no subject)",
+    "open": "Open thread"
+  },
+  "reconnect": {
+    "title": "Mailbox reconnect required",
+    "description": "{count} mailbox(es) lost connection — sync and reply sending are paused: {names}",
+    "action": "Go to mailbox settings",
+    "syncStopped": "Sync paused"
+  },
+  "collision": {
+    "newInbound": "A new reply arrived while you were viewing. Please review the latest content.",
+    "teammateReply": "A teammate sent a reply. Please review the latest content.",
+    "changed": "A teammate changed this thread.",
+    "showNew": "Show new content",
+    "hiddenMessages": "{count} new message(s) hidden"
+  },
+  "detail": {
+    "backToList": "Back to list",
+    "assign": "Assign",
+    "assignToMe": "Assign to me",
+    "unassign": "Unassign",
+    "assignee": "Assignee",
+    "assignSuccess": "Assignee updated",
+    "resolve": "Resolve",
+    "reopen": "Reopen",
+    "pending": "Park",
+    "pendingOff": "Unpark",
+    "statusSuccess": "Thread status updated",
+    "suppress": "Register suppression",
+    "crm": "CRM",
+    "crmOpen": "Open CRM panel",
+    "mailbox": "Mailbox",
+    "loading": "Loading thread…"
+  },
+  "conflict": {
+    "title": "Someone changed it first",
+    "statusField": "Thread status",
+    "applyMine": "Overwrite with mine",
+    "useServer": "Use server value"
+  },
+  "message": {
+    "inbound": "Inbound",
+    "outbound": "Outbound",
+    "from": "From",
+    "to": "To",
+    "cc": "Cc",
+    "bcc": "Bcc",
+    "replyTo": "Reply-To",
+    "bodyTitle": "Sanitized message body",
+    "noBody": "No body to display",
+    "attachments": "Attachments",
+    "download": "Download",
+    "downloadFailed": "Could not get an attachment download URL",
+    "classification": "Classification",
+    "reviewed": "Reviewed",
+    "unreviewed": "Unreviewed",
+    "reviewAction": "Review classification",
+    "outboundStatus": "Send status",
+    "acceptedNotDelivered": "Accepted is not a delivery or read confirmation",
+    "unknownInvestigate": "Outcome unknown — needs reconciliation in operations; do not resend"
+  },
+  "classifications": {
+    "human_positive": "Positive reply",
+    "human_negative": "Negative reply",
+    "question": "Question",
+    "unsubscribe_request": "Unsubscribe request",
+    "auto_reply": "Auto-reply",
+    "bounce": "Bounce",
+    "unknown": "Unknown"
+  },
+  "review": {
+    "title": "Review classification",
+    "description": "Model suggestions are kept separate from human reviews. Classifying as unsubscribe request safely pauses follow-up sending.",
+    "fieldLabel": "Reviewed classification",
+    "reasonLabel": "Reason",
+    "reasonPlaceholder": "Why this classification (optional)",
+    "submit": "Save review",
+    "success": "Classification review saved",
+    "suppressionHint": "If this is an unsubscribe request, register a suppression to stop follow-up sending."
+  },
+  "reply": {
+    "title": "Reply draft",
+    "toLabel": "Recipient",
+    "toInferred": "Based on the last inbound message — the server confirms the actual recipient",
+    "bodyLabel": "Body",
+    "placeholder": "Write your reply…",
+    "visibility": "Draft visibility",
+    "visibilityPrivate": "Only me",
+    "visibilityMailbox": "Shared with mailbox",
+    "submit": "Create draft",
+    "submitting": "Creating draft…",
+    "createdTitle": "Reply draft created",
+    "createdDescription": "Submission and sending continue in the sending flow (freeze → review → submit).",
+    "createdRecipient": "Confirmed recipient",
+    "acceptedNotDelivered": "After submission, 'accepted' means the provider accepted it — not that it was delivered or read.",
+    "blockedReconnect": "You cannot create drafts until the mailbox is reconnected.",
+    "blockedCollision": "Please review the new messages first.",
+    "blockedForbidden": "You do not have compose permission for this mailbox.",
+    "blockedNoInbound": "There is no inbound message to reply to."
+  },
+  "errors": {
+    "title": "Could not complete the action",
+    "mailboxDenied": "You do not have access to this mailbox.",
+    "agentSendForbidden": "Agents cannot send directly. Use the approval-request path.",
+    "replyContextChanged": "A new reply arrived while you were writing. Review the latest content and write again.",
+    "replyAlreadySubmitted": "Another reply was already submitted. Refreshing the thread.",
+    "recipientSuppressed": "This address is suppressed. Do not work around it.",
+    "emergencyStop": "The workspace is in emergency stop. Submissions are paused until explicitly resumed.",
+    "versionMismatch": "Someone changed it first. Compare with the latest values.",
+    "versionPrecondition": "The change was rejected because version info was missing. Refresh and try again.",
+    "idempotencyReused": "A different request with the same key was detected. Check the existing operation.",
+    "requestInProgress": "The same request is being processed. Do not create duplicates.",
+    "reauthRequired": "Mailbox re-authentication is required. Notify the connection admin.",
+    "rateLimited": "Too many requests. Try again later.",
+    "retryable": "Temporary error. You can retry."
+  },
+  "empty": {
+    "title": "No threads to work on",
+    "description": "New replies will appear here. Mailbox connection warnings show as a top banner."
+  },
+  "crm": {
+    "primary": "Primary",
+    "formatValid": "Format valid",
+    "formatUnverified": "Format unverified",
+    "sendPermitted": "Send permitted",
+    "sendBlocked": "Send blocked",
+    "noContact": "No linked contact"
+  }
+}

@@ -24,6 +24,7 @@ export const NAMESPACES = [
   "templates",
   "campaigns",
   "approvals",
+  "sending",
   "meetings",
   "booking",
   "compliance",

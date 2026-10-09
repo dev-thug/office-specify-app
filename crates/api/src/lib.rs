@@ -40,8 +40,84 @@ pub fn build(dev_endpoints: bool) -> (axum::Router<AppState>, utoipa::openapi::O
 
 /// OpenAPI document only (CLI `openapi` command) — no state required.
 /// Excludes dev endpoints.
-pub fn openapi_document() -> utoipa::openapi::OpenApi {
-    build(false).1
+pub fn openapi_document() -> serde_json::Value {
+    let mut document = serde_json::to_value(build(false).1).expect("OpenAPI serializes");
+    normalize_wire_schemas(&mut document);
+    document
+}
+
+/// Route annotations describe domain DTOs. The public wire contract wraps
+/// successful JSON DTOs in the shared envelope and serves failures as RFC
+/// problem+json; generated clients must see that exact representation.
+fn normalize_wire_schemas(document: &mut serde_json::Value) {
+    let Some(paths) = document
+        .get_mut("paths")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    for path in paths.values_mut() {
+        let Some(operations) = path.as_object_mut() else {
+            continue;
+        };
+        for operation in operations.values_mut() {
+            let Some(responses) = operation
+                .get_mut("responses")
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                continue;
+            };
+            for (status, response) in responses {
+                let Some(content) = response
+                    .get_mut("content")
+                    .and_then(serde_json::Value::as_object_mut)
+                else {
+                    continue;
+                };
+                if status.starts_with('2') && status != "204" {
+                    if let Some(media) = content.get_mut("application/json")
+                        && let Some(schema) = media.get_mut("schema")
+                    {
+                        let data = schema.take();
+                        *schema = serde_json::json!({
+                            "type":"object", "required":["data","meta"],
+                            "properties": {
+                                "data": data,
+                                "meta": {"type":"object", "required":["request_id"], "properties":{"request_id":{"type":"string"}}},
+                                "page": {"type":"object", "required":["next_cursor","has_more"], "properties":{
+                                    "next_cursor":{"type":["string","null"]}, "has_more":{"type":"boolean"}
+                                }}
+                            }
+                        });
+                    }
+                } else if status.parse::<u16>().is_ok_and(|code| code >= 400)
+                    && let Some(problem) = content.remove("application/json")
+                {
+                    content.insert("application/problem+json".into(), problem);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod wire_schema_tests {
+    #[test]
+    fn exported_openapi_matches_envelope_and_problem_media_types() {
+        let document = serde_json::to_value(super::openapi_document()).unwrap();
+        let success = &document["paths"]["/api/v1/me"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"];
+        assert_eq!(success["required"], serde_json::json!(["data", "meta"]));
+        assert_eq!(
+            success["properties"]["data"]["$ref"],
+            "#/components/schemas/MeResponse"
+        );
+        assert!(
+            document["paths"]["/api/v1/me"]["get"]["responses"]["401"]["content"]
+                .get("application/problem+json")
+                .is_some()
+        );
+    }
 }
 
 /// Router bound to `state`, with middleware + 1MB body limit (spec §4.4).

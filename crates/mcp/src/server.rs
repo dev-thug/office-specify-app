@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -29,6 +29,7 @@ use infrastructure::repo::auth as auth_repo;
 #[derive(Clone)]
 pub struct McpState {
     pub db: Db,
+    pub calendar: Arc<dyn infrastructure::providers::CalendarProvider>,
     pub allowed_origins: Arc<Vec<String>>,
     pub tools: Arc<Vec<ToolDef>>,
 }
@@ -40,6 +41,7 @@ pub fn build_router(state: McpState) -> Router {
             "/.well-known/oauth-protected-resource",
             get(|| async { StatusCode::NOT_FOUND }),
         )
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .with_state(state)
 }
 
@@ -118,7 +120,7 @@ async fn handle_post(
     if let Err(e) = check_origin(&state, &headers) {
         return e.into_response();
     }
-    let ctx = match authenticate(&state, &headers).await {
+    let mut ctx = match authenticate(&state, &headers).await {
         Ok(c) => c,
         Err((status, msg)) => {
             // MCP auth failure → 401 JSON-RPC error body (B.6.4).
@@ -129,6 +131,25 @@ async fn handle_post(
                 .into_response();
         }
     };
+
+    if let Some(run) = headers.get("x-agent-run-id") {
+        let Some(id) = run
+            .to_str()
+            .ok()
+            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+        else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(RpcResponse::error(
+                    Value::Null,
+                    INVALID_PARAMS,
+                    "X-Agent-Run-Id must be a UUID",
+                )),
+            )
+                .into_response();
+        };
+        ctx.agent_run_id = Some(id);
+    }
 
     let parsed: Result<Value, _> = serde_json::from_slice(&body);
     let Ok(value) = parsed else {
@@ -240,10 +261,62 @@ async fn dispatch(state: &McpState, ctx: &Ctx, req: RpcRequest) -> RpcResponse {
                     format!("unknown tool: {name}"),
                 );
             };
-            // R25: the B.6.4 envelope is enforced here, not per tool.
-            match (tool.handler)(ctx.clone(), args).await {
-                Ok(v) => RpcResponse::result(req.id, tool_result_ok(ctx, v)),
-                Err(e) => RpcResponse::result(req.id, tool_result_err(ctx, &e)),
+            let mut call_ctx = ctx.clone();
+            if let Some(run_id) = args
+                .get("agent_run_id")
+                .and_then(Value::as_str)
+                .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+            {
+                if call_ctx.agent_run_id.is_some_and(|bound| bound != run_id) {
+                    return RpcResponse::result(
+                        req.id,
+                        tool_result_err(
+                            ctx,
+                            &contracts::AppError::validation(
+                                "tool run differs from X-Agent-Run-Id",
+                                vec![],
+                            ),
+                        ),
+                    );
+                }
+                call_ctx.agent_run_id = Some(run_id);
+            }
+            let action = match application::agents::begin_tool_call(
+                &state.db,
+                &mut call_ctx,
+                &args,
+                tool.name,
+                tool.external_effect,
+            )
+            .await
+            {
+                Ok(action) => action,
+                Err(error) => {
+                    return RpcResponse::result(req.id, tool_result_err(&call_ctx, &error));
+                }
+            };
+            let outcome = (tool.handler)(
+                crate::ToolServices {
+                    db: state.db.clone(),
+                    calendar: state.calendar.clone(),
+                },
+                call_ctx.clone(),
+                args,
+            )
+            .await;
+            let code = outcome
+                .as_ref()
+                .map(|_| "OK")
+                .unwrap_or_else(|error| error.code.as_str());
+            if let Err(error) =
+                application::agents::finish_tool_call(&state.db, &call_ctx, action, code).await
+            {
+                return RpcResponse::result(req.id, tool_result_err(&call_ctx, &error));
+            }
+            // The transport consistently wraps success and policy refusal.
+            match outcome {
+                Ok(value) => RpcResponse::result(req.id, tool_result_ok(&call_ctx, value)),
+                Err(error) => RpcResponse::result(req.id, tool_result_err(&call_ctx, &error)),
             }
         }
         // Notifications sent as requests are acknowledged silently.

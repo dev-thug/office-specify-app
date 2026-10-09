@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { TemplateList } from "@/features/templates";
 
 export default function TemplatesPage() {
-  return <ScreenStub screen="templates" />;
+  return <TemplateList />;
 }

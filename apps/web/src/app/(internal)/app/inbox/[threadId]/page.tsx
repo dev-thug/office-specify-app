@@ -1,5 +1,12 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { ThreadDetailScreen } from "@/features/inbox";
 
-export default function ThreadDetailPage() {
-  return <ScreenStub screen="threadDetail" />;
+interface ThreadDetailPageProps {
+  params: Promise<{ threadId: string }>;
+}
+
+export default async function ThreadDetailPage({
+  params,
+}: ThreadDetailPageProps) {
+  const { threadId } = await params;
+  return <ThreadDetailScreen threadId={threadId} />;
 }

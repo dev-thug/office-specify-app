@@ -20,13 +20,14 @@ use worker::{JobRegistry, Runner};
 /// Records the job ids it handled — assertions are per-job so a stray
 /// leftover of the same kind from a crashed earlier run cannot flake us.
 struct NoopHandler {
+    kind: &'static str,
     seen: Arc<Mutex<Vec<Uuid>>>,
 }
 
 #[async_trait]
 impl jobs::JobHandler for NoopHandler {
     fn kind(&self) -> &'static str {
-        "test.noop"
+        self.kind
     }
     async fn handle(
         &self,
@@ -39,10 +40,13 @@ impl jobs::JobHandler for NoopHandler {
     }
 }
 
-fn noop_runner(db: &infrastructure::db::Db) -> (Runner, Arc<Mutex<Vec<Uuid>>>) {
+fn noop_runner(db: &infrastructure::db::Db, kind: &'static str) -> (Runner, Arc<Mutex<Vec<Uuid>>>) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let mut reg = JobRegistry::new();
-    reg.register(NoopHandler { seen: seen.clone() });
+    reg.register(NoopHandler {
+        kind,
+        seen: seen.clone(),
+    });
     (Runner::new(db.clone(), reg), seen)
 }
 
@@ -92,9 +96,9 @@ async fn unregistered_kind_stays_queued() {
         id
     };
 
-    // This runner only handles test.noop — test.unregistered is invisible
+    // This runner handles only its own sentinel kind — test.unregistered is invisible
     // to its scan and its claim.
-    let (r, seen) = noop_runner(&db);
+    let (r, seen) = noop_runner(&db, "test.unregistered-sentinel");
     r.run_once().await.unwrap();
 
     let (state, attempts, owner) = job_state(&db, ws, job_id).await;
@@ -140,7 +144,7 @@ async fn registered_kind_is_claimed_foreign_untouched() {
         (mine, foreign)
     };
 
-    let (r, seen) = noop_runner(&db);
+    let (r, seen) = noop_runner(&db, "test.noop");
     r.run_once().await.unwrap();
 
     let ours = seen

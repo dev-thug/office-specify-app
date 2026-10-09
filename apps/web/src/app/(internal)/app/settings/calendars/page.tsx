@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { CalendarsScreen } from "@/features/settings";
 
 export default function SettingsCalendarsPage() {
-  return <ScreenStub screen="settingsCalendars" />;
+  return <CalendarsScreen />;
 }

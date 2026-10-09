@@ -8,9 +8,15 @@ export const metadata: Metadata = {
 };
 
 /**
- * 수신 거부 — GET은 아무것도 변경하지 않는다.
- * 실제 차단은 확인 버튼의 POST에서만 일어나고, 재요청은 멱등이다.
+ * 수신 거부 — GET은 아무것도 변경하지 않는다 (§11.2: 메일 보안 스캐너의
+ * 링크 조회가 상태 변경을 일으키지 않도록). 실제 차단은 확인 버튼의
+ * POST /public/v1/unsubscribe/{token} 에서만 일어나고 재요청은 멱등이다.
  */
-export default function PublicUnsubscribePage(): ReactNode {
-  return <UnsubscribeConfirm />;
+export default async function PublicUnsubscribePage({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}): Promise<ReactNode> {
+  const { token } = await params;
+  return <UnsubscribeConfirm token={token} />;
 }

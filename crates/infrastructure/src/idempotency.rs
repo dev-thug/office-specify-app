@@ -211,18 +211,20 @@ async fn try_claim(db: &Db, scope: &Scope, request_hash: &[u8]) -> Result<Claim,
 /// Run `f` at most once per `scope`. `request_hash` must cover the full
 /// semantic request (body + relevant headers) — `sha256` of canonical JSON.
 ///
-/// `f` receives an open workspace tx; it MUST perform all business writes,
-/// audit and outbox emits in that tx. `run` commits it and stores the
-/// serialized response in the same record.
-pub async fn run<F, Fut, T>(
-    db: &Db,
+/// `f` receives the open workspace tx by value and returns it with the
+/// response. It MUST perform all business writes, audit and outbox emits in
+/// that tx. `run` stores the serialized response and commits in the same tx.
+/// Consuming the transaction gives the future a concrete borrow lifetime,
+/// so its business writes remain atomic with the idempotency result.
+pub async fn run<'db, F, Fut, T>(
+    db: &'db Db,
     scope: &Scope,
     request_hash: &[u8],
     f: F,
 ) -> Result<Outcome<T>, AppError>
 where
-    F: FnOnce(&mut Tx<'_>) -> Fut,
-    Fut: Future<Output = Result<Stored<T>, AppError>>,
+    F: FnOnce(Tx<'db>) -> Fut,
+    Fut: Future<Output = Result<(Tx<'db>, Stored<T>), AppError>>,
     T: Serialize + DeserializeOwned,
 {
     if scope.key.is_empty() || scope.key.len() > KEY_MAX_LEN {
@@ -236,18 +238,22 @@ where
     loop {
         match try_claim(db, scope, request_hash).await? {
             Claim::Leader(my_lease) => {
-                let mut tx = db.begin(scope.workspace_id).await?;
-                match f(&mut tx).await {
-                    Ok(stored) => {
+                let tx = db.begin(scope.workspace_id).await?;
+                match f(tx).await {
+                    Ok((mut tx, stored)) => {
                         let body = serde_json::to_value(&stored.body).map_err(|e| {
                             AppError::internal(format!("idempotency serialize: {e}"))
                         })?;
-                        sqlx::query(
+                        // A takeover may have replaced our lease while the
+                        // business future was running. Do not commit its
+                        // writes unless this leader still owns the claim.
+                        let updated = sqlx::query(
                             "UPDATE idempotency_records
                                 SET state = 'completed', locked_until = NULL,
                                     response_status = $5, response_body = $6
                               WHERE workspace_id = $1 AND scope_key = $2
-                                AND endpoint = $3 AND idempotency_key = $4",
+                                AND endpoint = $3 AND idempotency_key = $4
+                                AND state = 'processing' AND locked_until = $7",
                         )
                         .bind(scope.workspace_id)
                         .bind(scope.scope_key())
@@ -255,14 +261,25 @@ where
                         .bind(&scope.key)
                         .bind(i32::from(stored.status))
                         .bind(&body)
+                        .bind(my_lease)
                         .execute(tx.conn())
                         .await
-                        .map_err(map_sqlx)?;
+                        .map_err(map_sqlx)?
+                        .rows_affected();
+                        if updated != 1 {
+                            let _ = tx.rollback().await;
+                            return Err(AppError::new(
+                                ErrorCode::RequestInProgress,
+                                "idempotency claim lease was lost before commit",
+                            ));
+                        }
                         tx.commit().await?;
                         return Ok(Outcome::Fresh(stored));
                     }
                     Err(e) => {
-                        let _ = tx.rollback().await;
+                        // The owned tx was consumed by `f` and dropped when
+                        // its future returned the error, rolling back its
+                        // uncommitted business writes.
                         // Release the claim so a retry may proceed — fenced
                         // to OUR lease value so a takeover's claim is never
                         // deleted from under it (R15).

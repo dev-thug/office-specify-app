@@ -1,8 +1,19 @@
-import { test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function authenticate(page: Page) {
+  const email = process.env.E2E_ADMIN_EMAIL;
+  const password = process.env.E2E_ADMIN_PASSWORD;
+  if (!email || !password) throw new Error("E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD are required for authenticated screenshots");
+  await page.goto("/login");
+  await page.locator("#login-email").fill(email);
+  await page.locator("#login-password").fill(password);
+  await page.locator('button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/app\/dashboard/);
+}
 
 const ARTIFACTS = "test-artifacts";
 
-/** 시각 QA — §7.3 화면 스텁과 디자인 카탈로그를 두 테마로 캡처한다. */
+/** 시각 QA — §7.3 실제 화면과 디자인 카탈로그를 두 테마로 캡처한다. */
 test.describe("visual QA", () => {
   test("login page", async ({ page }) => {
     await page.goto("/login");
@@ -10,39 +21,25 @@ test.describe("visual QA", () => {
     await page.screenshot({ path: `${ARTIFACTS}/login.png`, fullPage: true });
   });
 
-  test("dashboard with session cookie", async ({ context, page }) => {
-    await context.addCookies([
-      {
-        name: "outreach_session",
-        value: "dummy-session-token",
-        url: "http://127.0.0.1:3000",
-      },
-    ]);
+  test("dashboard with verified session", async ({ page }) => {
+    await authenticate(page);
     await page.goto("/app/dashboard");
     await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
     await page.screenshot({ path: `${ARTIFACTS}/app-dashboard.png`, fullPage: true });
   });
 
-  test("design catalog light + dark", async ({ context, page }) => {
-    await context.addCookies([
-      {
-        name: "outreach_session",
-        value: "dummy-session-token",
-        url: "http://127.0.0.1:3000",
-      },
-    ]);
-    await page.goto("/app/design");
+  test("dashboard light + dark", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await authenticate(page);
+    await page.goto("/app/dashboard");
     await page.waitForLoadState("networkidle");
-    // 라이트 칼럼 (기본) — 첫 번째 그리드 아이템
-    await page
-      .locator(".grid > div:not(.dark)")
-      .first()
-      .screenshot({ path: `${ARTIFACTS}/app-design-light.png` });
-    // 다크 칼럼 — .dark 스코프
-    await page
-      .locator("div.dark")
-      .first()
-      .screenshot({ path: `${ARTIFACTS}/app-design-dark.png` });
+    await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
+    await expect(page.locator("html")).not.toHaveClass(/(?:^|\s)dark(?:\s|$)/);
+    await page.screenshot({ path: `${ARTIFACTS}/app-dashboard-light.png`, fullPage: true });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveClass(/(?:^|\s)dark(?:\s|$)/);
+    await page.screenshot({ path: `${ARTIFACTS}/app-dashboard-dark.png`, fullPage: true });
   });
 
   test("public unsubscribe", async ({ page }) => {

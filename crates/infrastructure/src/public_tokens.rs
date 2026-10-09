@@ -52,7 +52,7 @@ pub async fn booking_manage_token(db: &Db, token: &str) -> Result<TokenLocation,
 }
 
 /// Resolve an unsubscribe token end to end: token → workspace → scoped
-/// tx + row. Used tokens resolve too — callers check `used_at`/`revoked_at`
+/// tx + row. Used tokens resolve too; revoked capabilities are rejected
 /// (repeat POST = idempotent success, T24).
 pub async fn resolve_unsubscribe_token<'db>(
     db: &'db Db,
@@ -63,5 +63,8 @@ pub async fn resolve_unsubscribe_token<'db>(
     let row = crate::repo::compliance_core::resolve_unsubscribe_token(&mut tx, token)
         .await?
         .ok_or_else(|| AppError::not_found("token not found"))?;
+    if row.revoked_at.is_some() {
+        return Err(AppError::not_found("token not found"));
+    }
     Ok((tx, row))
 }

@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { MeetingsPage } from "@/features/meetings";
 
-export default function MeetingsPage() {
-  return <ScreenStub screen="meetings" />;
+export default function MeetingsRoutePage() {
+  return <MeetingsPage />;
 }

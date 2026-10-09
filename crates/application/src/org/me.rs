@@ -30,12 +30,13 @@ pub async fn me_for_principal(db: &Db, principal: &PrincipalRow) -> Result<MeRes
         .map(|(id, address, r, c, s, a, asg)| MeMailAccount {
             id,
             address,
+            // B.3.1 wire strings are the `mail.*` action names.
             allowed_actions: [
-                (r, "read"),
-                (c, "compose"),
-                (s, "send"),
-                (a, "approve"),
-                (asg, "assign"),
+                (r, "mail.read"),
+                (c, "mail.compose"),
+                (s, "mail.send"),
+                (a, "mail.approve"),
+                (asg, "mail.assign"),
             ]
             .into_iter()
             .filter(|(ok, _)| *ok)

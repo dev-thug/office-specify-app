@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { MeetingTypesScreen } from "@/features/meetings";
 
 export default function MeetingTypesPage() {
-  return <ScreenStub screen="meetingTypes" />;
+  return <MeetingTypesScreen />;
 }

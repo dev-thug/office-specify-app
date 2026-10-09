@@ -1,1 +1,117 @@
-{}
+{
+  "tabs": {
+    "runs": "실행",
+    "proposals": "리드 후보 검토",
+    "agents": "에이전트"
+  },
+  "runs": {
+    "newRun": "새 실행 요청",
+    "columns": {
+      "objective": "목적",
+      "agent": "에이전트",
+      "status": "상태",
+      "requestedBy": "요청자",
+      "createdAt": "요청 시각",
+      "actions": "작업"
+    },
+    "filterStatus": "상태 필터",
+    "allStatuses": "전체 상태",
+    "empty": "에이전트 실행이 없습니다",
+    "emptyDescription": "목적과 상한을 지정해 리서치 실행을 요청하세요.",
+    "detail": "상세",
+    "refresh": "새로고침"
+  },
+  "newRun": {
+    "title": "새 에이전트 실행 요청",
+    "description": "목적·대상 범위·실행 상한을 지정합니다. 에이전트는 승인 없이 외부 작업을 실행하지 않습니다.",
+    "objective": "목적",
+    "objectivePlaceholder": "예: 북미 제조업 잠재 고객 조사",
+    "objectiveRequired": "목적을 입력하세요",
+    "agent": "에이전트",
+    "selectAgent": "활성 에이전트를 선택하세요…",
+    "agentRequired": "활성 에이전트를 선택하세요.",
+    "noAgents": "사용 가능한 에이전트가 없습니다. 관리자에게 에이전트 등록을 요청하세요.",
+    "scopeIndustry": "대상 산업 (선택)",
+    "scopeCountry": "대상 국가 코드 (선택, 예: KR)",
+    "maxProposals": "최대 후보 수",
+    "budgetTitle": "실행 상한 (선택)",
+    "budgetToolCalls": "최대 도구 호출 수",
+    "budgetSearches": "최대 외부 검색 수",
+    "budgetCost": "비용 상한(USD, 추정)",
+    "submit": "실행 요청",
+    "submitting": "요청 중…",
+    "success": "실행을 요청했습니다",
+    "error": "실행을 요청하지 못했습니다"
+  },
+  "detail": {
+    "runInfo": "실행 정보",
+    "objective": "목적",
+    "agent": "에이전트",
+    "requestedBy": "요청자",
+    "createdAt": "요청 시각",
+    "startedAt": "시작",
+    "finishedAt": "종료",
+    "cancelRequestedAt": "중단 요청 시각",
+    "budgetTitle": "실행 상한(Budget)",
+    "usageTitle": "사용량(Usage)",
+    "budgetKey": {
+      "max_tool_calls": "최대 도구 호출 수",
+      "max_proposals": "최대 후보 수",
+      "max_external_searches": "최대 외부 검색 수",
+      "max_input_tokens": "최대 입력 토큰",
+      "max_output_tokens": "최대 출력 토큰",
+      "max_cost_usd": "비용 상한"
+    },
+    "usageKey": {
+      "tool_calls": "도구 호출",
+      "proposals_submitted": "제출된 후보",
+      "external_searches": "외부 검색",
+      "input_tokens": "입력 토큰",
+      "output_tokens": "출력 토큰",
+      "estimated_cost_usd": "비용(추정)",
+      "actual_cost_usd": "비용(실측)"
+    },
+    "costEstimatedBadge": "추정치",
+    "costEstimateOnly": "공급자 과금 자료가 없어 비용은 추정치입니다.",
+    "actionsTitle": "도구 호출",
+    "actionsEmpty": "기록된 도구 호출이 없습니다",
+    "colTool": "도구",
+    "colResult": "결과 코드",
+    "colExternalEffect": "외부 효과",
+    "colApproval": "승인",
+    "colStarted": "시작",
+    "colDuration": "소요",
+    "externalEffect": "외부 효과 있음",
+    "internalOnly": "내부",
+    "viewApproval": "승인 요청",
+    "investigate": "결과 불명 — 조사 필요",
+    "traceId": "추적 ID",
+    "argsHash": "인자 해시",
+    "redactedArgs": "인자(마스킹)",
+    "proposalsTitle": "이 실행의 리드 후보",
+    "cancel": "실행 중단",
+    "cancelRequested": "중단 요청됨",
+    "cancelTitle": "에이전트 실행 중단",
+    "cancelDescription": "새 도구 실행을 중단합니다. 이미 제출된 외부 작업은 되돌릴 수 없으며 별도로 표시됩니다.",
+    "cancelReason": "중단 사유 (선택)",
+    "cancelConfirm": "중단 요청",
+    "canceling": "중단 요청 중…",
+    "cancelSuccess": "중단을 요청했습니다",
+    "cancelFailed": "중단 요청에 실패했습니다",
+    "cancelForbidden": "이 실행을 중단할 권한이 없습니다.",
+    "notFound": "실행을 찾을 수 없습니다",
+    "loadFailed": "실행 정보를 불러오지 못했습니다"
+  },
+  "agentsList": {
+    "columns": {
+      "name": "이름",
+      "status": "상태",
+      "scopes": "허용 scope",
+      "id": "ID"
+    },
+    "empty": "등록된 에이전트가 없습니다",
+    "emptyDescription": "에이전트 principal과 자격 증명은 설정에서 관리합니다.",
+    "noScopes": "scope 없음",
+    "loadFailed": "에이전트 목록을 불러오지 못했습니다"
+  }
+}

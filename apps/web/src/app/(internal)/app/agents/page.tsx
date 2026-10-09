@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { AgentCenterPage } from "@/features/agents";
 
 export default function AgentsPage() {
-  return <ScreenStub screen="agents" />;
+  return <AgentCenterPage />;
 }

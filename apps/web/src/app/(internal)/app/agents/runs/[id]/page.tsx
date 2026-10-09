@@ -1,5 +1,10 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { AgentRunDetailPage } from "@/features/agents";
 
-export default function AgentRunDetailPage() {
-  return <ScreenStub screen="agentRunDetail" />;
+interface Props {
+  params: Promise<{ id: string }>;
+}
+
+export default async function AgentRunPage({ params }: Props) {
+  const { id } = await params;
+  return <AgentRunDetailPage runId={id} />;
 }

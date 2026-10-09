@@ -219,6 +219,21 @@ async fn reclaim_external_effect_and_max_attempts() {
     // External-effect job claimed, then lease expires.
     {
         let mut tx = db.begin(ws).await.unwrap();
+        for kind in ["booking.confirm", "booking.apply_change"] {
+            let id = jobs::enqueue(&mut tx, kind, 1, json!({}), Utc::now(), Some(kind))
+                .await
+                .unwrap();
+            let flagged: bool = sqlx::query_scalar(
+                "SELECT external_effect FROM jobs WHERE workspace_id = $1 AND id = $2",
+            )
+            .bind(ws)
+            .bind(id)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+            assert!(flagged, "{kind} must be persisted as an external effect");
+        }
+
         let id = jobs::enqueue(
             &mut tx,
             "sending.dispatch_outbound",
@@ -353,6 +368,269 @@ async fn reclaim_external_effect_and_max_attempts() {
     }
 }
 
+/// An expired outbound dispatch that crossed the submitting boundary is
+/// fenced to `unknown` and reconciled by lookup; a queued row with no
+/// attempt is safely returned to the normal retry path.
+#[tokio::test]
+async fn expired_send_dispatch_lease_recovers_business_state_atomically() {
+    let db = common::test_db().await.unwrap();
+    let world = seed_workspace(&db).await.unwrap();
+    let ws = world.workspace_id;
+
+    let (submitted_outbound, queued_outbound, submitted_job, queued_job) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let sender_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO sender_identities (workspace_id, mail_account_id, address, display_name, status)
+             VALUES ($1, $2, $3, 'Recovery Sender', 'verified') RETURNING id",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(format!("recovery-{}@test.dev", Uuid::new_v4().simple()))
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        let channel_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO delivery_channels
+                (workspace_id, mail_account_id, sender_identity_id, connection_id,
+                 provider, purpose, name)
+             VALUES ($1, $2, $3, $4, 'zoho_mail', 'correspondence', $5) RETURNING id",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(sender_id)
+        .bind(world.connection_id)
+        .bind(format!("recovery-{}", Uuid::new_v4().simple()))
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+
+        async fn outbound(
+            tx: &mut Tx<'_>,
+            world: &TestWorld,
+            sender_id: Uuid,
+            channel_id: Uuid,
+        ) -> Uuid {
+            let ws = world.workspace_id;
+            let local = Uuid::new_v4().simple().to_string();
+            let address_id: Uuid = sqlx::query_scalar(
+                "INSERT INTO email_addresses (workspace_id, address_original, normalized_key)
+                 VALUES ($1, $2, $2) RETURNING id",
+            )
+            .bind(ws)
+            .bind(format!("recovery-{local}@example.com"))
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+            sqlx::query_scalar(
+                "INSERT INTO outbound_messages
+                    (workspace_id, mail_account_id, delivery_channel_id, sender_identity_id,
+                     to_email_address_id, requested_by, purpose, from_address_snapshot,
+                     to_address_snapshot, subject, body_text, payload_hash, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'correspondence', $7, $8, 'Recovery', 'Body', $9, 'queued')
+                 RETURNING id",
+            )
+            .bind(ws)
+            .bind(world.mail_account_id)
+            .bind(channel_id)
+            .bind(sender_id)
+            .bind(address_id)
+            .bind(world.admin.principal_id)
+            .bind(format!("recovery-{local}@test.dev"))
+            .bind(format!("recovery-{local}@example.com"))
+            .bind(vec![0_u8; 32])
+            .fetch_one(tx.conn())
+            .await
+            .unwrap()
+        }
+
+        let submitted_outbound = outbound(&mut tx, &world, sender_id, channel_id).await;
+        let queued_outbound = outbound(&mut tx, &world, sender_id, channel_id).await;
+        let submitted_job = jobs::enqueue(
+            &mut tx,
+            "sending.dispatch_outbound",
+            1,
+            json!({"outbound_message_id": submitted_outbound}),
+            Utc::now() - chrono::Duration::seconds(5),
+            Some(&format!("dispatch:{submitted_outbound}")),
+        )
+        .await
+        .unwrap();
+        let queued_job = jobs::enqueue(
+            &mut tx,
+            "sending.dispatch_outbound",
+            1,
+            json!({"outbound_message_id": queued_outbound}),
+            Utc::now() - chrono::Duration::seconds(5),
+            Some(&format!("dispatch:{queued_outbound}")),
+        )
+        .await
+        .unwrap();
+        let claimed = jobs::claim_lease(
+            &mut tx,
+            "recovery-worker",
+            10,
+            60,
+            &["sending.dispatch_outbound"],
+        )
+        .await
+        .unwrap();
+        assert_eq!(claimed.len(), 2);
+        let submitted = claimed.iter().find(|j| j.id == submitted_job).unwrap();
+        sqlx::query(
+            "INSERT INTO send_attempts
+                (workspace_id, outbound_message_id, attempt_no, lease_token, status)
+             VALUES ($1, $2, 1, $3, 'started')",
+        )
+        .bind(ws)
+        .bind(submitted_outbound)
+        .bind(submitted.lease_token.unwrap())
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE outbound_messages SET status = 'submitting', version = version + 1
+              WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(submitted_outbound)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE jobs SET lease_expires_at = now() - interval '1 second'
+              WHERE workspace_id = $1 AND id = ANY($2)",
+        )
+        .bind(ws)
+        .bind(vec![submitted_job, queued_job])
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        (
+            submitted_outbound,
+            queued_outbound,
+            submitted_job,
+            queued_job,
+        )
+    };
+
+    // The test binary also has reclaim coverage running concurrently, and
+    // the global definer may already have handled these rows by this call.
+    jobs::reclaim_expired(&db).await.unwrap();
+
+    let mut tx = db.begin(ws).await.unwrap();
+    let (submitted_state, submitted_code): (String, Option<String>) = sqlx::query_as(
+        "SELECT state, last_error_code FROM jobs WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(ws)
+    .bind(submitted_job)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let (queued_state, queued_code): (String, Option<String>) = sqlx::query_as(
+        "SELECT state, last_error_code FROM jobs WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(ws)
+    .bind(queued_job)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let (submitted_status, failure_code, version): (String, Option<String>, i64) = sqlx::query_as(
+        "SELECT status, failure_code, version FROM outbound_messages
+              WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(ws)
+    .bind(submitted_outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let queued_status: String = sqlx::query_scalar(
+        "SELECT status FROM outbound_messages WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(ws)
+    .bind(queued_outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let attempt_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT status, error_code FROM send_attempts
+          WHERE workspace_id = $1 AND outbound_message_id = $2",
+    )
+    .bind(ws)
+    .bind(submitted_outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let reconcile: (serde_json::Value, String, bool, chrono::DateTime<Utc>) = sqlx::query_as(
+        "SELECT payload, dedupe_key, external_effect, available_at FROM jobs
+          WHERE workspace_id = $1 AND kind = 'sending.reconcile_unknown'
+            AND payload->>'outbound_message_id' = $2",
+    )
+    .bind(ws)
+    .bind(submitted_outbound.to_string())
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let event: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM outbox_events
+          WHERE workspace_id = $1 AND event_type = 'outbound.unknown' AND aggregate_id = $2",
+    )
+    .bind(ws)
+    .bind(submitted_outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let audit: (Uuid, String, serde_json::Value) = sqlx::query_as(
+        "SELECT job_id, request_id, details FROM audit_logs
+          WHERE workspace_id = $1 AND action = 'send.isolated_submitting' AND target_id = $2",
+    )
+    .bind(ws)
+    .bind(submitted_outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+
+    assert_eq!(
+        (submitted_state.as_str(), submitted_code.as_deref()),
+        ("unknown", Some("LEASE_EXPIRED_UNKNOWN"))
+    );
+    assert_eq!(
+        (queued_state.as_str(), queued_code.as_deref()),
+        ("retry_wait", Some("LEASE_EXPIRED"))
+    );
+    assert_eq!(submitted_status, "unknown");
+    assert_eq!(
+        failure_code.as_deref(),
+        Some("PROVIDER_SUBMISSION_OUTCOME_UNKNOWN")
+    );
+    assert_eq!(version, 3);
+    assert_eq!(
+        queued_status, "queued",
+        "pre-submit recovery must not invent a provider outcome"
+    );
+    assert_eq!(attempt_state.0, "unknown");
+    assert_eq!(
+        attempt_state.1.as_deref(),
+        Some("PROVIDER_SUBMISSION_OUTCOME_UNKNOWN")
+    );
+    assert_eq!(
+        reconcile.0,
+        json!({"outbound_message_id": submitted_outbound})
+    );
+    assert_eq!(reconcile.1, format!("reconcile:{submitted_outbound}:0"));
+    assert!(!reconcile.2, "reconcile is a lookup-only job");
+    assert!(reconcile.3 > Utc::now() + chrono::Duration::minutes(4));
+    assert_eq!(
+        event,
+        json!({"outbound_message_id": submitted_outbound, "reason": "submitting_owner_lost"})
+    );
+    assert_eq!(audit.0, submitted_job);
+    assert_eq!(audit.1, format!("job:{submitted_job}"));
+    assert_eq!(audit.2["reason"], "owning job lease lost");
+    assert_eq!(audit.2["outcome"], "ok");
+}
+
 // ------------------------------------------------------ R15 idempotency
 
 fn scope(world: &TestWorld, key: &str) -> Scope {
@@ -400,10 +678,111 @@ async fn stale_processing_claim_is_taken_over() {
         tx.commit().await.unwrap();
     }
 
-    let out = idempotency::run(&db, &sc, &hash, |_tx| async { Ok(stored_ok()) })
+    let out = idempotency::run(&db, &sc, &hash, |tx| async { Ok((tx, stored_ok())) })
         .await
         .unwrap();
     assert!(matches!(out, Outcome::Fresh(_)), "takeover must run f");
+}
+
+/// R15: if a second request takes over an expired lease while the old
+/// business future is still running, only the new leader may commit writes.
+#[tokio::test]
+async fn taken_over_leader_cannot_commit_business_writes() {
+    let db = common::test_db().await.unwrap();
+    let world = seed_workspace(&db).await.unwrap();
+    let sc = scope(&world, "takeover-fence");
+    let hash = infrastructure::crypto::sha256_bytes(b"same-request");
+    let (claimed_tx, claimed_rx) = tokio::sync::oneshot::channel();
+    let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+
+    let old_db = db.clone();
+    let old_scope = sc.clone();
+    let old_leader = tokio::spawn(async move {
+        idempotency::run(&old_db, &old_scope, &hash, move |mut tx| async move {
+            let _ = claimed_tx.send(());
+            let _ = resume_rx.await;
+            jobs::enqueue(
+                &mut tx,
+                "test.idempotency.stale",
+                1,
+                json!({}),
+                Utc::now(),
+                Some("stale-leader"),
+            )
+            .await?;
+            Ok((
+                tx,
+                idempotency::Stored {
+                    status: 200,
+                    body: json!({"leader": "old"}),
+                },
+            ))
+        })
+        .await
+    });
+
+    claimed_rx.await.unwrap();
+    // Simulate lease expiry while the old leader's business tx is open.
+    sqlx::query(
+        "UPDATE idempotency_records SET locked_until = now() - interval '1 second'
+          WHERE workspace_id = $1 AND scope_key = $2 AND endpoint = $3 AND idempotency_key = $4",
+    )
+    .bind(world.workspace_id)
+    .bind(sc.scope_key())
+    .bind(&sc.endpoint)
+    .bind(&sc.key)
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let winner = idempotency::run(&db, &sc, &hash, |mut tx| async move {
+        jobs::enqueue(
+            &mut tx,
+            "test.idempotency.winner",
+            1,
+            json!({}),
+            Utc::now(),
+            Some("new-leader"),
+        )
+        .await?;
+        Ok((
+            tx,
+            idempotency::Stored {
+                status: 200,
+                body: json!({"leader": "new"}),
+            },
+        ))
+    })
+    .await
+    .unwrap();
+    assert!(matches!(winner, Outcome::Fresh(_)));
+
+    resume_tx.send(()).unwrap();
+    let old_error = old_leader.await.unwrap().unwrap_err();
+    assert_eq!(old_error.code, ErrorCode::RequestInProgress);
+
+    let stale_writes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id = $1 AND dedupe_key = 'stale-leader'",
+    )
+    .bind(world.workspace_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let winner_writes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id = $1 AND dedupe_key = 'new-leader'",
+    )
+    .bind(world.workspace_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        stale_writes, 0,
+        "fenced leader's business tx must roll back"
+    );
+    assert_eq!(
+        winner_writes, 1,
+        "takeover leader's business write must commit"
+    );
 }
 
 /// R15: an unexpired processing claim still yields 409 REQUEST_IN_PROGRESS
@@ -437,14 +816,16 @@ async fn live_processing_claim_conflicts() {
         tx.commit().await.unwrap();
     }
 
-    let err = idempotency::run(&db, &sc, &hash, |_tx| async { Ok(stored_ok()) })
+    let err = idempotency::run(&db, &sc, &hash, |tx| async { Ok((tx, stored_ok())) })
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::RequestInProgress);
 
-    let err = idempotency::run(&db, &sc, b"different-body", |_tx| async { Ok(stored_ok()) })
-        .await
-        .unwrap_err();
+    let err = idempotency::run(&db, &sc, b"different-body", |tx| async {
+        Ok((tx, stored_ok()))
+    })
+    .await
+    .unwrap_err();
     assert_eq!(err.code, ErrorCode::IdempotencyKeyReused);
 }
 
@@ -473,7 +854,7 @@ async fn expired_record_is_ignored() {
         .unwrap();
         tx.commit().await.unwrap();
     }
-    let out = idempotency::run(&db, &sc, &hash, |_tx| async { Ok(stored_ok()) })
+    let out = idempotency::run(&db, &sc, &hash, |tx| async { Ok((tx, stored_ok())) })
         .await
         .unwrap();
     assert!(matches!(out, Outcome::Fresh(_)));

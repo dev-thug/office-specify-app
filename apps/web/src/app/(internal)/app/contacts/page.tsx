@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { ContactsScreen } from "@/features/contacts";
 
 export default function ContactsPage() {
-  return <ScreenStub screen="contacts" />;
+  return <ContactsScreen />;
 }

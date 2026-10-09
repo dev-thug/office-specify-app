@@ -74,14 +74,7 @@ impl RateLimiter {
                     remaining: (limit as i64 - count).max(0) as u32,
                 })
             }
-            Err(e) => match fail {
-                FailMode::Open => Ok(Decision {
-                    allowed: true,
-                    retry_after: None,
-                    remaining: limit,
-                }),
-                FailMode::Closed => Err(map_redis(e)),
-            },
+            Err(e) => redis_failure(e, fail, limit),
         }
     }
 
@@ -99,6 +92,77 @@ impl RateLimiter {
         } else {
             Err(AppError::new(ErrorCode::RateLimited, "rate limit exceeded")
                 .with_retry_after(d.retry_after.unwrap_or(1)))
+        }
+    }
+}
+
+fn redis_failure(
+    error: redis::RedisError,
+    fail: FailMode,
+    limit: u32,
+) -> Result<Decision, AppError> {
+    match fail {
+        FailMode::Open => Ok(Decision {
+            allowed: true,
+            retry_after: None,
+            remaining: limit,
+        }),
+        FailMode::Closed => Err(map_redis(error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closed_rate_limit_fails_when_redis_is_unavailable() {
+        let error = redis::RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "redis offline",
+        ));
+        let result = redis_failure(error, FailMode::Closed, 60);
+        assert_eq!(result.unwrap_err().code, ErrorCode::DependencyUnavailable);
+
+        let error = redis::RedisError::from(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "redis offline",
+        ));
+        let open = redis_failure(error, FailMode::Open, 60).unwrap();
+        assert!(open.allowed);
+        assert_eq!(open.remaining, 60);
+    }
+
+    #[tokio::test]
+    async fn redis_outage_fails_closed_at_connection_or_limit_check() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let url = format!("redis://{addr}/");
+
+        let connected = tokio::time::timeout(
+            Duration::from_secs(2),
+            crate::redis::RedisClient::connect(&url),
+        )
+        .await
+        .expect("closed Redis port should fail or expose failure on use");
+        match connected {
+            Err(error) => assert_eq!(error.code, ErrorCode::DependencyUnavailable),
+            Ok(client) => {
+                let limiter = RateLimiter::new(client);
+                let result = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    limiter.require(
+                        "send:outage-test",
+                        60,
+                        Duration::from_secs(60),
+                        FailMode::Closed,
+                    ),
+                )
+                .await
+                .expect("rate-limit check should fail promptly");
+                assert_eq!(result.unwrap_err().code, ErrorCode::DependencyUnavailable);
+            }
         }
     }
 }

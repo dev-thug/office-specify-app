@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { ApprovalList } from "@/features/approvals";
 
 export default function ApprovalsPage() {
-  return <ScreenStub screen="approvals" />;
+  return <ApprovalList />;
 }

@@ -1,0 +1,31 @@
+# Outreach OS
+
+Outreach OS is a Rust workspace for the API, background worker, MCP server, and operator CLI, with a Next.js web app in `apps/web/`. Its approved implementation decisions and the binding product design are recorded in [the implementation spec](docs/superpowers/specs/2026-10-09-outreach-os-design.md) and [the source design](docs/design/source/outreach-os-design-v1.0.md).
+
+For a local setup, see [Local development](docs/runbooks/local-development.md). Operator procedures are in [Unknown send reconciliation](docs/runbooks/unknown-send-reconciliation.md) and [Database restore](docs/runbooks/restore.md). The current test evidence and uncovered requirements are listed in [the T01–T36 matrix](docs/design/test-matrix.md).
+
+The repository currently uses fake provider adapters in development and tests. Their acceptance results do not establish delivery, and real-provider, legal, security, and backup/restore release gates remain closed as listed in the approved spec.
+
+The approved spec names these closed gates: L01 (legal basis; marketing stays blocked), P01 (provider permission; production delivery channels stay disabled), Z01 (Zoho account/plan/region; real integration stays unavailable), Z02 (webhook verification; polling-only or blocked), C01 (calendar authorization; real booking confirmation stays disabled), E01 (sender authentication and RFC headers; one-click stays disabled), A01 (OIDC/MCP client compatibility; OAuth discovery is unsupported), O01 (backup/restore; production launch stays on hold), and S01 (security/privacy review; production launch stays on hold). See §20 of the [source design](docs/design/source/outreach-os-design-v1.0.md) for the evidence required to close each gate.
+
+## Implementation and verification
+
+The approved G1–G6 fake-provider scope is implemented across the Rust services,
+operator CLI, MCP tools, and connected web screens. This includes organization and
+mailbox permissions, CRM/research/imports, campaigns and approvals, manual mail
+composition and replies, booking, compliance, agent runs, and operational queues.
+The generated contract contains 127 OpenAPI paths and 22 MCP tools.
+
+Verification on 2026-10-09 used isolated synthetic PostgreSQL databases. The full
+Rust workspace suite passed 347 tests with zero skips. The web
+suite passed 350 tests; Playwright passed all 7 browser scenarios, including
+20 connected internal screens, persisted CRM data, exact-message confirmation,
+queued draft recovery, anonymous access denial, and light/dark screenshots.
+Workspace builds, Clippy with warnings denied, rustfmt, Rust documentation tests,
+web type/lint/design checks, and the Next.js production build passed. The CLI
+terminal test confirmed password echo suppression and terminal restoration.
+See the acceptance matrix for requirement-level evidence and remaining external
+release gates; successful fake-provider tests do not close those gates.
+
+Independent implementation work used `gpt-6-luna` with `max` reasoning. The agent
+interface did not expose a separate execution-mode setting.

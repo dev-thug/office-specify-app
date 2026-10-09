@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { ImportsPage } from "@/features/imports";
 
-export default function ImportsPage() {
-  return <ScreenStub screen="imports" />;
+export default function ImportsRoutePage() {
+  return <ImportsPage />;
 }

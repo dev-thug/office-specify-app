@@ -25,3 +25,8 @@ async-trait.workspace = true
 tokio.workspace = true
 axum.workspace = true
 http.workspace = true
+
+[dev-dependencies]
+sqlx.workspace = true
+reqwest.workspace = true
+infrastructure = { workspace = true, features = ["testing"] }

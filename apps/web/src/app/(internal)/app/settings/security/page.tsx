@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { SecurityScreen } from "@/features/settings";
 
 export default function SettingsSecurityPage() {
-  return <ScreenStub screen="settingsSecurity" />;
+  return <SecurityScreen />;
 }

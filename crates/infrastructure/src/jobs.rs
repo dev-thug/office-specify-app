@@ -64,7 +64,10 @@ pub struct Job {
 /// re-submit them (R12). Kept here so `enqueue`'s frozen signature can set
 /// the flag without a caller-supplied parameter.
 pub fn kind_has_external_effect(kind: &str) -> bool {
-    matches!(kind, "sending.dispatch_outbound" | "booking.confirm")
+    matches!(
+        kind,
+        "sending.dispatch_outbound" | "booking.confirm" | "booking.apply_change"
+    )
 }
 
 /// Enqueue inside the business transaction (R11). `dedupe_key = None`
@@ -235,9 +238,6 @@ pub async fn heartbeat_lease(
     .bind(job_id)
     .bind(lease_token)
     .bind(lease_seconds as f64)
-    .bind(tx.workspace_id())
-    .bind(job_id)
-    .bind(lease_token)
     .execute(tx.conn())
     .await
     .map_err(map_sqlx)?
@@ -344,8 +344,10 @@ pub async fn runnable_workspaces(db: &Db, kinds: &[&str]) -> Result<Vec<Uuid>, A
         .map_err(map_sqlx)
 }
 
-/// Crash recovery: expired leases return to `queued` (attempt_count already
-/// incremented at claim time, so MAX_ATTEMPTS still bounds retries).
+/// Crash recovery for expired leases. Safe work retries with bounded
+/// backoff; ambiguous external effects become `unknown`. Outbound dispatch
+/// recovery also updates its submitting message and queues lookup-only
+/// reconciliation in the same definer transaction.
 /// Definer function for the same reason as `runnable_workspaces`.
 pub async fn reclaim_expired(db: &Db) -> Result<u64, AppError> {
     let n: i64 = sqlx::query_scalar("SELECT reclaim_expired_job_leases()")

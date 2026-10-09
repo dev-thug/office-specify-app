@@ -8,6 +8,7 @@ use infrastructure::db::{Db, ROLE_API};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
@@ -24,10 +25,15 @@ async fn main() -> anyhow::Result<()> {
         db = db.with_default_workspace(Some(ws));
     }
 
+    let calendar = Arc::new(match &config.fake_provider_script {
+        Some(path) => infrastructure::providers::fake::FakeMailProvider::from_script(path),
+        None => infrastructure::providers::fake::FakeMailProvider::new(),
+    });
     let state = mcp::server::McpState {
+        calendar,
         db,
         allowed_origins: Arc::new(config.mcp_allowed_origins.clone()),
-        tools: Arc::new(mcp::all_tools()),
+        tools: Arc::new(mcp::all_tools_with_key(&config.hmac_key)),
     };
     let app = mcp::server::build_router(state);
     let listener = tokio::net::TcpListener::bind(config.mcp_addr).await?;

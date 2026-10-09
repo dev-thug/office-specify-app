@@ -221,3 +221,77 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
                 .ok()
         })
 }
+
+/// Validate a public application origin before embedding capability URLs.
+pub fn validate_public_origin(raw: &str) -> Result<String, contracts::AppError> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| {
+        contracts::AppError::dependency_unavailable("public application origin is invalid")
+    })?;
+    let loopback = matches!(
+        url.host_str(),
+        Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+    );
+    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        return Err(contracts::AppError::dependency_unavailable(
+            "public application origin must be HTTPS (or a local development origin) without credentials or a path",
+        ));
+    }
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+/// Workspace override, then PUBLIC_BASE_URL. Production has no implicit origin.
+pub fn public_base_url(workspace_value: Option<String>) -> Result<String, contracts::AppError> {
+    let configured = workspace_value
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("PUBLIC_BASE_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        });
+    match configured {
+        Some(value) => validate_public_origin(&value),
+        None if matches!(
+            std::env::var("APP_ENV").as_deref(),
+            Ok("development" | "dev" | "test" | "testing")
+        ) =>
+        {
+            Ok("http://localhost:3000".into())
+        }
+        None => Err(contracts::AppError::dependency_unavailable(
+            "PUBLIC_BASE_URL or workspace public_base_url is required",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod public_origin_tests {
+    #[test]
+    fn generated_capabilities_use_only_explicit_safe_origins() {
+        for valid in [
+            "https://app.example.test/",
+            "http://localhost:3000",
+            "http://127.0.0.1:13000",
+            "http://[::1]:3000",
+        ] {
+            assert!(super::validate_public_origin(valid).is_ok(), "{valid}");
+        }
+        for invalid in [
+            "http://localhost.evil.test",
+            "http://127.0.0.1.evil.test",
+            "https://user:pass@app.test",
+            "https://app.test/path",
+            "https://app.test/?token=secret",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+        ] {
+            assert!(super::validate_public_origin(invalid).is_err(), "{invalid}");
+        }
+    }
+}

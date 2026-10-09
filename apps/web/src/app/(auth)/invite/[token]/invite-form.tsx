@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useParams, useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,9 +22,15 @@ export function InviteForm() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   const locale = useLocale();
   // 멱등 키는 논리 작업(이 초대 수락)당 하나 — 확정 응답 후에만 재발급.
   const idemRef = useRef<string>(idempotencyKey());
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setHydrated(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const preview = useQuery({
     queryKey: ["invitation", token],
@@ -108,6 +114,7 @@ export function InviteForm() {
             id="invite-name"
             autoComplete="name"
             required
+            disabled={!hydrated}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
           />
@@ -119,6 +126,7 @@ export function InviteForm() {
             type="password"
             autoComplete="new-password"
             required
+            disabled={!hydrated}
             minLength={12}
             maxLength={128}
             value={password}
@@ -133,7 +141,7 @@ export function InviteForm() {
             {error}
           </p>
         ) : null}
-        <Button type="submit" className="w-full" disabled={pending}>
+        <Button type="submit" className="w-full" disabled={pending || !hydrated}>
           {pending ? t("accepting") : t("accept")}
         </Button>
       </form>

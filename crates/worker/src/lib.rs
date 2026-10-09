@@ -19,10 +19,45 @@ use futures::{FutureExt, StreamExt};
 
 use consumers::{EventConsumer, EventCtx};
 use contracts::AppError;
+use infrastructure::config::Config;
 use infrastructure::db::Db;
 use infrastructure::jobs::{self, Job, JobCtx, JobHandler};
 use infrastructure::outbox::{self, OutboxRow};
+use infrastructure::providers::fake::{FakeDeliveryProvider, FakeMailProvider};
+use infrastructure::providers::{CalendarProvider, DeliveryProvider, MailProvider};
 use uuid::Uuid;
+
+/// Dependencies shared by provider-backed job handlers for one Runner.
+/// Keeping them on handler instances avoids process-global provider state
+/// leaking between workers or tests.
+#[derive(Clone)]
+pub struct WorkerContext {
+    pub db: Db,
+    pub mail: Arc<dyn MailProvider>,
+    pub delivery: Arc<dyn DeliveryProvider>,
+    pub calendar: Arc<dyn CalendarProvider>,
+}
+
+impl WorkerContext {
+    /// Build the v1 fake-provider set from the configured script. Real
+    /// provider calls stay disabled by the current release contract.
+    pub fn from_config(db: Db, config: &Config) -> Self {
+        let mail_fake = Arc::new(match config.fake_provider_script.as_deref() {
+            Some(path) => FakeMailProvider::from_script(path),
+            None => FakeMailProvider::new(),
+        });
+        let delivery_fake = Arc::new(match config.fake_provider_script.as_deref() {
+            Some(path) => FakeDeliveryProvider::from_script(path),
+            None => FakeDeliveryProvider::new(),
+        });
+        Self {
+            db,
+            mail: mail_fake.clone(),
+            delivery: delivery_fake,
+            calendar: mail_fake,
+        }
+    }
+}
 
 pub struct JobRegistry {
     handlers: HashMap<&'static str, Arc<dyn JobHandler>>,
@@ -74,25 +109,42 @@ impl Default for JobRegistry {
     }
 }
 
-/// Registry with every module's `register` applied (spec §6 — module workers
-/// fill `handlers/<m>.rs`, never touch this file).
+/// Registry used by registry-only tests that do not execute provider-backed
+/// handlers. Production must use `registry_with_context` so those handlers
+/// receive the Runner's DB and provider adapters.
 pub fn registry() -> JobRegistry {
     let mut r = JobRegistry::new();
-    handlers::agents::register(&mut r);
-    handlers::approvals::register(&mut r);
+    register_context_free_handlers(&mut r);
     handlers::booking::register(&mut r);
-    handlers::campaigns::register(&mut r);
-    handlers::compliance::register(&mut r);
-    handlers::crm::register(&mut r);
-    handlers::imports::register(&mut r);
     handlers::inbox::register(&mut r);
-    handlers::mailboxes::register(&mut r);
-    handlers::operations::register(&mut r);
-    handlers::org::register(&mut r);
-    handlers::research::register(&mut r);
     handlers::sending::register(&mut r);
-    handlers::templates::register(&mut r);
     r
+}
+
+/// Registry wired with per-runner DB/provider dependencies. Handlers clone
+/// only the services they use, so a test can build independent registries
+/// with isolated providers.
+pub fn registry_with_context(context: &WorkerContext) -> JobRegistry {
+    let mut r = JobRegistry::new();
+    register_context_free_handlers(&mut r);
+    handlers::booking::register_with_context(&mut r, context);
+    handlers::inbox::register_with_context(&mut r, context);
+    handlers::sending::register_with_context(&mut r, context);
+    r
+}
+
+fn register_context_free_handlers(r: &mut JobRegistry) {
+    handlers::agents::register(r);
+    handlers::approvals::register(r);
+    handlers::campaigns::register(r);
+    handlers::compliance::register(r);
+    handlers::crm::register(r);
+    handlers::imports::register(r);
+    handlers::mailboxes::register(r);
+    handlers::operations::register(r);
+    handlers::org::register(r);
+    handlers::research::register(r);
+    handlers::templates::register(r);
 }
 
 /// In-memory per-(event, consumer) retry backoff — outbox_events has no
@@ -149,25 +201,33 @@ impl Runner {
         let kinds = self.registry.kinds();
         let mut handled = 0;
         for ws in jobs::runnable_workspaces(&self.db, &kinds).await? {
-            // Claim in its own tx so the lease commits before work starts.
-            let claimed: Vec<Job> = {
-                let mut tx = self.db.begin(ws).await?;
-                let jobs = jobs::claim_lease(
-                    &mut tx,
-                    &self.owner,
-                    jobs::BATCH_SIZE,
-                    self.lease_seconds,
-                    &kinds,
-                )
-                .await?;
-                tx.commit().await?;
-                jobs
-            };
-            handled += claimed.len();
-            futures::stream::iter(claimed)
-                .for_each_concurrent(self.concurrency, |job| self.handle_one(job))
-                .await;
+            handled += self.run_workspace_once(ws).await?;
         }
+        Ok(handled)
+    }
+
+    /// Process one workspace with this runner's adapters. Useful for scoped
+    /// operations and for tests whose fake provider state is workspace-local.
+    /// Global expired-lease recovery is performed by `run_once` before polling.
+    pub async fn run_workspace_once(&self, workspace_id: Uuid) -> Result<usize, AppError> {
+        let kinds = self.registry.kinds();
+        let claimed: Vec<Job> = {
+            let mut tx = self.db.begin(workspace_id).await?;
+            let claimed = jobs::claim_lease(
+                &mut tx,
+                &self.owner,
+                jobs::BATCH_SIZE,
+                self.lease_seconds,
+                &kinds,
+            )
+            .await?;
+            tx.commit().await?;
+            claimed
+        };
+        let handled = claimed.len();
+        futures::stream::iter(claimed)
+            .for_each_concurrent(self.concurrency, |job| self.handle_one(job))
+            .await;
         Ok(handled)
     }
 

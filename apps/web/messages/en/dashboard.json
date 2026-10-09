@@ -1,1 +1,55 @@
-{}
+{
+  "title": "Dashboard",
+  "description": "Review today's replies, approvals, meetings, and delivery state.",
+  "emergencyStopBanner": "Emergency stop is on — new sends and external submissions are blocked.",
+  "emergencyStopLink": "Open operations",
+  "sendWorkersLockedBanner": "Sending workers are locked until the unknown-send state is reconciled.",
+  "scopeLabel": "Scope",
+  "scope": {
+    "team": "Team",
+    "mine": "Mine"
+  },
+  "queueSection": "Work queues",
+  "queue": {
+    "inbox_unhandled": "Replies to handle",
+    "approvals_pending": "Pending approvals",
+    "meetings_today": "Today's meetings",
+    "outbound_unknown": "Unknown deliveries",
+    "sync_lag": "Sync lag",
+    "reauth_required": "Mailboxes needing reauthentication",
+    "dead_jobs": "Dead jobs",
+    "outbox_backlog": "Outbox backlog",
+    "other": "Other"
+  },
+  "queueEmptyTitle": "Nothing to handle today",
+  "queueEmptyDescription": "New replies, approval requests, upcoming meetings, and unknown deliveries appear here.",
+  "queueItemAria": "{label} {count} — go to area",
+  "operationalSection": "Operational health",
+  "operational": {
+    "unknownOutboundMessages": "Unknown outbound messages",
+    "unknownJobs": "Unknown jobs",
+    "deadJobs": "Dead jobs",
+    "outboxBacklog": "Outbox backlog",
+    "reauthRequiredMailboxes": "Mailboxes needing reauthentication"
+  },
+  "operationalAllInQueues": "All operational counters are shown in the work queues above.",
+  "kpiSection": "Cohort performance",
+  "kpi": {
+    "eligible_contacted_companies": "Eligible contacted companies",
+    "reply_company_ratio": "Reply company ratio",
+    "valid_meeting_ratio": "Valid meeting conversion",
+    "first_reply_handling_seconds": "First reply handling time",
+    "agent_candidate_accept_ratio": "Agent candidate accept rate"
+  },
+  "denominator": "Denominator {count}",
+  "sampleSize": "Sample size {count}",
+  "observationWindow": "Observed {from} – {to}",
+  "refreshedAt": "Refreshed {time}",
+  "notAvailable": "N/A",
+  "notAvailableReason": "Not computed — no observation data",
+  "unknownNotDelivered": "Provider acceptance does not mean inbox delivery or reads",
+  "secondsShort": "{count}s",
+  "minutesShort": "{count}m",
+  "hoursShort": "{count}h",
+  "daysShort": "{count}d"
+}

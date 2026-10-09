@@ -1,1 +1,150 @@
-{}
+{
+  "title": "공동 Inbox",
+  "description": "공용 메일함의 대화를 배정·처리합니다. 접수(accepted)와 발송 완료는 다릅니다.",
+  "filters": {
+    "mailbox": "메일함",
+    "allMailboxes": "전체 메일함",
+    "assignee": "담당",
+    "assigneeAll": "전체",
+    "assigneeUnassigned": "미배정",
+    "assigneeMine": "내 담당",
+    "status": "상태",
+    "statusAll": "전체 상태",
+    "searchPlaceholder": "대화·주소 검색…",
+    "searchLabel": "대화 검색"
+  },
+  "list": {
+    "caption": "대화 목록",
+    "empty": "처리할 대화가 없습니다",
+    "emptyDescription": "새 답장이 도착하면 여기에 나타납니다.",
+    "unread": "읽지 않음",
+    "unassigned": "미배정",
+    "noSubject": "(제목 없음)",
+    "open": "대화 열기"
+  },
+  "reconnect": {
+    "title": "메일함 재연결이 필요합니다",
+    "description": "{count}개 메일함의 연결이 끊겨 새 메일 동기화와 회신 발송이 중단되었습니다: {names}",
+    "action": "메일함 설정으로 이동",
+    "syncStopped": "동기화 중단됨"
+  },
+  "collision": {
+    "newInbound": "확인 중에 새 답장이 도착했습니다. 최신 내용을 확인해 주세요.",
+    "teammateReply": "다른 구성원이 회신을 보냈습니다. 최신 내용을 확인해 주세요.",
+    "changed": "다른 구성원이 이 대화를 변경했습니다.",
+    "showNew": "새 내용 보기",
+    "hiddenMessages": "새 메시지 {count}개가 숨겨져 있습니다"
+  },
+  "detail": {
+    "backToList": "목록으로",
+    "assign": "담당 배정",
+    "assignToMe": "나에게 배정",
+    "unassign": "배정 해제",
+    "assignee": "담당자",
+    "assignSuccess": "담당자가 변경되었습니다",
+    "resolve": "해결",
+    "reopen": "다시 열기",
+    "pending": "보류",
+    "pendingOff": "보류 해제",
+    "statusSuccess": "대화 상태가 변경되었습니다",
+    "suppress": "수신 거부 등록",
+    "crm": "CRM",
+    "crmOpen": "CRM 패널 열기",
+    "mailbox": "메일함",
+    "loading": "대화를 불러오는 중…"
+  },
+  "conflict": {
+    "title": "다른 사람이 먼저 변경했습니다",
+    "statusField": "대화 상태",
+    "applyMine": "내 값으로 덮어쓰기",
+    "useServer": "서버 값 사용"
+  },
+  "message": {
+    "inbound": "수신",
+    "outbound": "발신",
+    "from": "보낸 사람",
+    "to": "받는 사람",
+    "cc": "참조",
+    "bcc": "숨은 참조",
+    "replyTo": "회신 주소",
+    "bodyTitle": "정제된 메시지 본문",
+    "noBody": "표시할 본문이 없습니다",
+    "attachments": "첨부 파일",
+    "download": "다운로드",
+    "downloadFailed": "첨부 파일 다운로드 주소를 받지 못했습니다",
+    "classification": "분류",
+    "reviewed": "검토됨",
+    "unreviewed": "미검토",
+    "reviewAction": "분류 검토",
+    "outboundStatus": "발송 상태",
+    "acceptedNotDelivered": "접수(accepted)는 전달·읽음 확인이 아닙니다",
+    "unknownInvestigate": "결과 불명 — 재발송 대신 운영 화면에서 대조 확인이 필요합니다"
+  },
+  "classifications": {
+    "human_positive": "긍정 회신",
+    "human_negative": "부정 회신",
+    "question": "문의",
+    "unsubscribe_request": "수신 거부 요청",
+    "auto_reply": "자동 회신",
+    "bounce": "반송",
+    "unknown": "알 수 없음"
+  },
+  "review": {
+    "title": "분류 검토",
+    "description": "모델 분류와 사람의 검토 결과는 구분됩니다. 수신 거부 요청으로 분류하면 후속 발송이 안전하게 중단됩니다.",
+    "fieldLabel": "검토 분류",
+    "reasonLabel": "이유",
+    "reasonPlaceholder": "분류 근거를 적어 주세요 (선택)",
+    "submit": "검토 저장",
+    "success": "분류 검토가 저장되었습니다",
+    "suppressionHint": "수신 거부 요청이라면 차단 등록으로 후속 발송을 중단하세요."
+  },
+  "reply": {
+    "title": "회신 초안",
+    "toLabel": "수신자",
+    "toInferred": "마지막 수신 메시지 기준 — 서버가 실제 수신 주소를 확인합니다",
+    "bodyLabel": "본문",
+    "placeholder": "회신 내용을 입력하세요…",
+    "visibility": "초안 공개 범위",
+    "visibilityPrivate": "나만 보기",
+    "visibilityMailbox": "메일함 공유",
+    "submit": "초안 만들기",
+    "submitting": "초안 만드는 중…",
+    "createdTitle": "회신 초안이 생성되었습니다",
+    "createdDescription": "제출·발송은 발송 흐름(동결 → 검토 → 제출)에서 진행합니다.",
+    "createdRecipient": "확인된 수신자",
+    "acceptedNotDelivered": "제출 후 '수락됨(accepted)'은 공급자 접수를 뜻하며 전달·읽음 완료가 아닙니다.",
+    "blockedReconnect": "메일함 재연결 전에는 초안을 만들 수 없습니다.",
+    "blockedCollision": "새 메시지를 먼저 확인해 주세요.",
+    "blockedForbidden": "이 메일함의 작성 권한이 없습니다.",
+    "blockedNoInbound": "회신할 수신 메시지가 없습니다."
+  },
+  "errors": {
+    "title": "처리하지 못했습니다",
+    "mailboxDenied": "이 메일함에 대한 권한이 없습니다.",
+    "agentSendForbidden": "에이전트는 직접 발송할 수 없습니다. 승인 요청 경로를 사용하세요.",
+    "replyContextChanged": "작성 중 새 답장이 도착했습니다. 최신 내용을 확인한 후 다시 작성해 주세요.",
+    "replyAlreadySubmitted": "이미 다른 회신이 제출되었습니다. 대화를 새로고침합니다.",
+    "recipientSuppressed": "해당 주소는 발송이 차단되어 있습니다. 우회하지 마세요.",
+    "emergencyStop": "워크스페이스가 긴급 중지 상태입니다. 명시적 재개 전까지 제출할 수 없습니다.",
+    "versionMismatch": "다른 사람이 먼저 변경했습니다. 최신 값과 비교해 주세요.",
+    "versionPrecondition": "버전 정보가 없어 변경을 거절했습니다. 새로고침 후 다시 시도하세요.",
+    "idempotencyReused": "같은 키의 다른 요청이 감지되었습니다. 기존 작업을 확인하세요.",
+    "requestInProgress": "같은 요청이 처리 중입니다. 중복 작업을 만들지 마세요.",
+    "reauthRequired": "메일함 재인증이 필요합니다. 연결 관리자에게 알려 주세요.",
+    "rateLimited": "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
+    "retryable": "일시적인 오류입니다. 다시 시도할 수 있습니다."
+  },
+  "empty": {
+    "title": "처리할 대화가 없습니다",
+    "description": "새 답장이 도착하면 여기에 나타납니다. 메일함 미연결·재연결 경고는 상단 배너로 표시됩니다."
+  },
+  "crm": {
+    "primary": "주 주소",
+    "formatValid": "형식 유효",
+    "formatUnverified": "형식 미검증",
+    "sendPermitted": "발송 허가",
+    "sendBlocked": "발송 불가",
+    "noContact": "연결된 담당자가 없습니다"
+  }
+}

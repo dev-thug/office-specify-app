@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { CompaniesScreen } from "@/features/companies";
 
 export default function CompaniesPage() {
-  return <ScreenStub screen="companies" />;
+  return <CompaniesScreen />;
 }

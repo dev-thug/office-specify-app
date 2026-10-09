@@ -1,1 +1,217 @@
-{}
+{
+  "errors": {
+    "generic": "The request could not be processed. Try again shortly.",
+    "conflict": "Someone else changed it first. The latest state was reloaded.",
+    "precondition": "This request needs a concurrency header. Reload the latest state and try again.",
+    "inProgress": "The same operation is already in progress. Check its state instead of creating a new one.",
+    "emergencyStop": "Submission is blocked while emergency stop is active.",
+    "forbidden": "You do not have permission for this action.",
+    "notFound": "The resource was not found or is not accessible.",
+    "providerBlocked": "Blocked — the provider policy does not allow this."
+  },
+  "emergencyStop": {
+    "title": "Emergency stop",
+    "description": "When enabled, every new external submission (sends, booking confirmations, etc.) is blocked immediately.",
+    "blockedBanner": "Emergency stop active — new external submissions are blocked.",
+    "status": {
+      "enabled": "Active",
+      "disabled": "Off"
+    },
+    "enable": "Enable emergency stop",
+    "disable": "Disable emergency stop",
+    "reason": "Reason (required)",
+    "reasonPlaceholder": "Enter a reason for the audit log",
+    "reasonRequired": "Enter a reason",
+    "confirmTitleEnable": "Enable emergency stop",
+    "confirmTitleDisable": "Disable emergency stop",
+    "confirmDescEnable": "All new sends, booking confirmations, and external submissions are blocked immediately. In-flight work is tracked separately.",
+    "confirmDescDisable": "The block on new external submissions is lifted.",
+    "typeToConfirm": "Type \"{word}\" to confirm",
+    "confirmWord": {
+      "enable": "STOP",
+      "disable": "RESUME"
+    },
+    "confirmButton": {
+      "enable": "Enable emergency stop",
+      "disable": "Disable emergency stop"
+    },
+    "updatedAt": "Last changed {time}",
+    "version": "Version {version}",
+    "reasonLabel": "Reason",
+    "readOnly": "Changing this requires Admin"
+  },
+  "alerts": {
+    "unknownJobs": "{count} unknown-outcome jobs — reconcile instead of resending",
+    "deadJobs": "{count} dead jobs",
+    "reauth": "{count} connections need reauth",
+    "blockedChannels": "{count} blocked delivery channels"
+  },
+  "jobs": {
+    "title": "Job queue",
+    "description": "Operate async jobs, retries, and dead-letter jobs.",
+    "tabs": {
+      "jobs": "Jobs",
+      "audit": "Audit log"
+    },
+    "filterState": "State",
+    "filterStateAll": "All states",
+    "filterKind": "Job kind",
+    "filterKindPlaceholder": "Filter by kind",
+    "columns": {
+      "kind": "Kind",
+      "state": "State",
+      "attempts": "Attempts",
+      "lastError": "Last error",
+      "availableAt": "Available at",
+      "createdAt": "Created",
+      "actions": "Actions"
+    },
+    "emptyTitle": "No jobs match",
+    "emptyDescription": "Queued, running, retry-wait, and dead jobs appear here.",
+    "openDetail": "Open detail",
+    "detail": {
+      "title": "Job detail",
+      "id": "Job ID",
+      "kind": "Kind",
+      "state": "State",
+      "payloadVersion": "Payload version",
+      "attempts": "Attempts",
+      "leaseOwner": "Lease owner",
+      "leaseExpires": "Lease expires",
+      "requestedBy": "Requested by",
+      "finishedAt": "Finished at",
+      "availableAt": "Available at",
+      "createdAt": "Created",
+      "externalEffect": "External effect",
+      "externalEffectYes": "Yes — unknown after the submit boundary never auto-retries",
+      "resultRefs": "Related resources",
+      "errorDetail": "Error detail",
+      "retryable": "Retryable",
+      "retryBlockReason": "Retry block reason"
+    },
+    "retry": {
+      "button": "Request retry",
+      "reason": "Reason (optional)",
+      "reasonPlaceholder": "Retry reason — recorded in the audit log",
+      "submit": "Send retry request",
+      "success": "Retry requested",
+      "confirmHint": "Only safe jobs can be retried. Operator retries pass the same policy and attempt limits."
+    },
+    "investigate": {
+      "badge": "Investigate",
+      "title": "Unknown outcome — reconcile, do not resend",
+      "description": "The provider submission outcome is unknown. Resubmitting could create a duplicate send. Reconcile against the provider and related resources to determine the outcome.",
+      "noResend": "Unknown outcomes never get a retry or resend button"
+    }
+  },
+  "audit": {
+    "description": "Redacted audit log — only allowlisted metadata is recorded.",
+    "filterAction": "Action",
+    "filterActionPlaceholder": "Filter by action",
+    "filterTarget": "Target type",
+    "filterTargetPlaceholder": "Filter by target_type",
+    "columns": {
+      "occurredAt": "Time",
+      "action": "Action",
+      "actor": "Actor",
+      "targetType": "Target",
+      "targetId": "Target ID",
+      "requestId": "Request ID"
+    },
+    "details": "Detail metadata",
+    "emptyTitle": "No audit records",
+    "emptyDescription": "Audit logs within your permitted scope appear here."
+  },
+  "integrations": {
+    "title": "Integrations",
+    "description": "Mail, calendar, and delivery channel health plus policy reviews.",
+    "oauthNotice": "OAuth secrets are never stored or displayed. Only connection state is shown.",
+    "mailSection": "Mail accounts",
+    "channelSection": "Delivery channels",
+    "calendarSection": "Calendar connections",
+    "reconnect": "Reconnect",
+    "reconnectDone": "Reauth started. Open the issued connection URL.",
+    "lastSync": "Last synced {time}",
+    "lastError": "Last error {code}",
+    "neverSynced": "Never synced",
+    "emptyTitle": "No connected services",
+    "emptyDescription": "Connect mail accounts, delivery channels, and calendars to see their status.",
+    "provider": {
+      "zoho_mail": "Zoho Mail",
+      "zoho_calendar": "Zoho Calendar",
+      "delivery_provider": "Delivery provider",
+      "transactional_provider": "Transactional provider"
+    },
+    "purpose": {
+      "correspondence": "Correspondence",
+      "marketing": "Marketing",
+      "transactional": "Transactional"
+    },
+    "channel": {
+      "name": "Name",
+      "provider": "Provider",
+      "purpose": "Purpose",
+      "policy": "Policy",
+      "enabled": "Enabled",
+      "dailyCap": "Daily cap",
+      "noCap": "No cap",
+      "gateNotice": "Only channels reviewed as 'allowed' can be enabled. The toggle cannot bypass the gate.",
+      "zohoNotice": "Zoho Mail channels can only be enabled for the correspondence purpose.",
+      "addReview": "Add review",
+      "reviews": "Review history",
+      "create": "Add channel",
+      "createTitle": "Add delivery channel",
+      "mailAccount": "Mail account",
+      "senderIdentity": "Sender identity ID",
+      "senderIdentityHint": "Sender address resource ID (UUID). Must be a verified sender on the connected mailbox.",
+      "nameLabel": "Channel name",
+      "purposeLabel": "Purpose",
+      "providerLabel": "Provider",
+      "capLabel": "Internal daily cap (optional)",
+      "createSubmit": "Create channel",
+      "emptyTitle": "No delivery channels",
+      "emptyDescription": "Add a delivery provider channel and enable it after policy review."
+    },
+    "review": {
+      "title": "Add policy review",
+      "appendOnly": "Reviews are append-only and cannot be edited.",
+      "result": "Result",
+      "resultAllowed": "Allowed",
+      "resultBlocked": "Blocked",
+      "resultUnverified": "Unverified",
+      "policyUrl": "Policy URL",
+      "evidenceRef": "Contract evidence ref",
+      "notes": "Notes",
+      "expiresAt": "Review expiry (optional)",
+      "submit": "Add review",
+      "success": "Review recorded"
+    },
+    "reviews": {
+      "title": "Policy review history",
+      "result": "Result",
+      "reviewedBy": "Reviewed by",
+      "reviewedAt": "Reviewed at",
+      "expiresAt": "Expires",
+      "notes": "Notes",
+      "emptyTitle": "No reviews yet",
+      "emptyDescription": "Add the first policy review to record why a channel may be enabled."
+    },
+    "connectResult": {
+      "title": "Start OAuth connection",
+      "description": "Open this URL to finish provider auth. It is not shown again after you close this dialog.",
+      "open": "Open connection page",
+      "copy": "Copy URL",
+      "copied": "Copied"
+    },
+    "calendar": {
+      "host": "Host",
+      "calendar": "Calendar",
+      "status": "Status",
+      "busy": "Included in busy",
+      "busyYes": "Included",
+      "busyNo": "Excluded",
+      "emptyTitle": "No calendars connected",
+      "emptyDescription": "Per-host calendars are connected in settings."
+    }
+  }
+}

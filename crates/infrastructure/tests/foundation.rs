@@ -100,16 +100,29 @@ async fn t04_t05_idempotency_concurrency_and_reuse() {
         tasks.push(tokio::spawn(async move {
             idempotency::run(&db, &scope, &request_hash, {
                 let ran = ran.clone();
-                move |_tx| {
+                move |mut tx| {
                     let ran = ran.clone();
                     async move {
                         // Hold the claim briefly so followers actually poll.
                         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
                         ran.fetch_add(1, Ordering::SeqCst);
-                        Ok(Stored {
-                            status: 201,
-                            body: json!({"id": 42}),
-                        })
+                        jobs::enqueue(
+                            &mut tx,
+                            "test.idempotency",
+                            1,
+                            json!({}),
+                            Utc::now(),
+                            Some("one-business-write"),
+                        )
+                        .await
+                        .unwrap();
+                        Ok((
+                            tx,
+                            Stored {
+                                status: 201,
+                                body: json!({"id": 42}),
+                            },
+                        ))
                     }
                 }
             })
@@ -132,19 +145,113 @@ async fn t04_t05_idempotency_concurrency_and_reuse() {
     }
     assert_eq!((fresh, replayed), (1, 19));
     assert_eq!(ran.load(Ordering::SeqCst), 1, "handler ran more than once");
+    let writes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id = $1 AND kind = 'test.idempotency'",
+    )
+    .bind(world.workspace_id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        writes, 1,
+        "business write must commit with the stored response"
+    );
 
     // T05: same key, different request hash → 409 IDEMPOTENCY_KEY_REUSED.
     let other_hash = infrastructure::crypto::sha256_bytes(b"different-request");
-    let err = idempotency::run(&db, &scope, &other_hash, |_| async {
-        Ok(Stored {
-            status: 200,
-            body: json!({}),
-        })
+    let err = idempotency::run(&db, &scope, &other_hash, |tx| async {
+        Ok((
+            tx,
+            Stored {
+                status: 200,
+                body: json!({}),
+            },
+        ))
     })
     .await
     .unwrap_err();
     assert_eq!(err.code, ErrorCode::IdempotencyKeyReused);
     assert_eq!(err.status(), 409);
+}
+
+#[tokio::test]
+async fn idempotency_callback_error_rolls_back_business_writes_and_releases_claim() {
+    let Some(db) = common::test_db().await else {
+        return;
+    };
+    let world = seed_workspace(&db).await.unwrap();
+    let scope = Scope {
+        workspace_id: world.workspace_id,
+        principal_or_capability: world.admin.principal_id.to_string(),
+        endpoint: "POST /api/v1/test-rollback".into(),
+        key: format!("key-{}", Uuid::new_v4()),
+    };
+    let request_hash = infrastructure::crypto::sha256_bytes(b"rollback-request");
+
+    let err = idempotency::run::<_, _, serde_json::Value>(
+        &db,
+        &scope,
+        &request_hash,
+        |mut tx| async move {
+            jobs::enqueue(
+                &mut tx,
+                "test.idempotency.rollback",
+                1,
+                json!({}),
+                Utc::now(),
+                Some("rollback-write"),
+            )
+            .await
+            .unwrap();
+            Err(contracts::AppError::new(
+                ErrorCode::ValidationFailed,
+                "fail after business write",
+            ))
+        },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, ErrorCode::ValidationFailed);
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let jobs_left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id = $1 AND dedupe_key = 'rollback-write'",
+    )
+    .bind(world.workspace_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let claims_left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM idempotency_records
+          WHERE workspace_id = $1 AND idempotency_key = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(&scope.key)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        jobs_left, 0,
+        "callback error must roll back its business writes"
+    );
+    assert_eq!(
+        claims_left, 0,
+        "callback error must release the idempotency claim"
+    );
+
+    let retry = idempotency::run(&db, &scope, &request_hash, |tx| async move {
+        Ok((
+            tx,
+            Stored {
+                status: 200,
+                body: json!({"retried": true}),
+            },
+        ))
+    })
+    .await
+    .unwrap();
+    assert!(matches!(retry, Outcome::Fresh(_)));
 }
 
 #[tokio::test]

@@ -1,1 +1,252 @@
-{}
+{
+  "errors": {
+    "generic": "요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요.",
+    "conflict": "다른 사람이 먼저 변경했습니다. 최신 상태를 다시 불러왔습니다.",
+    "precondition": "동시성 헤더가 필요한 요청입니다. 최신 상태를 다시 불러온 뒤 시도하세요.",
+    "inProgress": "같은 작업이 이미 처리 중입니다. 상태를 확인한 뒤 새 작업을 만들지 마세요.",
+    "emergencyStop": "긴급 중지 상태라 제출이 차단됐습니다.",
+    "forbidden": "이 작업을 수행할 권한이 없습니다.",
+    "notFound": "대상을 찾을 수 없거나 접근할 수 없습니다.",
+    "providerBlocked": "공급자 정책이 허용하지 않아 차단됐습니다.",
+    "invalidCredentials": "현재 비밀번호가 올바르지 않습니다.",
+    "agentGrantForbidden": "에이전트에게 발송·승인 권한은 부여할 수 없습니다."
+  },
+  "common": {
+    "adminOnly": "Admin 권한이 필요합니다",
+    "version": "버전 {version}",
+    "copy": "복사",
+    "copied": "복사했습니다",
+    "open": "열기"
+  },
+  "members": {
+    "title": "멤버",
+    "description": "멤버·역할·에이전트 주체와 초대를 관리합니다.",
+    "sectionMembers": "멤버",
+    "sectionInvitations": "초대",
+    "sectionAgents": "에이전트·서비스 credential",
+    "kindAll": "전체",
+    "loadMore": "더 보기",
+    "kind": {
+      "human": "사람",
+      "agent": "에이전트",
+      "system": "시스템"
+    },
+    "columns": {
+      "name": "이름",
+      "kind": "유형",
+      "email": "이메일",
+      "role": "역할",
+      "status": "상태",
+      "createdAt": "생성",
+      "actions": "작업"
+    },
+    "role": {
+      "admin": "Admin",
+      "manager": "Manager",
+      "member": "Member",
+      "agent": "Agent",
+      "system": "System"
+    },
+    "roleChangeSuccess": "역할을 변경했습니다",
+    "disable": "비활성화 요청",
+    "disableTitle": "주체 비활성화 요청",
+    "disableDescription": "비활성화는 재배정·대기 작업 처리 정책과 함께 작업으로 접수됩니다(202).",
+    "disablePolicy": "대기 작업 처리",
+    "disablePolicyReassign": "다른 멤버에게 재배정",
+    "disablePolicyCancel": "대기 작업 취소",
+    "disableReassignTo": "재배정 대상",
+    "disableReason": "사유(선택)",
+    "disableSubmit": "비활성화 요청 보내기",
+    "disableSuccess": "비활성화 작업이 접수됐습니다",
+    "emptyTitle": "멤버가 없습니다",
+    "emptyDescription": "관리자가 발급한 초대 링크로 멤버를 추가하세요.",
+    "invite": "멤버 초대",
+    "inviteTitle": "멤버 초대",
+    "inviteEmail": "이메일",
+    "inviteRole": "역할",
+    "inviteSubmit": "초대 링크 만들기",
+    "inviteCreatedTitle": "초대 링크가 생성됐습니다",
+    "inviteCreatedDescription": "이 링크는 지금 한 번만 표시됩니다. 전달한 뒤에는 다시 확인할 수 없습니다.",
+    "inviteMissingLink": "응답에 초대 링크가 없습니다. 초대 목록에서 상태를 확인하세요.",
+    "invitation": {
+      "email": "이메일",
+      "role": "역할",
+      "expiresAt": "만료",
+      "state": "상태",
+      "statePending": "대기",
+      "stateAccepted": "수락됨",
+      "stateRevoked": "철회됨",
+      "stateExpired": "만료됨",
+      "emptyTitle": "진행 중인 초대가 없습니다",
+      "emptyDescription": "초대 링크를 만들면 여기에 상태가 표시됩니다."
+    },
+    "agents": {
+      "new": "에이전트 추가",
+      "emptyTitle": "등록된 에이전트가 없습니다",
+      "emptyDescription": "에이전트 주체를 만들고 서비스 credential을 발급하세요.",
+      "columns": {
+        "name": "이름",
+        "createdAt": "생성"
+      },
+      "credentials": "Credentials",
+      "nameLabel": "이름",
+      "scopesLabel": "허용 scope",
+      "createSubmit": "에이전트 생성",
+      "createSuccess": "에이전트를 생성했습니다"
+    },
+    "credentials": {
+      "new": "credential 발급",
+      "newTitle": "{name} credential 발급",
+      "nameLabel": "이름",
+      "expiresAtLabel": "만료 시각",
+      "createSubmit": "발급",
+      "createdTitle": "credential이 발급됐습니다",
+      "createdDescription": "이 secret은 지금 한 번만 표시됩니다. 반드시 안전한 곳에 저장하세요.",
+      "empty": "발급된 credential이 없습니다",
+      "never": "사용 기록 없음",
+      "columns": {
+        "name": "이름",
+        "scopes": "scope",
+        "lastUsed": "마지막 사용"
+      },
+      "revoke": "해지",
+      "revokeTitle": "credential을 해지합니다",
+      "revokeDescription": "해지 즉시 인증이 거부되며, 이 credential이 요청한 대기 작업은 중단됩니다(기본).",
+      "revokeCancel": "취소",
+      "revokeConfirm": "해지",
+      "revokeSuccess": "credential을 해지했습니다"
+    }
+  },
+  "mailAccounts": {
+    "title": "메일 계정",
+    "description": "공용 메일함 연결과 메일함별 접근 권한(grant)을 관리합니다.",
+    "oauthNotice": "OAuth 비밀 값은 저장·표시되지 않습니다. 연결 상태만 표시됩니다.",
+    "connect": "메일함 연결",
+    "connectTitle": "메일함 연결 시작",
+    "connectDescription": "공급자 인증 페이지 URL을 발급받아 이동합니다. 비밀 값은 표시되지 않습니다.",
+    "regionLabel": "Zoho 리전",
+    "connectSubmit": "OAuth 시작",
+    "reconnect": "재연결",
+    "reconnectDone": "재인증을 시작했습니다. 연결 상태를 확인하세요.",
+    "manageGrants": "권한 관리",
+    "columns": {
+      "name": "이름",
+      "provider": "공급자",
+      "status": "상태",
+      "lastSync": "마지막 동기화",
+      "actions": "작업"
+    },
+    "provider": {
+      "zoho_mail": "Zoho 메일",
+      "zoho_calendar": "Zoho 캘린더",
+      "delivery_provider": "발송 공급자",
+      "transactional_provider": "트랜잭션 공급자"
+    },
+    "emptyTitle": "연결된 메일함이 없습니다",
+    "emptyDescription": "메일함을 연결하면 grant(읽기·초안·발송·승인·배정)를 부여할 수 있습니다.",
+    "grants": {
+      "title": "메일함 권한",
+      "rulesNotice": "grant는 역할 권한과 교집합으로 적용됩니다. 상위 권한 없이 하위 권한만 켤 수 없습니다.",
+      "readOnly": "변경은 Admin 권한이 필요합니다",
+      "save": "저장",
+      "saveSuccess": "권한을 저장했습니다",
+      "keys": {
+        "can_read": "읽기",
+        "can_compose": "초안",
+        "can_send": "발송",
+        "can_approve": "승인",
+        "can_assign": "배정"
+      },
+      "blockAgent": "에이전트는 발송·승인 권한을 가질 수 없습니다",
+      "blockRole": "승인 권한은 Admin·Manager에게만 부여할 수 있습니다",
+      "addTitle": "주체 추가",
+      "principal": "주체",
+      "principalPlaceholder": "권한을 부여할 주체 선택",
+      "addSubmit": "권한 부여",
+      "emptyTitle": "부여된 권한이 없습니다"
+    }
+  },
+  "calendars": {
+    "title": "캘린더",
+    "description": "호스트별 캘린더 연결과 동기화 상태를 관리합니다.",
+    "privacyNotice": "비공개 일정의 상세 내용은 표시하지 않습니다. 연결 메타데이터만 보입니다.",
+    "connect": "캘린더 연결",
+    "columns": {
+      "host": "호스트",
+      "calendar": "캘린더",
+      "provider": "공급자",
+      "status": "상태",
+      "busy": "busy 계산",
+      "createdAt": "연결일"
+    },
+    "busyYes": "포함",
+    "busyNo": "제외",
+    "emptyTitle": "연결된 캘린더가 없습니다",
+    "emptyDescription": "캘린더 연결 후 공개 예약 슬롯을 제공할 수 있습니다."
+  },
+  "security": {
+    "title": "보안",
+    "description": "본인 세션·비밀번호와 보안 기록을 관리합니다.",
+    "sessions": {
+      "title": "본인 세션",
+      "current": "현재 세션",
+      "revoke": "해지",
+      "revokeTitle": "세션을 해지합니다",
+      "revokeDescription": "해지 즉시 해당 세션의 인증이 거부됩니다.",
+      "revokeCancel": "취소",
+      "revokeConfirm": "해지",
+      "revokeSuccess": "세션을 해지했습니다",
+      "columns": {
+        "session": "세션",
+        "createdAt": "로그인",
+        "lastSeen": "마지막 활동",
+        "expiresAt": "만료",
+        "status": "상태"
+      },
+      "emptyTitle": "세션 정보를 불러올 수 없습니다",
+      "emptyDescription": "활성 세션이 여기에 표시됩니다."
+    },
+    "password": {
+      "title": "비밀번호 변경",
+      "current": "현재 비밀번호",
+      "next": "새 비밀번호",
+      "hint": "12자 이상 128자 이하로 입력하세요.",
+      "submit": "비밀번호 변경",
+      "success": "비밀번호를 변경했습니다"
+    }
+  },
+  "policies": {
+    "title": "정책",
+    "description": "발송 근거·채널 정책·긴급 중지 상태를 읽기 전용으로 확인합니다.",
+    "consentNotice": "이 화면은 읽기 전용입니다. UI 확인란은 발송 근거나 동의의 증거가 아니며, 변경은 운영·설정의 각 영역에서 권한을 가진 사용자가 수행합니다.",
+    "manageLink": "운영 > 연동에서 관리",
+    "emergency": {
+      "on": "긴급 중지 활성 — 신규 외부 제출이 차단된 상태입니다",
+      "off": "긴급 중지 해제됨 — 정상 상태입니다",
+      "description": "긴급 중지는 모든 신규 외부 제출(발송·예약 확정 등)을 즉시 차단합니다."
+    },
+    "channels": {
+      "title": "발송 채널 정책",
+      "enabledYes": "활성",
+      "enabledNo": "비활성",
+      "columns": {
+        "name": "채널",
+        "purpose": "목적",
+        "policy": "정책 상태",
+        "enabled": "활성화"
+      },
+      "emptyTitle": "발송 채널이 없습니다",
+      "emptyDescription": "정책 검토가 '허용'인 채널만 활성화할 수 있습니다."
+    },
+    "accounts": {
+      "title": "연결 상태",
+      "columns": {
+        "address": "메일 주소",
+        "status": "연결 상태",
+        "lastSync": "마지막 동기화"
+      },
+      "emptyTitle": "연결된 계정이 없습니다",
+      "emptyDescription": "재인증이 필요한 연결은 여기에 경고 상태로 표시됩니다."
+    }
+  }
+}

@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { PoliciesScreen } from "@/features/settings";
 
 export default function SettingsPoliciesPage() {
-  return <ScreenStub screen="settingsPolicies" />;
+  return <PoliciesScreen />;
 }

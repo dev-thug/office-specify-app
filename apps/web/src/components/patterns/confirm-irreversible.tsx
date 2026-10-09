@@ -23,6 +23,8 @@ export interface ConfirmIrreversibleProps {
   description?: string;
   /** 실제 발송/승인 대상 — 수신자 수, 발신 주소, 목적, 내용 미리보기 (§7.2). */
   recipientsCount: number;
+  /** 선택 사항 — 단건 작업처럼 정확한 수신 주소를 보여야 하는 경우 사용한다. */
+  recipientAddresses?: string[];
   sender: string;
   purpose: string;
   contentPreview?: { subject?: string; body?: string };
@@ -44,6 +46,7 @@ export function ConfirmIrreversible({
   title,
   description,
   recipientsCount,
+  recipientAddresses,
   sender,
   purpose,
   contentPreview,
@@ -61,6 +64,7 @@ export function ConfirmIrreversible({
         title={title}
         description={description}
         recipientsCount={recipientsCount}
+        recipientAddresses={recipientAddresses}
         sender={sender}
         purpose={purpose}
         contentPreview={contentPreview}
@@ -83,6 +87,7 @@ function ConfirmBody({
   title,
   description,
   recipientsCount,
+  recipientAddresses,
   sender,
   purpose,
   contentPreview,
@@ -109,7 +114,16 @@ function ConfirmBody({
 
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-2xl border border-border bg-app-panel-muted px-4 py-3 text-sm">
           <dt className="text-muted-foreground">{t("recipients")}</dt>
-          <dd className="font-medium">{recipientsCount.toLocaleString()}</dd>
+          <dd className="font-medium">
+            <span>{recipientsCount.toLocaleString()}</span>
+            {recipientAddresses && recipientAddresses.length > 0 ? (
+              <ul className="mt-1 grid gap-0.5 font-normal">
+                {recipientAddresses.map((address) => (
+                  <li key={address} className="break-all">{address}</li>
+                ))}
+              </ul>
+            ) : null}
+          </dd>
           <dt className="text-muted-foreground">{t("sender")}</dt>
           <dd className="font-medium">{sender}</dd>
           <dt className="text-muted-foreground">{t("purpose")}</dt>

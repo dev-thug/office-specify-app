@@ -43,7 +43,7 @@ impl ZohoMail {
 impl MailProvider for ZohoMail {
     fn capabilities(&self) -> MailCapabilities {
         MailCapabilities {
-            supports_send: true,
+            supports_send: self.credential_ref.is_some(),
             supports_delta_sync: false,
         }
     }

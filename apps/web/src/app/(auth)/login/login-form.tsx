@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +21,14 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   // 멱등 키는 논리 작업당 한 번 발급 — 확정 응답(성공/재시도 불가 오류) 후에만 재발급한다.
   const idemRef = useRef<string>(idempotencyKey());
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setHydrated(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -59,6 +65,7 @@ export function LoginForm() {
           type="email"
           autoComplete="email"
           required
+          disabled={!hydrated}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
@@ -70,6 +77,7 @@ export function LoginForm() {
           type="password"
           autoComplete="current-password"
           required
+          disabled={!hydrated}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
@@ -79,7 +87,7 @@ export function LoginForm() {
           {error}
         </p>
       ) : null}
-      <Button type="submit" className="w-full" disabled={pending}>
+      <Button type="submit" className="w-full" disabled={pending || !hydrated}>
         {pending ? t("submitting") : t("submit")}
       </Button>
     </form>

@@ -1,1 +1,217 @@
-{}
+{
+  "errors": {
+    "generic": "요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요.",
+    "conflict": "다른 사람이 먼저 변경했습니다. 최신 상태를 다시 불러왔습니다.",
+    "precondition": "동시성 헤더가 필요한 요청입니다. 최신 상태를 다시 불러온 뒤 시도하세요.",
+    "inProgress": "같은 작업이 이미 처리 중입니다. 상태를 확인한 뒤 새 작업을 만들지 마세요.",
+    "emergencyStop": "긴급 중지 상태라 제출이 차단됐습니다.",
+    "forbidden": "이 작업을 수행할 권한이 없습니다.",
+    "notFound": "대상을 찾을 수 없거나 접근할 수 없습니다.",
+    "providerBlocked": "공급자 정책이 허용하지 않아 차단됐습니다."
+  },
+  "emergencyStop": {
+    "title": "긴급 중지",
+    "description": "활성화하면 워크스페이스의 모든 신규 외부 제출(발송·예약 확정 등)이 즉시 차단됩니다.",
+    "blockedBanner": "긴급 중지 활성 — 신규 외부 제출이 차단된 상태입니다.",
+    "status": {
+      "enabled": "활성",
+      "disabled": "해제됨"
+    },
+    "enable": "긴급 중지 활성화",
+    "disable": "긴급 중지 해제",
+    "reason": "사유(필수)",
+    "reasonPlaceholder": "감사 로그에 남을 사유를 입력하세요",
+    "reasonRequired": "사유를 입력하세요",
+    "confirmTitleEnable": "긴급 중지를 활성화합니다",
+    "confirmTitleDisable": "긴급 중지를 해제합니다",
+    "confirmDescEnable": "모든 신규 발송·예약 확정·외부 제출이 즉시 차단됩니다. 진행 중인 작업은 별도로 표시됩니다.",
+    "confirmDescDisable": "신규 외부 제출 차단이 해제됩니다.",
+    "typeToConfirm": "확인하려면 \"{word}\"를 입력하세요",
+    "confirmWord": {
+      "enable": "중지",
+      "disable": "재개"
+    },
+    "confirmButton": {
+      "enable": "긴급 중지 활성화",
+      "disable": "긴급 중지 해제"
+    },
+    "updatedAt": "마지막 변경 {time}",
+    "version": "버전 {version}",
+    "reasonLabel": "사유",
+    "readOnly": "변경은 Admin 권한이 필요합니다"
+  },
+  "alerts": {
+    "unknownJobs": "불명 결과 작업 {count}건 — 재발송 버튼이 아니라 대조 절차로 처리하세요",
+    "deadJobs": "중단(dead) 작업 {count}건",
+    "reauth": "재인증이 필요한 연결 {count}건",
+    "blockedChannels": "차단된 발송 채널 {count}건"
+  },
+  "jobs": {
+    "title": "작업 큐",
+    "description": "비동기 작업의 상태·재시도·dead 작업을 운영합니다.",
+    "tabs": {
+      "jobs": "작업",
+      "audit": "감사 로그"
+    },
+    "filterState": "상태",
+    "filterStateAll": "모든 상태",
+    "filterKind": "작업 종류",
+    "filterKindPlaceholder": "kind로 필터",
+    "columns": {
+      "kind": "종류",
+      "state": "상태",
+      "attempts": "시도",
+      "lastError": "마지막 오류",
+      "availableAt": "실행 예정",
+      "createdAt": "생성",
+      "actions": "작업"
+    },
+    "emptyTitle": "조건에 맞는 작업이 없습니다",
+    "emptyDescription": "대기·실행·재시도·중단 작업이 여기에 나타납니다.",
+    "openDetail": "상세 보기",
+    "detail": {
+      "title": "작업 상세",
+      "id": "작업 ID",
+      "kind": "종류",
+      "state": "상태",
+      "payloadVersion": "페이로드 버전",
+      "attempts": "시도 횟수",
+      "leaseOwner": "리스 소유자",
+      "leaseExpires": "리스 만료",
+      "requestedBy": "요청자",
+      "finishedAt": "종료 시각",
+      "availableAt": "실행 예정",
+      "createdAt": "생성",
+      "externalEffect": "외부 효과 포함",
+      "externalEffectYes": "예 — 제출 경계 이후 unknown이면 자동 재시도 금지",
+      "resultRefs": "관련 리소스",
+      "errorDetail": "오류 상세",
+      "retryable": "재시도 가능 여부",
+      "retryBlockReason": "재시도 불가 사유"
+    },
+    "retry": {
+      "button": "재시도 요청",
+      "reason": "사유(선택)",
+      "reasonPlaceholder": "재시도 사유 — 감사 로그에 남습니다",
+      "submit": "재시도 요청 보내기",
+      "success": "재시도가 요청됐습니다",
+      "confirmHint": "안전한 작업만 재시도할 수 있습니다. 운영 재시도도 동일한 정책·횟수 제한을 통과합니다."
+    },
+    "investigate": {
+      "badge": "조사 필요",
+      "title": "결과 불명 — 재발송이 아니라 대조가 필요합니다",
+      "description": "공급자 제출 결과가 불명입니다. 같은 대상을 다시 제출하면 중복 발송이 될 수 있습니다. 공급자 대조와 관련 리소스를 확인해 결과를 확정하세요.",
+      "noResend": "unknown 결과에는 재시도·재발송 버튼을 제공하지 않습니다"
+    }
+  },
+  "audit": {
+    "description": "허용된 메타데이터만 기록되는 redacted 감사 로그입니다.",
+    "filterAction": "행동",
+    "filterActionPlaceholder": "action으로 필터",
+    "filterTarget": "대상 종류",
+    "filterTargetPlaceholder": "target_type으로 필터",
+    "columns": {
+      "occurredAt": "시각",
+      "action": "행동",
+      "actor": "실행자",
+      "targetType": "대상",
+      "targetId": "대상 ID",
+      "requestId": "요청 ID"
+    },
+    "details": "세부 메타데이터",
+    "emptyTitle": "감사 기록이 없습니다",
+    "emptyDescription": "권한이 허용하는 범위의 감사 로그가 표시됩니다."
+  },
+  "integrations": {
+    "title": "연동",
+    "description": "메일·캘린더·발송 채널의 연결 상태와 정책 검토를 관리합니다.",
+    "oauthNotice": "OAuth 비밀 값은 저장·표시되지 않습니다. 연결 상태만 표시됩니다.",
+    "mailSection": "메일 계정",
+    "channelSection": "발송 채널",
+    "calendarSection": "캘린더 연결",
+    "reconnect": "재연결",
+    "reconnectDone": "재인증을 시작했습니다. 발급된 연결 URL로 이동하세요.",
+    "lastSync": "마지막 동기화 {time}",
+    "lastError": "최근 오류 {code}",
+    "neverSynced": "동기화 기록 없음",
+    "emptyTitle": "연결된 서비스가 없습니다",
+    "emptyDescription": "메일 계정·발송 채널·캘린더를 연결하면 상태가 여기에 표시됩니다.",
+    "provider": {
+      "zoho_mail": "Zoho 메일",
+      "zoho_calendar": "Zoho 캘린더",
+      "delivery_provider": "발송 공급자",
+      "transactional_provider": "트랜잭션 공급자"
+    },
+    "purpose": {
+      "correspondence": "일반 서신",
+      "marketing": "마케팅",
+      "transactional": "트랜잭션"
+    },
+    "channel": {
+      "name": "이름",
+      "provider": "공급자",
+      "purpose": "목적",
+      "policy": "정책 상태",
+      "enabled": "활성",
+      "dailyCap": "일 한도",
+      "noCap": "제한 없음",
+      "gateNotice": "정책 검토가 '허용'인 채널만 활성화할 수 있습니다. 토글로 게이트를 우회할 수 없습니다.",
+      "zohoNotice": "Zoho 메일 채널은 correspondence 목적만 활성화할 수 있습니다.",
+      "addReview": "검토 추가",
+      "reviews": "검토 이력",
+      "create": "채널 추가",
+      "createTitle": "발송 채널 추가",
+      "mailAccount": "메일 계정",
+      "senderIdentity": "발신자 ID",
+      "senderIdentityHint": "발신 주소 리소스 ID(UUID). 연결된 메일함의 검증된 발신 주소여야 합니다.",
+      "nameLabel": "채널 이름",
+      "purposeLabel": "목적",
+      "providerLabel": "공급자",
+      "capLabel": "내부 일 한도(선택)",
+      "createSubmit": "채널 생성",
+      "emptyTitle": "발송 채널이 없습니다",
+      "emptyDescription": "발송 공급자 채널을 추가하고 정책 검토를 거쳐 활성화합니다."
+    },
+    "review": {
+      "title": "정책 검토 추가",
+      "appendOnly": "검토 기록은 추가만 가능하며 수정되지 않습니다.",
+      "result": "결론",
+      "resultAllowed": "허용",
+      "resultBlocked": "차단",
+      "resultUnverified": "미검증",
+      "policyUrl": "정책 URL",
+      "evidenceRef": "계약 증빙 참조",
+      "notes": "메모",
+      "expiresAt": "검토 만료(선택)",
+      "submit": "검토 기록 추가",
+      "success": "검토가 기록됐습니다"
+    },
+    "reviews": {
+      "title": "정책 검토 이력",
+      "result": "결과",
+      "reviewedBy": "검토자",
+      "reviewedAt": "검토 시각",
+      "expiresAt": "만료",
+      "notes": "메모",
+      "emptyTitle": "검토 기록이 없습니다",
+      "emptyDescription": "첫 정책 검토를 추가해 채널 활성화 근거를 남기세요."
+    },
+    "connectResult": {
+      "title": "OAuth 연결 시작",
+      "description": "아래 URL로 이동해 공급자 인증을 완료하세요. 이 URL은 이 대화상자를 닫으면 다시 표시되지 않습니다.",
+      "open": "연결 페이지 열기",
+      "copy": "URL 복사",
+      "copied": "복사했습니다"
+    },
+    "calendar": {
+      "host": "호스트",
+      "calendar": "캘린더",
+      "status": "상태",
+      "busy": "busy 계산 포함",
+      "busyYes": "포함",
+      "busyNo": "제외",
+      "emptyTitle": "연결된 캘린더가 없습니다",
+      "emptyDescription": "호스트별 캘린더는 설정에서 연결합니다."
+    }
+  }
+}

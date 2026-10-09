@@ -1,5 +1,5 @@
-import { ScreenStub } from "@/components/patterns/screen-stub";
+import { CampaignList } from "@/features/campaigns";
 
 export default function CampaignsPage() {
-  return <ScreenStub screen="campaigns" />;
+  return <CampaignList />;
 }
