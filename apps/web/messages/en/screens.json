@@ -1,0 +1,186 @@
+{
+  "placeholderTitle": "Structure-only screen",
+  "placeholderDescription": "Layout and empty states follow the spec. Real data wiring lands in later tasks.",
+  "dashboard": {
+    "title": "Dashboard",
+    "description": "Review today's replies, approvals, meetings, and delivery state.",
+    "emptyTitle": "Nothing to handle today",
+    "emptyDescription": "New replies, approval requests, upcoming meetings, and unknown deliveries appear here. Observation windows and refresh times are shown per card.",
+    "kpiReplies": "Replies to handle",
+    "kpiApprovals": "Pending approvals",
+    "kpiMeetings": "Today's meetings",
+    "kpiUnknown": "Unknown deliveries",
+    "kpiSyncLag": "Sync lag",
+    "kpiCohort": "Cohort performance"
+  },
+  "companies": {
+    "title": "Companies",
+    "description": "Manage companies by relationship stage, owner, and latest permitted activity.",
+    "emptyTitle": "No companies yet",
+    "emptyDescription": "Add a company or start with an import. Duplicate candidates are reviewed via merge requests."
+  },
+  "companyDetail": {
+    "title": "Company detail",
+    "description": "Summary, contacts, activity, emails, meetings, research, and notes in tabs.",
+    "emptyTitle": "Select a company",
+    "emptyDescription": "Pick a company from the list. AI-completed fields without a source are marked unverified.",
+    "tabs": "Overview|Contacts|Activity|Emails|Meetings|Research|Notes"
+  },
+  "contacts": {
+    "title": "Contacts",
+    "description": "Names, titles, and per-address verification, send basis, and suppression.",
+    "emptyTitle": "No contacts yet",
+    "emptyDescription": "Add a contact to manage per-address verification and send basis as separate badges."
+  },
+  "contactDetail": {
+    "title": "Contact detail",
+    "description": "Distinguish address validity from send permission.",
+    "emptyTitle": "Select a contact",
+    "emptyDescription": "Email format validity and send permission appear as separate badges."
+  },
+  "inbox": {
+    "title": "Shared Inbox",
+    "description": "Assign and handle conversations in shared mailboxes. Receipt is not delivery.",
+    "emptyTitle": "No conversations to handle",
+    "emptyDescription": "New replies appear here. Mailbox reconnect warnings show as banners."
+  },
+  "threadDetail": {
+    "title": "Conversation",
+    "description": "Read the thread alongside the CRM side panel.",
+    "emptyTitle": "Select a conversation",
+    "emptyDescription": "Other members' replies and new answers surface in real time."
+  },
+  "templates": {
+    "title": "Templates",
+    "description": "Manage subjects, bodies, variable definitions, and per-version usage.",
+    "emptyTitle": "No templates yet",
+    "emptyDescription": "Required variables, HTML safety, and length limits are checked before freeze."
+  },
+  "templateDetail": {
+    "title": "Template detail",
+    "description": "Per-version body, variables, sample data, and preview.",
+    "emptyTitle": "Select a template",
+    "emptyDescription": "New versions never modify existing ones."
+  },
+  "campaigns": {
+    "title": "Campaigns",
+    "description": "Configure goal, audience, sequence, and schedule rules before approval.",
+    "emptyTitle": "No campaigns yet",
+    "emptyDescription": "Campaigns build in 6 steps. Channels the provider disallows surface a blocking banner."
+  },
+  "campaignDetail": {
+    "title": "Campaign detail",
+    "description": "Six-step configuration with freeze, approval, and execution state.",
+    "emptyTitle": "Select a campaign",
+    "emptyDescription": "Review & freeze pins the actual send content and rule hash.",
+    "steps": "1. Goal & channel|2. Audience|3. Sequence|4. Schedule & limits|5. Review & freeze|6. Approval & launch"
+  },
+  "approvals": {
+    "title": "Approvals",
+    "description": "Review frozen recipients, rendered content, and policy results.",
+    "emptyTitle": "No pending approvals",
+    "emptyDescription": "You cannot approve your own request. Expiry, cancellation, and version mismatch are shown."
+  },
+  "approvalDetail": {
+    "title": "Approval request",
+    "description": "Requester, kind, frozen version, recipients, rendered body, policy results.",
+    "emptyTitle": "Select a request",
+    "emptyDescription": "Approve, reject, comment, or request changes — each decision is recorded."
+  },
+  "meetings": {
+    "title": "Meetings",
+    "description": "Host, guest, external sync state, and attendance outcome.",
+    "emptyTitle": "No upcoming meetings",
+    "emptyDescription": "confirming and unknown states are never shown as confirmed."
+  },
+  "meetingTypes": {
+    "title": "Meeting types",
+    "description": "Types and durations exposed on public booking links.",
+    "emptyTitle": "No meeting types yet",
+    "emptyDescription": "Create a meeting type to issue a public booking link."
+  },
+  "agents": {
+    "title": "Agent center",
+    "description": "Review runs, tool use, evidence, budget, and pending approvals.",
+    "emptyTitle": "No agent runs yet",
+    "emptyDescription": "Failed tools and estimated vs. actual cost are shown separately. Agents can never approve or grant."
+  },
+  "agentRunDetail": {
+    "title": "Agent run",
+    "description": "Step-by-step tool calls, evidence, and cost for a run.",
+    "emptyTitle": "Select a run",
+    "emptyDescription": "Runs stopped by policy show the reason."
+  },
+  "imports": {
+    "title": "Imports",
+    "description": "Validate files, map fields, resolve duplicates — dry-run before commit.",
+    "emptyTitle": "No imports yet",
+    "emptyDescription": "New addresses default to unconfirmed send basis. Partial success is shown as counts."
+  },
+  "importDetail": {
+    "title": "Import detail",
+    "description": "Field mapping, validation errors, and failed-row re-entry.",
+    "emptyTitle": "Select an import",
+    "emptyDescription": "Compare dry-run and commit results."
+  },
+  "complianceSuppressions": {
+    "title": "Suppressions",
+    "description": "Per-address block reasons, basis, revocation, evidence, and history.",
+    "emptyTitle": "No suppressed addresses",
+    "emptyDescription": "Unsubscribes are scoped per purpose; release requires separate approval."
+  },
+  "complianceReviews": {
+    "title": "Basis reviews",
+    "description": "Review the validity of per-purpose contact basis.",
+    "emptyTitle": "No basis awaiting review",
+    "emptyDescription": "A checkbox alone cannot make consent valid — evidence is reviewed."
+  },
+  "operationsJobs": {
+    "title": "Job queue",
+    "description": "Operate async jobs, retries, and dead-letter jobs.",
+    "emptyTitle": "No queued jobs",
+    "emptyDescription": "Unknown outcomes go through investigation, not a resend button."
+  },
+  "operationsIntegrations": {
+    "title": "Integrations",
+    "description": "Mail, calendar, and delivery channel health plus policy reviews.",
+    "emptyTitle": "No connected services",
+    "emptyDescription": "OAuth secrets are never displayed. Connections needing reauth are flagged."
+  },
+  "settingsMembers": {
+    "title": "Members",
+    "description": "Manage members, roles, agent principals, and invitations.",
+    "emptyTitle": "No members",
+    "emptyDescription": "Admin-created invite links are shown only once."
+  },
+  "settingsMailAccounts": {
+    "title": "Mail accounts",
+    "description": "Shared mailbox connections and per-mailbox grants.",
+    "emptyTitle": "No mailboxes connected",
+    "emptyDescription": "Mailbox grants distinguish read, compose, send, approve, and assign."
+  },
+  "settingsCalendars": {
+    "title": "Calendars",
+    "description": "Per-host calendar connections and sync state.",
+    "emptyTitle": "No calendars connected",
+    "emptyDescription": "Connect a calendar to offer public booking slots."
+  },
+  "settingsPolicies": {
+    "title": "Policies",
+    "description": "Send basis, retention, channel policies, and emergency stop.",
+    "emptyTitle": "No policies configured",
+    "emptyDescription": "Policy changes apply more strictly to running work."
+  },
+  "settingsSecurity": {
+    "title": "Security",
+    "description": "Sessions, service credentials, and audit log access.",
+    "emptyTitle": "No security settings",
+    "emptyDescription": "Audit logs record allowlisted metadata only."
+  },
+  "design": {
+    "title": "Design system",
+    "description": "Dev-only page showcasing ported primitives and Outreach patterns in both themes.",
+    "emptyTitle": "Primitive catalog",
+    "emptyDescription": "Inspect components in both themes below."
+  }
+}

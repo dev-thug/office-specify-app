@@ -1,0 +1,30 @@
+{
+  "dashboard": "대시보드",
+  "companies": "기업",
+  "contacts": "담당자",
+  "inbox": "Inbox",
+  "templates": "템플릿",
+  "campaigns": "캠페인",
+  "approvals": "승인함",
+  "meetings": "미팅",
+  "meetingTypes": "미팅 유형",
+  "agents": "에이전트",
+  "imports": "가져오기",
+  "compliance": "준수 관리",
+  "complianceReviews": "근거 검토",
+  "operations": "운영",
+  "operationsIntegrations": "연동",
+  "settings": "설정",
+  "settingsMailAccounts": "메일 계정",
+  "settingsCalendars": "캘린더",
+  "settingsPolicies": "정책",
+  "settingsSecurity": "보안",
+  "sections": {
+    "main": "메인",
+    "crm": "영업",
+    "communication": "커뮤니케이션",
+    "meetings": "미팅",
+    "automation": "자동화",
+    "admin": "관리"
+  }
+}

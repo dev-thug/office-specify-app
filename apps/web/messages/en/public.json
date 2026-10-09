@@ -1,0 +1,36 @@
+{
+  "book": {
+    "title": "Book a meeting",
+    "description": "Pick an available time below to request a booking.",
+    "host": "Host",
+    "timezone": "Time zone",
+    "selectSlot": "Select a time",
+    "name": "Name",
+    "email": "Email",
+    "memo": "Note (optional)",
+    "submit": "Request booking",
+    "submitting": "Requesting…",
+    "footnote": "A request is not confirmed immediately; the result is sent by email.",
+    "error": "Could not submit the booking. Please try again."
+  },
+  "bookingManage": {
+    "title": "Manage booking",
+    "description": "Review booking details, reschedule, or cancel.",
+    "status": "Booking status",
+    "change": "Change time",
+    "cancel": "Cancel booking",
+    "confirmingNote": "Your booking is being confirmed. Refreshing shows the same state.",
+    "error": "Could not load the booking."
+  },
+  "unsubscribe": {
+    "title": "Unsubscribe",
+    "description": "Stop receiving email from this sender organization. Opening this page changes nothing.",
+    "scope": "Blocked scope",
+    "confirm": "Confirm unsubscribe",
+    "confirming": "Processing…",
+    "doneTitle": "Unsubscribe applied",
+    "doneDescription": "Your request was processed. Already-processed tokens show the same result.",
+    "error": "Could not process the request. Please try again.",
+    "notAvailable": "Unsubscribe processing is not wired yet. Please try again later."
+  }
+}

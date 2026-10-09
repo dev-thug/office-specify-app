@@ -1,0 +1,186 @@
+{
+  "placeholderTitle": "구조만 구현된 화면",
+  "placeholderDescription": "화면 뼈대와 빈 상태는 설계서대로 구성되어 있습니다. 실제 데이터 연결은 후속 작업에서 진행됩니다.",
+  "dashboard": {
+    "title": "대시보드",
+    "description": "오늘 처리할 답장·승인·미팅과 발송 상태를 확인합니다.",
+    "emptyTitle": "오늘 처리할 항목이 없습니다",
+    "emptyDescription": "새 답장, 승인 요청, 예정된 미팅, 발송 불명(unknown)이 여기에 나타납니다. 관측 기간과 갱신 시각은 각 카드에 표시됩니다.",
+    "kpiReplies": "처리할 답장",
+    "kpiApprovals": "승인 대기",
+    "kpiMeetings": "오늘의 미팅",
+    "kpiUnknown": "발송 불명",
+    "kpiSyncLag": "동기화 지연",
+    "kpiCohort": "코호트 성과"
+  },
+  "companies": {
+    "title": "기업",
+    "description": "관계 단계·담당자·최근 허용 활동 기준으로 기업을 관리합니다.",
+    "emptyTitle": "등록된 기업이 없습니다",
+    "emptyDescription": "기업을 직접 추가하거나 가져오기로 시작하세요. 중복 후보는 병합 요청으로 검토합니다."
+  },
+  "companyDetail": {
+    "title": "기업 상세",
+    "description": "요약·담당자·활동·메일·미팅·리서치·메모를 탭으로 확인합니다.",
+    "emptyTitle": "기업을 선택하세요",
+    "emptyDescription": "왼쪽 목록에서 기업을 선택하면 상세가 표시됩니다. 출처 없는 AI 보완 필드는 미검증으로 표시됩니다.",
+    "tabs": "개요|담당자|활동|메일|미팅|리서치|메모"
+  },
+  "contacts": {
+    "title": "담당자",
+    "description": "이름·회사·직함과 주소별 검증·발송 근거·차단 상태를 함께 봅니다.",
+    "emptyTitle": "등록된 담당자가 없습니다",
+    "emptyDescription": "담당자를 추가하면 주소별 검증과 발송 근거를 별도 배지로 관리할 수 있습니다."
+  },
+  "contactDetail": {
+    "title": "담당자 상세",
+    "description": "연결된 주소의 검증 상태와 발송 허가를 구분해 표시합니다.",
+    "emptyTitle": "담당자를 선택하세요",
+    "emptyDescription": "이메일 형식 유효성과 발송 허가는 서로 다른 배지로 표시됩니다."
+  },
+  "inbox": {
+    "title": "공동 Inbox",
+    "description": "공용 메일함의 대화를 배정·처리합니다. 접수와 발송 완료는 구분됩니다.",
+    "emptyTitle": "처리할 대화가 없습니다",
+    "emptyDescription": "새 답장이 도착하면 여기에 나타납니다. 메일함 미연결·재연결 경고는 상단 배너로 표시됩니다."
+  },
+  "threadDetail": {
+    "title": "대화",
+    "description": "대화 본문과 CRM 보조 패널을 함께 확인합니다.",
+    "emptyTitle": "대화를 선택하세요",
+    "emptyDescription": "다른 직원의 회신·새 답장 감지는 실시간으로 표시됩니다."
+  },
+  "templates": {
+    "title": "템플릿",
+    "description": "제목·본문·변수 정의와 버전별 사용 이력을 관리합니다.",
+    "emptyTitle": "등록된 템플릿이 없습니다",
+    "emptyDescription": "템플릿을 만들면 필수 변수·HTML 안전성·길이 제한을 미리 검사합니다."
+  },
+  "templateDetail": {
+    "title": "템플릿 상세",
+    "description": "버전별 본문과 변수·예제 데이터·미리보기를 확인합니다.",
+    "emptyTitle": "템플릿을 선택하세요",
+    "emptyDescription": "새 버전은 이전 버전을 수정하지 않고 별도로 만듭니다."
+  },
+  "campaigns": {
+    "title": "캠페인",
+    "description": "목표·대상·시퀀스·시간 규칙을 구성하고 승인 후 실행합니다.",
+    "emptyTitle": "생성된 캠페인이 없습니다",
+    "emptyDescription": "캠페인은 6단계로 구성합니다. 공급자가 허용하지 않는 채널은 최상단 배너로 차단을 안내합니다."
+  },
+  "campaignDetail": {
+    "title": "캠페인 상세",
+    "description": "6단계 구성과 동결·승인·실행 현황을 확인합니다.",
+    "emptyTitle": "캠페인을 선택하세요",
+    "emptyDescription": "검토·동결 단계에서 실제 발송 내용과 규칙 해시를 고정합니다.",
+    "steps": "1. 목표·채널|2. 대상|3. 시퀀스|4. 시간·한도|5. 검토·동결|6. 승인·실행"
+  },
+  "approvals": {
+    "title": "승인함",
+    "description": "동결된 버전의 수신자·본문·정책 결과를 검토하고 승인합니다.",
+    "emptyTitle": "승인 대기 요청이 없습니다",
+    "emptyDescription": "본인이 요청한 승인은 승인할 수 없습니다. 만료·취소·버전 불일치는 별도로 표시됩니다."
+  },
+  "approvalDetail": {
+    "title": "승인 요청 상세",
+    "description": "요청자·종류·동결 버전·수신자·렌더링된 본문·정책 결과를 확인합니다.",
+    "emptyTitle": "승인 요청을 선택하세요",
+    "emptyDescription": "승인·거절·의견·변경 요청 결정은 별도 기록으로 남습니다."
+  },
+  "meetings": {
+    "title": "미팅",
+    "description": "호스트·고객·외부 동기화 상태와 참석 결과를 함께 봅니다.",
+    "emptyTitle": "예정된 미팅이 없습니다",
+    "emptyDescription": "confirming·unknown 상태는 confirmed로 표시하지 않습니다."
+  },
+  "meetingTypes": {
+    "title": "미팅 유형",
+    "description": "공개 예약 링크에 노출되는 미팅 유형과 소요 시간을 관리합니다.",
+    "emptyTitle": "등록된 미팅 유형이 없습니다",
+    "emptyDescription": "미팅 유형을 만들면 공개 예약 링크를 발급할 수 있습니다."
+  },
+  "agents": {
+    "title": "에이전트 센터",
+    "description": "목적별 실행·도구 사용·비용·승인 대기를 검토합니다.",
+    "emptyTitle": "에이전트 실행 기록이 없습니다",
+    "emptyDescription": "실패한 도구와 비용 추정·실측은 구분해 표시합니다. 에이전트는 승인·권한 부여를 할 수 없습니다."
+  },
+  "agentRunDetail": {
+    "title": "에이전트 실행 상세",
+    "description": "실행의 단계별 도구 호출·증빙·비용을 확인합니다.",
+    "emptyTitle": "실행을 선택하세요",
+    "emptyDescription": "정책 위반으로 중단된 경우 이유가 표시됩니다."
+  },
+  "imports": {
+    "title": "가져오기",
+    "description": "파일 검증·필드 매핑·중복 정책을 거쳐 dry-run 후 반영합니다.",
+    "emptyTitle": "가져오기 기록이 없습니다",
+    "emptyDescription": "새 주소의 기본 발송 근거는 미확인입니다. 부분 성공은 건수로 명시됩니다."
+  },
+  "importDetail": {
+    "title": "가져오기 상세",
+    "description": "필드 매핑·검증 오류·실패 행을 확인하고 재입력합니다.",
+    "emptyTitle": "가져오기를 선택하세요",
+    "emptyDescription": "dry-run 결과와 커밋 결과를 비교해 확인할 수 있습니다."
+  },
+  "complianceSuppressions": {
+    "title": "수신 거부·차단",
+    "description": "주소별 차단 이유·근거·철회·증빙·이력을 관리합니다.",
+    "emptyTitle": "차단된 주소가 없습니다",
+    "emptyDescription": "수신 거부는 목적별 범위로 관리되며, 해제는 별도 승인이 필요합니다."
+  },
+  "complianceReviews": {
+    "title": "발송 근거 검토",
+    "description": "목적별 연락 허용 근거의 유효성을 검토합니다.",
+    "emptyTitle": "검토 대기 근거가 없습니다",
+    "emptyDescription": "단순 체크박스로는 동의를 유효화할 수 없습니다. 근거 증빙을 검토합니다."
+  },
+  "operationsJobs": {
+    "title": "작업 큐",
+    "description": "비동기 작업의 상태·재시도·dead 작업을 운영합니다.",
+    "emptyTitle": "대기 중인 작업이 없습니다",
+    "emptyDescription": "불명(unknown) 결과는 재발송 버튼 대신 조사 절차로 처리합니다."
+  },
+  "operationsIntegrations": {
+    "title": "연동",
+    "description": "메일·캘린더·발송 채널의 연결 상태와 정책 검토를 관리합니다.",
+    "emptyTitle": "연결된 서비스가 없습니다",
+    "emptyDescription": "OAuth 비밀 값은 표시하지 않습니다. 재연결이 필요한 연결은 경고로 표시됩니다."
+  },
+  "settingsMembers": {
+    "title": "멤버",
+    "description": "멤버·역할·에이전트 주체와 초대를 관리합니다.",
+    "emptyTitle": "멤버가 없습니다",
+    "emptyDescription": "관리자가 만든 초대 링크는 한 번만 표시됩니다."
+  },
+  "settingsMailAccounts": {
+    "title": "메일 계정",
+    "description": "공용 메일함 연결과 메일함별 접근 권한(grant)을 관리합니다.",
+    "emptyTitle": "연결된 메일함이 없습니다",
+    "emptyDescription": "메일함 권한은 읽기·초안·발송·승인·배정으로 구분됩니다."
+  },
+  "settingsCalendars": {
+    "title": "캘린더",
+    "description": "호스트별 캘린더 연결과 동기화 상태를 관리합니다.",
+    "emptyTitle": "연결된 캘린더가 없습니다",
+    "emptyDescription": "캘린더 연결 후 공개 예약 슬롯을 제공할 수 있습니다."
+  },
+  "settingsPolicies": {
+    "title": "정책",
+    "description": "발송 근거·보존·채널 정책과 긴급 중지를 관리합니다.",
+    "emptyTitle": "정책이 구성되지 않았습니다",
+    "emptyDescription": "정책 변경은 실행 중 작업에도 더 엄격하게 적용됩니다."
+  },
+  "settingsSecurity": {
+    "title": "보안",
+    "description": "세션·서비스 자격 증명·감사 로그 조회를 관리합니다.",
+    "emptyTitle": "보안 설정이 없습니다",
+    "emptyDescription": "감사 로그는 허용된 메타데이터만 기록됩니다."
+  },
+  "design": {
+    "title": "디자인 시스템",
+    "description": "포팅된 프리미티브와 Outreach 패턴을 두 테마에서 확인하는 개발용 페이지입니다.",
+    "emptyTitle": "프리미티브 카탈로그",
+    "emptyDescription": "아래에서 두 테마의 컴포넌트를 확인하세요."
+  }
+}

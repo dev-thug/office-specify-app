@@ -1,0 +1,65 @@
+{
+  "search": "검색",
+  "sidebarLabel": "앱 탐색",
+  "mainNav": "주 탐색",
+  "retry": "다시 시도",
+  "cancel": "취소",
+  "confirm": "확인",
+  "save": "저장",
+  "close": "닫기",
+  "logout": "로그아웃",
+  "back": "뒤로",
+  "loading": "불러오는 중…",
+  "accountMenu": "계정 메뉴",
+  "unknownUser": "알 수 없는 사용자",
+  "requestId": "요청 ID",
+  "notFound": {
+    "title": "페이지를 찾을 수 없습니다",
+    "description": "주소가 변경되었거나 접근 권한이 없습니다.",
+    "back": "대시보드로 이동"
+  },
+  "theme": {
+    "label": "테마",
+    "light": "라이트",
+    "dark": "다크",
+    "system": "시스템"
+  },
+  "commandPalette": {
+    "title": "명령 팔레트",
+    "placeholder": "이동하거나 검색…",
+    "empty": "결과가 없습니다",
+    "navigation": "탐색"
+  },
+  "table": {
+    "empty": "표시할 항목이 없습니다",
+    "loading": "불러오는 중…",
+    "loadMore": "더 보기",
+    "rowsSelected": "{count}개 행 선택됨",
+    "allFilteredSelected": "현재 필터 전체 {count}개 선택됨",
+    "selectAllFiltered": "필터 결과 전체 {count}개 선택",
+    "clearSelection": "선택 해제",
+    "selectVisibleRows": "표시된 행 전체 선택",
+    "selectRow": "행 선택"
+  },
+  "error": {
+    "title": "불러오지 못했습니다",
+    "description": "네트워크 또는 서버 오류가 발생했습니다. 잠시 후 다시 시도하세요."
+  },
+  "conflict": {
+    "title": "동시 편집 충돌",
+    "description": "다른 사람이 먼저 저장했습니다. 필드별로 유지할 값을 선택하세요.",
+    "field": "필드",
+    "base": "변경 전",
+    "server": "현재 서버 값",
+    "mine": "내 변경",
+    "apply": "선택한 값으로 저장"
+  },
+  "confirmIrreversible": {
+    "recipients": "수신자",
+    "sender": "발신 주소",
+    "purpose": "목적",
+    "typeToConfirm": "확인하려면 \"{text}\"를 입력하세요",
+    "confirm": "확인 및 실행",
+    "cancel": "취소"
+  }
+}

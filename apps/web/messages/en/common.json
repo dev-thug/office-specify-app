@@ -1,0 +1,65 @@
+{
+  "search": "Search",
+  "sidebarLabel": "App navigation",
+  "mainNav": "Main navigation",
+  "retry": "Retry",
+  "cancel": "Cancel",
+  "confirm": "Confirm",
+  "save": "Save",
+  "close": "Close",
+  "logout": "Log out",
+  "back": "Back",
+  "loading": "Loading…",
+  "accountMenu": "Account menu",
+  "unknownUser": "Unknown user",
+  "requestId": "Request ID",
+  "notFound": {
+    "title": "Page not found",
+    "description": "The address changed or you do not have access.",
+    "back": "Go to dashboard"
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "commandPalette": {
+    "title": "Command palette",
+    "placeholder": "Navigate or search…",
+    "empty": "No results",
+    "navigation": "Navigation"
+  },
+  "table": {
+    "empty": "Nothing to show",
+    "loading": "Loading…",
+    "loadMore": "Load more",
+    "rowsSelected": "{count} rows selected",
+    "allFilteredSelected": "All {count} matching current filter selected",
+    "selectAllFiltered": "Select all {count} matching current filter",
+    "clearSelection": "Clear selection",
+    "selectVisibleRows": "Select visible rows",
+    "selectRow": "Select row"
+  },
+  "error": {
+    "title": "Could not load",
+    "description": "A network or server error occurred. Please try again."
+  },
+  "conflict": {
+    "title": "Concurrent edit conflict",
+    "description": "Someone else saved first. Choose which value to keep per field.",
+    "field": "Field",
+    "base": "Before",
+    "server": "Current server",
+    "mine": "Mine",
+    "apply": "Save selected values"
+  },
+  "confirmIrreversible": {
+    "recipients": "Recipients",
+    "sender": "Sender address",
+    "purpose": "Purpose",
+    "typeToConfirm": "Type \"{text}\" to confirm",
+    "confirm": "Confirm and run",
+    "cancel": "Cancel"
+  }
+}

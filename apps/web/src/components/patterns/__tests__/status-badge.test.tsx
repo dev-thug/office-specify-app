@@ -4,7 +4,9 @@ import type { ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 
 import { STATUS_META, StatusBadge, statusMeta } from "@/components/patterns/status-badge";
-import en from "../../../../messages/en.json";
+import enStatus from "../../../../messages/en/status.json";
+
+const en = { status: enStatus };
 
 const R = (ui: ReactElement) =>
   render(
