@@ -114,12 +114,20 @@ pub async fn enqueue(
     .map_err(map_sqlx)
 }
 
-/// Lease up to `limit` runnable jobs — A.6.7 verbatim. Runs inside a
-/// workspace tx (`Db::begin`). Rows at MAX_ATTEMPTS are moved to `dead`
-/// first and never leased again (R12 — the cap bounds every retry path,
-/// not just handler-error paths).
-pub async fn claim(tx: &mut Tx<'_>, lease_owner: &str, limit: i64) -> Result<Vec<Job>, AppError> {
-    claim_lease(tx, lease_owner, limit, LEASE_SECONDS).await
+/// Lease up to `limit` runnable jobs whose `kind` is in `kinds` —
+/// A.6.7 verbatim. Runs inside a workspace tx (`Db::begin`). Rows at
+/// MAX_ATTEMPTS are moved to `dead` first and never leased again
+/// (R12 — the cap bounds every retry path, not just handler-error paths).
+/// `kinds` is the runner's registered kind list (F1): jobs of any other
+/// kind are left completely untouched — never claimed and never
+/// dead-lettered by a runner that lacks the handler.
+pub async fn claim(
+    tx: &mut Tx<'_>,
+    lease_owner: &str,
+    limit: i64,
+    kinds: &[&str],
+) -> Result<Vec<Job>, AppError> {
+    claim_lease(tx, lease_owner, limit, LEASE_SECONDS, kinds).await
 }
 
 /// `claim` with an explicit lease duration in seconds.
@@ -128,21 +136,24 @@ pub async fn claim_lease(
     lease_owner: &str,
     limit: i64,
     lease_seconds: i64,
+    kinds: &[&str],
 ) -> Result<Vec<Job>, AppError> {
     let ws = tx
         .workspace_id()
         .ok_or_else(|| AppError::internal("jobs::claim requires a workspace tx"))?;
     // Attempt-cap enforcement lives here so crash/panic-reclaimed rows
-    // cannot cycle forever (I3/I5 → R12).
+    // cannot cycle forever (I3/I5 → R12). Kind-scoped like the claim (F1):
+    // a runner must not dead-letter jobs it was never meant to run.
     sqlx::query(
         "UPDATE jobs SET state = 'dead', finished_at = now(),
                 last_error_code = 'MAX_ATTEMPTS',
                 lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL
           WHERE workspace_id = $1 AND state IN ('queued','retry_wait')
-            AND attempt_count >= $2",
+            AND attempt_count >= $2 AND kind = ANY($3)",
     )
     .bind(ws)
     .bind(MAX_ATTEMPTS)
+    .bind(kinds)
     .execute(tx.conn())
     .await
     .map_err(map_sqlx)?;
@@ -153,6 +164,7 @@ pub async fn claim_lease(
                AND state IN ('queued','retry_wait')
                AND available_at <= now()
                AND attempt_count < $4
+               AND kind = ANY($6)
              ORDER BY available_at, id
              LIMIT $3
              FOR UPDATE SKIP LOCKED
@@ -172,10 +184,33 @@ pub async fn claim_lease(
     .bind(limit)
     .bind(MAX_ATTEMPTS)
     .bind(lease_seconds as f64)
+    .bind(kinds)
     .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)?;
     Ok(rows)
+}
+
+/// Release a claimed job back to `queued` without consuming the attempt
+/// (F1): the claim's `attempt_count` increment is refunded and the lease
+/// cleared, fenced by the lease token. Defense in depth — kind-scoped
+/// claims mean a runner should never hold a job it has no handler for.
+pub async fn release(tx: &mut Tx<'_>, job_id: Uuid, lease_token: Uuid) -> Result<bool, AppError> {
+    let n = sqlx::query(
+        "UPDATE jobs
+            SET state = 'queued',
+                attempt_count = GREATEST(attempt_count - 1, 0),
+                lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL
+          WHERE workspace_id = $1 AND id = $2 AND lease_token = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(job_id)
+    .bind(lease_token)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?
+    .rows_affected();
+    Ok(n == 1)
 }
 
 /// Extend the lease. False = fencing token stale (job reclaimed) — stop.
@@ -295,12 +330,15 @@ pub async fn fail_or_retry(
     }
 }
 
-/// Workspaces with runnable jobs — the runner iterates these so every job
-/// executes under its own RLS context. The scan itself goes through the
-/// `runnable_job_workspaces()` SECURITY DEFINER function (migration 0004):
-/// FORCE RLS would otherwise hide every row when no workspace GUC is set.
-pub async fn runnable_workspaces(db: &Db) -> Result<Vec<Uuid>, AppError> {
-    sqlx::query_scalar("SELECT runnable_job_workspaces()")
+/// Workspaces with runnable jobs of the runner's registered `kinds` —
+/// the runner iterates these so every job executes under its own RLS
+/// context. The scan goes through the `runnable_job_workspaces(kinds)`
+/// SECURITY DEFINER function (migrations 0004/0007): FORCE RLS would
+/// otherwise hide every row when no workspace GUC is set. Kinds this
+/// runner cannot handle stay invisible to it (F1).
+pub async fn runnable_workspaces(db: &Db, kinds: &[&str]) -> Result<Vec<Uuid>, AppError> {
+    sqlx::query_scalar("SELECT runnable_job_workspaces($1)")
+        .bind(kinds)
         .fetch_all(db.pool())
         .await
         .map_err(map_sqlx)

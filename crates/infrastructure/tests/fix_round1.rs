@@ -240,7 +240,9 @@ async fn reclaim_external_effect_and_max_attempts() {
         .await
         .unwrap();
         assert!(flagged, "enqueue must persist external_effect");
-        let claimed = jobs::claim_lease(&mut tx, "t", 10, 60).await.unwrap();
+        let claimed = jobs::claim_lease(&mut tx, "t", 10, 60, &["sending.dispatch_outbound"])
+            .await
+            .unwrap();
         assert_eq!(claimed.len(), 1);
         sqlx::query(
             "UPDATE jobs SET lease_expires_at = now() - interval '1 second'
@@ -291,7 +293,9 @@ async fn reclaim_external_effect_and_max_attempts() {
         .execute(tx.conn())
         .await
         .unwrap();
-        let claimed = jobs::claim_lease(&mut tx, "t", 10, 60).await.unwrap();
+        let claimed = jobs::claim_lease(&mut tx, "t", 10, 60, &["test.kind"])
+            .await
+            .unwrap();
         assert!(claimed.is_empty());
         let (state, code): (String, Option<String>) = sqlx::query_as(
             "SELECT state, last_error_code FROM jobs
@@ -319,7 +323,9 @@ async fn reclaim_external_effect_and_max_attempts() {
         )
         .await
         .unwrap();
-        let claimed = jobs::claim_lease(&mut tx, "t", 10, 60).await.unwrap();
+        let claimed = jobs::claim_lease(&mut tx, "t", 10, 60, &["test.kind"])
+            .await
+            .unwrap();
         assert_eq!(claimed.len(), 1);
         sqlx::query(
             "UPDATE jobs SET lease_expires_at = now() - interval '1 second'

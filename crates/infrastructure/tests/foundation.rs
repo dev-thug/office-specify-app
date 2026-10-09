@@ -167,7 +167,9 @@ async fn job_lease_fencing_and_reclaim() {
     // Claim under the runner's lease owner.
     let claimed = {
         let mut tx = db.begin(ws).await.unwrap();
-        let jobs = jobs::claim(&mut tx, "test-worker", 20).await.unwrap();
+        let jobs = jobs::claim(&mut tx, "test-worker", 20, &["test.job"])
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         jobs
     };
@@ -198,7 +200,9 @@ async fn job_lease_fencing_and_reclaim() {
     };
     {
         let mut tx = db.begin(ws).await.unwrap();
-        let claimed = jobs::claim(&mut tx, "dead-worker", 20).await.unwrap();
+        let claimed = jobs::claim(&mut tx, "dead-worker", 20, &["test.job"])
+            .await
+            .unwrap();
         assert!(claimed.iter().any(|j| j.id == job2));
         sqlx::query("UPDATE jobs SET lease_expires_at = now() - interval '1s' WHERE id = $1")
             .bind(job2)
@@ -229,7 +233,9 @@ async fn job_lease_fencing_and_reclaim() {
 
     // fail_or_retry → retry_wait; at MAX_ATTEMPTS → dead.
     let mut tx = db.begin(ws).await.unwrap();
-    let claimed = jobs::claim(&mut tx, "test-worker", 20).await.unwrap();
+    let claimed = jobs::claim(&mut tx, "test-worker", 20, &["test.job"])
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     let job = claimed.iter().find(|j| j.id == job2).unwrap().clone();
     let mut tx = db.begin(ws).await.unwrap();

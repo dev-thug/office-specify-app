@@ -56,6 +56,13 @@ impl JobRegistry {
             .collect()
     }
 
+    /// The registered job kinds — the runner claims only these (F1).
+    /// A worker running a subset of handlers never claims (or
+    /// dead-letters) jobs of kinds it cannot run.
+    pub fn kinds(&self) -> Vec<&'static str> {
+        self.handlers.keys().copied().collect()
+    }
+
     pub fn get(&self, kind: &str) -> Option<Arc<dyn JobHandler>> {
         self.handlers.get(kind).cloned()
     }
@@ -134,18 +141,25 @@ impl Runner {
     }
 
     /// One poll iteration: reclaim expired leases, find workspaces with
-    /// runnable jobs, claim and handle each — bounded-concurrency batches
-    /// with a per-job heartbeat (R13).
+    /// runnable jobs of this runner's registered kinds, claim and handle
+    /// each — bounded-concurrency batches with a per-job heartbeat (R13).
+    /// F1: kinds this runner cannot handle are never claimed.
     pub async fn run_once(&self) -> Result<usize, AppError> {
         jobs::reclaim_expired(&self.db).await?;
+        let kinds = self.registry.kinds();
         let mut handled = 0;
-        for ws in jobs::runnable_workspaces(&self.db).await? {
+        for ws in jobs::runnable_workspaces(&self.db, &kinds).await? {
             // Claim in its own tx so the lease commits before work starts.
             let claimed: Vec<Job> = {
                 let mut tx = self.db.begin(ws).await?;
-                let jobs =
-                    jobs::claim_lease(&mut tx, &self.owner, jobs::BATCH_SIZE, self.lease_seconds)
-                        .await?;
+                let jobs = jobs::claim_lease(
+                    &mut tx,
+                    &self.owner,
+                    jobs::BATCH_SIZE,
+                    self.lease_seconds,
+                    &kinds,
+                )
+                .await?;
                 tx.commit().await?;
                 jobs
             };
@@ -194,7 +208,11 @@ impl Runner {
             lease_owner: self.owner.clone(),
         };
         let Some(handler) = self.registry.get(&job.kind) else {
-            tracing::warn!(job_id = %job.id, kind = %job.kind, "no handler registered");
+            // F1: claims are kind-scoped, so this should be unreachable —
+            // but if it ever happens the job goes back to `queued` with
+            // the attempt refunded, never dead-lettered: work this runner
+            // cannot handle is left for a runner that can.
+            tracing::warn!(job_id = %job.id, kind = %job.kind, "claimed job has no registered handler — releasing");
             let mut tx = match self.db.begin(job.workspace_id).await {
                 Ok(t) => t,
                 Err(e) => {
@@ -202,15 +220,7 @@ impl Runner {
                     return;
                 }
             };
-            let _ = jobs::transition(
-                &mut tx,
-                job.id,
-                ctx.lease_token,
-                jobs::STATE_DEAD,
-                None,
-                Some("NO_HANDLER"),
-            )
-            .await;
+            let _ = jobs::release(&mut tx, job.id, ctx.lease_token).await;
             let _ = tx.commit().await;
             return;
         };

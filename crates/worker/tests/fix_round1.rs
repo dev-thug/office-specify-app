@@ -181,8 +181,11 @@ async fn handler_panic_becomes_failed_attempt() {
 
 // ---------------------------------------------------------------- R13
 
+/// Records handled job ids — kind-scoped claims (F1) mean a stray
+/// same-kind leftover from a crashed earlier run can legitimately be
+/// picked up by this runner; assertions filter to this test's job.
 struct SlowHandler {
-    calls: Arc<AtomicUsize>,
+    seen: Arc<std::sync::Mutex<Vec<Uuid>>>,
     sleep: Duration,
 }
 
@@ -193,11 +196,11 @@ impl jobs::JobHandler for SlowHandler {
     }
     async fn handle(
         &self,
-        _ctx: &JobCtx,
+        ctx: &JobCtx,
         _tx: &mut Tx<'_>,
         _payload: Value,
     ) -> Result<(), AppError> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.seen.lock().unwrap().push(ctx.job_id);
         tokio::time::sleep(self.sleep).await;
         Ok(())
     }
@@ -214,9 +217,9 @@ async fn heartbeat_prevents_lease_steal() {
     let world = seed_workspace(&common::seed_db().await).await.unwrap();
     let ws = world.workspace_id;
 
-    {
+    let job_id = {
         let mut tx = db.begin(ws).await.unwrap();
-        jobs::enqueue(
+        let id = jobs::enqueue(
             &mut tx,
             "test.slow",
             1,
@@ -227,12 +230,13 @@ async fn heartbeat_prevents_lease_steal() {
         .await
         .unwrap();
         tx.commit().await.unwrap();
-    }
+        id
+    };
 
-    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<Uuid>::new()));
     let mut reg = JobRegistry::new();
     reg.register(SlowHandler {
-        calls: calls.clone(),
+        seen: seen.clone(),
         sleep: Duration::from_millis(1500),
     });
     let mut r = Runner::new(db.clone(), reg);
@@ -253,9 +257,14 @@ async fn heartbeat_prevents_lease_steal() {
     stop.store(true, Ordering::SeqCst);
     reclaimer.await.unwrap();
 
+    let ours = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|id| **id == job_id)
+        .count();
     assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
+        ours, 1,
         "handler must run exactly once — heartbeat held the lease"
     );
     let mut tx = db.begin(ws).await.unwrap();

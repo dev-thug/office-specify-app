@@ -43,7 +43,8 @@ were required.
   policies match zero rows for every role including the table owner, and
   A.4 forbids BYPASSRLS on runtime accounts. The migration adds three
   `SECURITY DEFINER` functions owned by the migration superuser (which
-  bypasses RLS): `runnable_job_workspaces()`, `pending_outbox_workspaces()`
+  bypasses RLS): `runnable_job_workspaces(kinds)` (kind-scoped since 0007 —
+  a runner never sees jobs it has no handler for), `pending_outbox_workspaces()`
   and `reclaim_expired_job_leases()`. They expose only workspace ids / a
   row count; all row access still happens inside per-workspace RLS
   transactions. EXECUTE is revoked from PUBLIC and granted to
