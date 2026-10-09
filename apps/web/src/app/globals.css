@@ -1,0 +1,472 @@
+@import "./pretendard-variable-dynamic-subset.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Pretendard 잔여 글리프 — 동적 서브셋 범위 밖 문자는 작은 파생 face로 보완한다.
+   OFL Reserved Font Name 규정상 파생 face는 "Pretendard" 이름을 쓸 수 없어
+   별도 family 명으로 제공한다 (파일: public/fonts/pretendard/woff2-residual, OFL.txt). */
+@font-face {
+  font-family: "Outreach Residual";
+  src: url("/fonts/pretendard/woff2-residual/PretendardResidualCommon.woff2") format("woff2-variations");
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: swap;
+  unicode-range: U+B5, U+2212, U+2318, U+26A0, U+2713, U+27FA, U+E002;
+}
+
+@font-face {
+  font-family: "Outreach Residual";
+  src: url("/fonts/pretendard/woff2-residual/PretendardResidualCjk.woff2") format("woff2-variations");
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: swap;
+  unicode-range:
+    U+301A-301B, U+301D, U+3094, U+3099-309E, U+30F7-30FA, U+30FD-30FE, U+FF5F-FF60, U+FFA1-FFBE,
+    U+FFC2-FFC7, U+FFCA-FFCF, U+FFD2-FFD7, U+FFDA-FFDC;
+}
+
+@font-face {
+  font-family: "Outreach Residual";
+  src: url("/fonts/pretendard/woff2-residual/PretendardResidualOther.woff2") format("woff2-variations");
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: swap;
+  unicode-range:
+    U+A6, U+AF, U+C1, U+C3-C5, U+CC-CD, U+D1-D3, U+D5-D6, U+DA, U+DD,
+    U+E1, U+E3-E5, U+EC-ED, U+F1-F3, U+F5-F6, U+FA, U+FD, U+100-110, U+112-125, U+128-130, U+134-137,
+    U+139-13E, U+143-148, U+14C-151, U+154-165, U+168-1C3, U+1C5-2BB, U+2BD-2C6, U+2C8-2CF, U+2D1-2D7,
+    U+2DE-31E, U+321-377, U+37A-37F, U+384-38A, U+38C, U+38E-390, U+3AA-3B0, U+3C2, U+3CA-3E1,
+    U+3F0-49D, U+4A0-4FF, U+52F, U+E3F, U+1D43, U+1D47-1D49, U+1D4D, U+1D4F-1D50, U+1D52,
+    U+1D56-1D58, U+1D5B, U+1D62-1D65, U+1D9C, U+1DA0, U+1DBB, U+1DBF-1DF5, U+1DFC-1F15,
+    U+1F18-1F1D, U+1F20-1F45, U+1F48-1F4D, U+1F50-1F57, U+1F59, U+1F5B, U+1F5D, U+1F5F-1F7D,
+    U+1F80-1FB4, U+1FB6-1FC4, U+1FC6-1FD3, U+1FD6-1FDB, U+1FDD-1FEF, U+1FF2-1FF4, U+1FF6-1FFE, U+2000-200D,
+    U+2011-2012, U+2017, U+201A, U+201E, U+2023-2024, U+2027, U+202F, U+2031, U+2037-2038, U+203D,
+    U+203F-2041, U+2043-2060, U+2070-2071, U+2075-2079, U+2080, U+2085-208E, U+2090-209C, U+20A0-20A8,
+    U+20AA-20AB, U+20AD-20BF, U+20DB-20DE, U+20E8, U+20F0, U+2100-2101, U+2105-2106, U+2117, U+211E-2120,
+    U+2123, U+212A, U+212E, U+2132, U+213B, U+214D, U+214F, U+215A, U+215F, U+216A-216F,
+    U+217A-2188, U+21A9-21AA, U+21B5, U+21BA-21BB, U+21DE-21DF, U+21E4-21E5, U+21EA, U+2205,
+    U+2303, U+2305, U+2325-2327, U+2329-232B, U+2380, U+2387, U+238B, U+23CE-23CF, U+2423,
+    U+24EA, U+24FF, U+25A2, U+25AA, U+25BA-25BB, U+25C4-25C5, U+2600, U+263C, U+2717, U+2780-2789,
+    U+27EF, U+27F5-27F9, U+2985-2986, U+2B06, U+2B12-2B13, U+2B1C, U+2C7C, U+2C7F, U+2DFF, U+2E18,
+    U+A69F, U+A7FF, U+A92E, U+E000, U+E003-E05E, U+E06A-E080, U+E093-E096, U+E0A5-E0E6, U+E0F3-E11C,
+    U+E11E-E12A, U+E131-E147, U+E14E-E164, U+EE01-EE05, U+F000-F057, U+F6C3, U+FE20-FE2D, U+FEFF,
+    U+1F10B, U+1F12F, U+1F149, U+1F150-1F16B, U+1F170-1F189, U+1F850, U+1F852, U+F0000-F0002;
+}
+
+/* ============================================
+   DESIGN TOKENS — Specify 디자인 시스템 포트 (apps/web/DESIGN.md)
+   계층:
+   1) Foundation — 테마별 실제 값. neutral ramp(--gray-*) 와 역할 원색(brand·status).
+   2) Semantic   — 컴포넌트가 쓰는 역할 이름. Foundation 을 var() 로 참조한다.
+   3) Tailwind   — @theme inline 이 Semantic 을 bg-* / text-* 유틸로 노출한다.
+
+   색 원칙: 보라는 로고에만 있다. neutral 은 hue 290, chroma ≤ 0.014.
+   primary = 잉크(주요 액션), brand = 흑연 신호(링크·포커스·선택).
+   ============================================ */
+
+@theme inline {
+  /* Tailwind 기본 팔레트 제거 — 역할 토큰만 색 유틸이 된다. */
+  --color-*: initial;
+
+  /* Radius — 누르는 컨트롤 pill, 목록 행 10, 떠 있는 표면 16, 모달 20, 컴포저 28 */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  --radius-4xl: 28px;
+
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Brand — 무채색 신호. 링크·포커스·선택·AI 활동 */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-on-subtle: var(--brand-on-subtle);
+
+  /* Status — solid 표면 / solid 위 텍스트 / 틴트 위 텍스트 */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-on-subtle: var(--success-on-subtle);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-on-subtle: var(--info-on-subtle);
+  --color-teal: var(--teal);
+  --color-teal-foreground: var(--teal-foreground);
+  --color-teal-on-subtle: var(--teal-on-subtle);
+  --color-amber: var(--amber);
+  --color-amber-foreground: var(--amber-foreground);
+  --color-amber-on-subtle: var(--amber-on-subtle);
+  --color-rose: var(--rose);
+  --color-rose-foreground: var(--rose-foreground);
+  --color-rose-on-subtle: var(--rose-on-subtle);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-app-shell: var(--app-shell);
+  --color-app-panel: var(--app-panel);
+  --color-app-panel-muted: var(--app-panel-muted);
+  --color-app-border-subtle: var(--app-border-subtle);
+
+  /* 테마와 무관한 흰 종이 — 브랜드 로고 플레이트, 외부 HTML 미리보기 */
+  --color-paper: var(--paper);
+
+  /* Material — 떠 있는 레이어 뒤 scrim, 반투명 유리 표면 */
+  --color-scrim: var(--scrim);
+  --color-glass: var(--glass);
+  --color-glass-border: var(--glass-border);
+
+  /* Typography families */
+  --font-family-sans: "Pretendard Variable", "Outreach Residual", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-family-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Tracking 유틸 — 라틴 대문자 라벨 전용. 제목 자간은 type scale 토큰이 소유한다 */
+  --tracking-tighter: 0em;
+  --tracking-tight: 0em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0.01em;
+  --tracking-wider: 0.04em;
+  --tracking-widest: 0.24em;
+
+  /* Type scale — 크기·행간·자간을 한 토큰으로 묶는다.
+     본문·UI(≤ text-xl)는 자간 0, 제목(≥ text-2xl)은 크기에 비례해 좁힌다. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.25rem;
+  --text-2xl--letter-spacing: -0.01em;
+  --text-3xl--letter-spacing: -0.015em;
+  --text-4xl--line-height: 1.15;
+  --text-4xl--letter-spacing: -0.02em;
+  --text-5xl--line-height: 1.1;
+  --text-5xl--letter-spacing: -0.025em;
+  --text-6xl--line-height: 1.08;
+  --text-6xl--letter-spacing: -0.03em;
+
+  /* Elevation — xs/sm raised · md overlay · lg modal · xl/2xl showcase. */
+  --shadow-xs: 0 1px 2px var(--shadow-ambient);
+  --shadow-sm: inset 0 1px 0 var(--shadow-highlight), 0 1px 2px var(--shadow-ambient), 0 2px 8px -2px var(--shadow-ambient);
+  --shadow-md: inset 0 1px 0 var(--shadow-highlight), 0 1px 2px var(--shadow-ambient), 0 8px 24px -8px var(--shadow-key);
+  --shadow-lg: inset 0 1px 0 var(--shadow-highlight), 0 2px 6px var(--shadow-ambient), 0 24px 56px -16px var(--shadow-key);
+  --shadow-xl: inset 0 1px 0 var(--shadow-highlight), 0 2px 6px var(--shadow-ambient), 0 32px 72px -20px var(--shadow-deep);
+  --shadow-2xl: 0 40px 100px -32px var(--shadow-deep);
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --transition-fast: 150ms cubic-bezier(0.2, 0, 0, 1);
+  --transition-base: 200ms cubic-bezier(0.2, 0, 0, 1);
+  --transition-slow: 300ms cubic-bezier(0.2, 0, 0, 1);
+
+  /* Material blur */
+  --blur-glass: 20px;
+}
+
+/* ---------- 1) Foundation · light ---------- */
+:root {
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+
+  /* neutral ramp — 1(캔버스) → 12(잉크). hue 290 */
+  --white: oklch(1 0 0);
+  --gray-1: oklch(0.985 0.003 290);
+  --gray-2: oklch(0.972 0.004 290);
+  --gray-3: oklch(0.955 0.005 290);
+  --gray-4: oklch(0.935 0.006 290);
+  --gray-5: oklch(0.915 0.007 290);
+  --gray-6: oklch(0.895 0.008 290);
+  --gray-7: oklch(0.85 0.009 290);
+  --gray-8: oklch(0.76 0.011 290);
+  --gray-9: oklch(0.62 0.013 290);
+  --gray-10: oklch(0.52 0.014 290);
+  --gray-11: oklch(0.38 0.014 290);
+  --gray-12: oklch(0.185 0.012 290);
+
+  /* brand — 강조 신호. 보라는 로고에만 있다 */
+  --brand: var(--gray-11);
+  --brand-foreground: var(--gray-1);
+  --brand-on-subtle: var(--gray-12);
+
+  /* status 원색 — solid 배경/테두리/아이콘. 텍스트는 *-on-subtle */
+  --destructive: oklch(0.55 0.20 10);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.52 0.13 152);
+  --success-foreground: oklch(0.99 0 0);
+  --success-on-subtle: oklch(0.47 0.11 152);
+  --info: oklch(0.53 0.145 250);
+  --info-foreground: oklch(0.99 0 0);
+  --info-on-subtle: oklch(0.48 0.13 250);
+  --teal: oklch(0.53 0.09 195);
+  --teal-foreground: oklch(0.99 0 0);
+  --teal-on-subtle: oklch(0.48 0.082 195);
+  --amber: oklch(0.65 0.18 75);
+  --amber-foreground: oklch(0.15 0.02 75);
+  --amber-on-subtle: oklch(0.52 0.11 75);
+  --rose: oklch(0.55 0.20 10);
+  --rose-foreground: oklch(0.99 0 0);
+  --rose-on-subtle: oklch(0.51 0.20 10);
+
+  --chart-5: oklch(0.60 0.18 145);
+
+  /* material */
+  --scrim: oklch(0.185 0.012 290 / 0.28);
+  --glass: oklch(1 0 0 / 0.68);
+  --glass-border: oklch(0.185 0.012 290 / 0.07);
+  --shadow-highlight: oklch(1 0 0 / 0.6);
+  --shadow-ambient: oklch(0.185 0.012 290 / 0.05);
+  --shadow-key: oklch(0.185 0.012 290 / 0.12);
+  --shadow-deep: oklch(0.2 0.012 290 / 0.18);
+}
+
+/* ---------- 1) Foundation · dark ---------- */
+.dark {
+  --gray-0: oklch(0.125 0.005 290);
+  --gray-1: oklch(0.145 0.005 290);
+  --gray-2: oklch(0.175 0.006 290);
+  --gray-3: oklch(0.205 0.007 290);
+  --gray-4: oklch(0.235 0.008 290);
+  --gray-5: oklch(0.265 0.008 290);
+  --gray-6: oklch(0.29 0.009 290);
+  --gray-7: oklch(0.34 0.01 290);
+  --gray-8: oklch(0.44 0.011 290);
+  --gray-9: oklch(0.56 0.012 290);
+  --gray-10: oklch(0.68 0.012 290);
+  --gray-11: oklch(0.82 0.008 290);
+  --gray-12: oklch(0.965 0.004 290);
+
+  --brand: var(--gray-11);
+  --brand-foreground: var(--gray-1);
+  --brand-on-subtle: var(--gray-12);
+
+  --destructive: oklch(0.72 0.17 10);
+  --destructive-foreground: oklch(0.15 0.02 10);
+  --success: oklch(0.74 0.14 152);
+  --success-foreground: oklch(0.15 0.02 152);
+  --success-on-subtle: oklch(0.74 0.14 152);
+  --info: oklch(0.74 0.12 250);
+  --info-foreground: oklch(0.15 0.02 250);
+  --info-on-subtle: oklch(0.74 0.12 250);
+  --teal: oklch(0.72 0.12 195);
+  --teal-foreground: oklch(0.15 0.02 195);
+  --teal-on-subtle: oklch(0.72 0.12 195);
+  --amber: oklch(0.78 0.16 75);
+  --amber-foreground: oklch(0.15 0.02 75);
+  --amber-on-subtle: oklch(0.78 0.16 75);
+  --rose: oklch(0.72 0.17 10);
+  --rose-foreground: oklch(0.15 0.02 10);
+  --rose-on-subtle: oklch(0.72 0.17 10);
+
+  --chart-5: oklch(0.75 0.16 145);
+
+  --scrim: oklch(0.08 0.005 290 / 0.62);
+  --glass: oklch(0.19 0.006 290 / 0.62);
+  --glass-border: oklch(1 0 0 / 0.08);
+  --shadow-highlight: oklch(1 0 0 / 0.05);
+  --shadow-ambient: oklch(0 0 0 / 0.35);
+  --shadow-key: oklch(0 0 0 / 0.55);
+  --shadow-deep: oklch(0 0 0 / 0.7);
+}
+
+/* ---------- 2) Semantic — 두 테마 공통 역할 매핑 ---------- */
+:root,
+.dark {
+  --background: var(--gray-1);
+  --foreground: var(--gray-12);
+  --card: var(--white);
+  --card-foreground: var(--gray-12);
+  --popover: var(--white);
+  --popover-foreground: var(--gray-12);
+
+  /* 주요 액션 = 잉크 */
+  --primary: var(--gray-12);
+  --primary-foreground: var(--gray-1);
+
+  --secondary: var(--gray-3);
+  --secondary-foreground: var(--gray-12);
+  --muted: var(--gray-3);
+  --muted-foreground: var(--gray-10);
+  --accent: var(--gray-4);
+  --accent-foreground: var(--gray-12);
+
+  --border: var(--gray-5);
+  --input: var(--gray-6);
+  --border-strong: var(--gray-7);
+  --ring: var(--brand);
+
+  --chart-1: var(--brand);
+  --chart-2: var(--teal);
+  --chart-3: var(--amber);
+  --chart-4: var(--rose);
+
+  --sidebar: var(--gray-2);
+  --sidebar-foreground: var(--gray-11);
+  --sidebar-primary: var(--gray-12);
+  --sidebar-primary-foreground: var(--gray-1);
+  --sidebar-accent: var(--gray-4);
+  --sidebar-accent-foreground: var(--gray-12);
+  --sidebar-border: var(--gray-5);
+  --sidebar-ring: var(--brand);
+
+  --app-shell: var(--gray-2);
+  --app-panel: var(--white);
+  --app-panel-muted: var(--gray-3);
+  --app-border-subtle: var(--gray-4);
+
+  --paper: var(--white);
+}
+
+/* ---------- 2) Semantic — dark 전용 표면 규칙 ---------- */
+.dark {
+  --card: var(--gray-2);
+  --popover: var(--gray-2);
+  --app-panel: var(--gray-2);
+  --sidebar: var(--gray-0);
+  --app-shell: var(--gray-0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-family-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Tailwind v4 Preflight 는 버튼 기본 커서를 default 로 둔다 */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* 텍스트 선택은 brand 신호를 따른다 */
+  ::selection {
+    background-color: oklch(from var(--brand) l c h / 0.2);
+  }
+}
+
+/* Shimmer animation (skeleton) */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, var(--muted) 0%, oklch(from var(--muted) calc(l + 0.05) c h) 50%, var(--muted) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* 탭 스크롤바 숨김 */
+.tab-scroll-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tab-scroll-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* 패널 세로 스크롤 — 트랙 없는 얇은 pill 썸 */
+.panel-scroll-subtle {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent) transparent;
+}
+
+.panel-scroll-subtle::-webkit-scrollbar {
+  width: 5px;
+}
+
+.panel-scroll-subtle::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.panel-scroll-subtle::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent);
+  border-radius: 9999px;
+}
+
+.panel-scroll-subtle::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+}
+
+/* 애니메이션 감소 선호 설정 지원 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Safe Area 변수 */
+:root {
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+}
+
+/* 동적 뷰포트 높이 유틸리티 */
+.h-dvh-safe {
+  height: 100dvh;
+}
+
+/* Radix ScrollArea Viewport 내부 래퍼 오버라이드 */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
