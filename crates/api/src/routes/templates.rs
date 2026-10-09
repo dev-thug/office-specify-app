@@ -22,6 +22,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_templates))
         .routes(routes!(create_template))
         .routes(routes!(get_template))
+        .routes(routes!(get_template_version))
         .routes(routes!(patch_template))
         .routes(routes!(list_template_versions))
         .routes(routes!(create_template_version))
@@ -310,4 +311,20 @@ async fn render_template_version(
     let request_id = ctx.request_id.clone();
     let res = application::templates::render_version(&state.db, &ctx, id, &req).await?;
     Ok(axum::Json(envelope(res, &request_id)))
+}
+
+#[utoipa::path(
+    get, path = "/template-versions/{id}",
+    params(("id" = Uuid, Path)),
+    responses((status = 200, description = "Immutable template version content", body = TemplateVersionResponse),
+              (status = 404, description = "Not found", body = Problem))
+)]
+async fn get_template_version(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let response = application::templates::get_version(&state.db, &ctx, id).await?;
+    Ok(axum::Json(envelope(response, &ctx.request_id)))
 }

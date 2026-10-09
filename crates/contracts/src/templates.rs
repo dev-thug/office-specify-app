@@ -39,6 +39,7 @@ pub struct EmailTemplateResponse {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EmailTemplateListItem {
     pub template_id: Uuid,
+    pub latest_version_no: Option<i64>,
     pub name: String,
     pub archived_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,

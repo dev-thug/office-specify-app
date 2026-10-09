@@ -1,5 +1,7 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/lib/api/client";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -16,6 +18,7 @@ import {
   EMAIL_TEMPLATES_PATH,
   type TemplateVariableProp,
   type TemplateVersion,
+  type TemplateVersionSummary,
 } from "@/lib/api/templates";
 import { useCursorList } from "@/lib/api/use-cursor-list";
 import { cn } from "@/lib/utils";
@@ -35,7 +38,7 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
   );
   const [editorOpen, setEditorOpen] = useState(false);
 
-  const versions = useCursorList<TemplateVersion>({
+  const versions = useCursorList<TemplateVersionSummary>({
     queryKey: ["templates", "versions", templateId],
     path: `${EMAIL_TEMPLATES_PATH}/${encodeURIComponent(templateId)}/versions`,
     limit: 100,
@@ -46,11 +49,14 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
     [versions.data]
   );
 
-  const selected: TemplateVersion | null = useMemo(
-    () =>
-      rows.find((v) => v.id === selectedVersionId) ?? rows[0] ?? null,
-    [rows, selectedVersionId]
-  );
+  const selectedId = rows.find((v) => v.template_version_id === selectedVersionId)?.template_version_id
+    ?? rows[0]?.template_version_id;
+  const content = useQuery({
+    queryKey: ["templates", "version", selectedId],
+    enabled: Boolean(selectedId),
+    queryFn: async () => (await apiFetch<TemplateVersion>(`/api/v1/template-versions/${selectedId}`)).data,
+  });
+  const selected = content.data ?? null;
 
   if (template.isError) {
     return (
@@ -139,14 +145,14 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
           ) : (
             <ul className="flex flex-col gap-2">
               {rows.map((v) => (
-                <li key={v.id}>
+                <li key={v.template_version_id}>
                   <button
                     type="button"
-                    onClick={() => setSelectedVersionId(v.id)}
-                    aria-pressed={selected?.id === v.id}
+                    onClick={() => setSelectedVersionId(v.template_version_id)}
+                    aria-pressed={selectedId === v.template_version_id}
                     className={cn(
                       "flex w-full items-center justify-between gap-3 rounded-lg border px-3.5 py-2.5 text-left text-sm transition-colors",
-                      selected?.id === v.id
+                      selectedId === v.template_version_id
                         ? "border-ring bg-accent/50"
                         : "border-border bg-card hover:bg-muted/60"
                     )}
@@ -179,7 +185,11 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
 
         {/* 선택한 버전 상세 + 미리보기 */}
         <div className="flex min-w-0 flex-col gap-5">
-          {selected ? (
+          {content.isError ? (
+            <ErrorState error={content.error} onRetry={() => content.refetch()} />
+          ) : selectedId && content.isPending ? (
+            <Skeleton className="h-48 rounded-2xl" />
+          ) : selected ? (
             <VersionDetail version={selected} />
           ) : (
             <EmptyState compact title={t("emptyVersionsTitle")} />
@@ -192,7 +202,7 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
         templateId={templateId}
         open={editorOpen}
         onOpenChange={setEditorOpen}
-        onCreated={() => versions.refetch()}
+        onCreated={(id) => { setSelectedVersionId(id); void versions.refetch(); }}
       />
     </div>
   );

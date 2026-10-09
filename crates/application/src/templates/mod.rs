@@ -82,11 +82,14 @@ pub async fn list(
     authz::require_scope(ctx, Scope::TemplatesRead)?;
     let mut tx = db.begin(ctx.workspace_id).await?;
     let rows = repo::list_templates(&mut tx, include_archived, limit + 1, after).await?;
+    let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
+    let latest = repo::latest_version_numbers(&mut tx, &ids).await?;
     tx.commit().await?;
     Ok(rows
         .into_iter()
         .map(|r| EmailTemplateListItem {
             template_id: r.id,
+            latest_version_no: latest.get(&r.id).copied(),
             name: r.name,
             archived_at: r.archived_at,
             created_at: r.created_at,
@@ -482,5 +485,32 @@ pub async fn render_version(
         body_text: out.body_text,
         body_html: out.body_html,
         warnings: out.warnings,
+    })
+}
+
+/// Read immutable version content under the same scope and workspace boundary
+/// as template metadata and preview rendering.
+pub async fn get_version(
+    db: &Db,
+    ctx: &Ctx,
+    version_id: Uuid,
+) -> Result<TemplateVersionResponse, AppError> {
+    authz::require_scope(ctx, Scope::TemplatesRead)?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let row = repo::get_version(&mut tx, version_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("template version not found"))?;
+    tx.commit().await?;
+    Ok(TemplateVersionResponse {
+        template_version_id: row.id,
+        template_id: row.template_id,
+        version_no: i64::from(row.version_no),
+        subject: row.subject,
+        body_text: row.body_text,
+        body_html: row.body_html,
+        variable_schema: row.variable_schema,
+        content_hash: hex_encode(row.content_hash),
+        created_by: row.created_by,
+        created_at: row.created_at,
     })
 }

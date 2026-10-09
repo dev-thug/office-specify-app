@@ -72,7 +72,7 @@ export function RenderPreview({ version }: { version: TemplateVersion | null }) 
     }
     setPending(true);
     try {
-      const res = await renderTemplateVersion(version.id, { variables });
+      const res = await renderTemplateVersion(version.template_version_id, { variables });
       setResult(res.data);
     } catch (err) {
       setResult(null);
@@ -167,8 +167,7 @@ export function RenderPreview({ version }: { version: TemplateVersion | null }) 
             <ul className="list-disc pl-4">
               {warnings.map((w, i) => (
                 <li key={i}>
-                  {[w.field, w.code].filter(Boolean).join(" · ")}{" "}
-                  {w.detail ?? w.message ?? ""}
+                  {typeof w === "string" ? w : <>{[w.field, w.code].filter(Boolean).join(" · ")}{" "}{w.detail ?? w.message ?? ""}</>}
                 </li>
               ))}
             </ul>

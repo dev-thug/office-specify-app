@@ -14,13 +14,14 @@ The approved G1–G6 fake-provider scope is implemented across the Rust services
 operator CLI, MCP tools, and connected web screens. This includes organization and
 mailbox permissions, CRM/research/imports, campaigns and approvals, manual mail
 composition and replies, booking, compliance, agent runs, and operational queues.
-The generated contract contains 127 OpenAPI paths and 22 MCP tools.
+The generated contract contains 128 OpenAPI paths and 22 MCP tools.
 
 Verification on 2026-10-09 used isolated synthetic PostgreSQL databases. The full
-Rust workspace suite passed 347 tests with zero skips. The web
-suite passed 350 tests; Playwright passed all 7 browser scenarios, including
+Rust workspace suite passed 348 tests with zero skips. The web
+suite passed 350 tests; Playwright passed all 8 browser scenarios, including
 20 connected internal screens, persisted CRM data, exact-message confirmation,
-queued draft recovery, anonymous access denial, and light/dark screenshots.
+queued draft recovery, template version persistence and variable rendering,
+anonymous access denial, and light/dark screenshots.
 Workspace builds, Clippy with warnings denied, rustfmt, Rust documentation tests,
 web type/lint/design checks, and the Next.js production build passed. The CLI
 terminal test confirmed password echo suppression and terminal restoration.

@@ -129,3 +129,10 @@ the current session and revokes the user's other sessions across workspaces via
 a narrowly granted database function. Mutation replay stores status-only results;
 password request fingerprints use a server-keyed HMAC, and passwords never enter
 audit metadata or cached responses. Bearer credentials cannot use these routes.
+
+Template UI reads wire identifiers `template_id` and `template_version_id`.
+`GET /email-templates` includes nullable `latest_version_no`; version-list rows
+remain summaries. `GET /template-versions/{id}` provides immutable subject,
+bodies and variable schema under `templates.read` and workspace isolation, so
+both the template editor preview and campaign step picker use the same version
+content. Frontend template DTOs derive their identifier fields from OpenAPI.

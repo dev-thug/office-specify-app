@@ -232,3 +232,17 @@ pub async fn insert_version(
     .await
     .map_err(map_sqlx)
 }
+
+/// One grouped query for the latest version in each listed template.
+pub async fn latest_version_numbers(
+    tx: &mut Tx<'_>,
+    ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, i64>, AppError> {
+    let rows: Vec<(Uuid, i32)> = sqlx::query_as(
+        "SELECT template_id, max(version_no) FROM template_versions WHERE workspace_id=$1 AND template_id=ANY($2) GROUP BY template_id"
+    ).bind(tx.workspace_id()).bind(ids).fetch_all(tx.conn()).await.map_err(map_sqlx)?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, version)| (id, i64::from(version)))
+        .collect())
+}

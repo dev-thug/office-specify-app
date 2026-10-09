@@ -385,3 +385,61 @@ async fn template_mutations_emit_outbox_events_in_the_business_transaction() {
         ]
     );
 }
+
+#[tokio::test]
+async fn version_detail_returns_content_and_hides_other_workspaces() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let token = csrf(&app, world.admin.email.as_deref().unwrap()).await;
+    let template = TestApp::data(
+        post(
+            &app,
+            "/api/v1/email-templates",
+            json!({"name":"Detail regression"}),
+            &token,
+        )
+        .await,
+    )
+    .await;
+    let path = format!(
+        "/api/v1/email-templates/{}/versions",
+        template["template_id"].as_str().unwrap()
+    );
+    let created = TestApp::data(post(&app, &path, version_body(), &token).await).await;
+    let version_id = created["template_version_id"].as_str().unwrap();
+    let detail_path = format!("/api/v1/template-versions/{version_id}");
+    let response = app.client.get(app.url(&detail_path)).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let detail = TestApp::data(response).await;
+    assert_eq!(
+        detail["template_version_id"],
+        created["template_version_id"]
+    );
+    assert_eq!(detail["subject"], version_body()["subject"]);
+    assert_eq!(detail["body_text"], version_body()["body_text"]);
+    assert_eq!(detail["variable_schema"], version_body()["variable_schema"]);
+    let list = TestApp::data(
+        app.client
+            .get(app.url("/api/v1/email-templates"))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(list[0]["latest_version_no"], 1);
+    let Some((other, other_world)) = test_app().await else {
+        return;
+    };
+    csrf(&other, other_world.admin.email.as_deref().unwrap()).await;
+    assert_eq!(
+        other
+            .client
+            .get(other.url(&detail_path))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}

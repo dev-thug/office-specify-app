@@ -1892,6 +1892,22 @@ export interface paths {
         patch: operations["patch_task"];
         trace?: never;
     };
+    "/api/v1/template-versions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_template_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/template-versions/{id}/render": {
         parameters: {
             query?: never;
@@ -3434,6 +3450,8 @@ export interface components {
             archived_at?: string | null;
             /** Format: date-time */
             created_at: string;
+            /** Format: int64 */
+            latest_version_no?: number | null;
             name: string;
             /** Format: uuid */
             template_id: string;
@@ -4862,6 +4880,23 @@ export interface components {
             created_at: string;
             /** Format: uuid */
             template_version_id: string;
+            /** Format: int64 */
+            version_no: number;
+        };
+        TemplateVersionResponse: {
+            body_html?: string | null;
+            body_text: string;
+            content_hash: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by: string;
+            subject: string;
+            /** Format: uuid */
+            template_id: string;
+            /** Format: uuid */
+            template_version_id: string;
+            variable_schema: unknown;
             /** Format: int64 */
             version_no: number;
         };
@@ -12998,6 +13033,46 @@ export interface operations {
             };
             /** @description If-Match required */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_template_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable template version content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["TemplateVersionResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

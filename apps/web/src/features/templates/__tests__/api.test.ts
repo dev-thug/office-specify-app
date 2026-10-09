@@ -32,8 +32,9 @@ afterEach(() => {
 
 describe("templates API", () => {
   it("createEmailTemplate — POST /email-templates + 멱등 키", async () => {
-    const calls = mockFetch(201, { data: { id: "t1" } });
-    await createEmailTemplate({ name: "템플릿" }, { idempotencyKey: "k1" });
+    const calls = mockFetch(201, { data: { template_id: "t1" } });
+    const result = await createEmailTemplate({ name: "템플릿" }, { idempotencyKey: "k1" });
+    expect(result.data.template_id).toBe("t1");
     expect(calls[0]!.url).toBe("/api/v1/email-templates");
     expect(new Headers(calls[0]!.init.headers).get("Idempotency-Key")).toBe(
       "k1"

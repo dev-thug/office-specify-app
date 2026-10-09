@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftIcon,
   CheckIcon,
@@ -57,6 +57,7 @@ import {
   EMAIL_TEMPLATES_PATH,
   type EmailTemplate,
   type TemplateVersion,
+  type TemplateVersionSummary,
 } from "@/lib/api/templates";
 import { useCursorList } from "@/lib/api/use-cursor-list";
 import { useMailAccounts } from "@/lib/api/settings";
@@ -290,7 +291,7 @@ export function CampaignBuilder({
     [templates.data]
   );
   const [versionsByTemplate, setVersionsByTemplate] = useState<
-    Record<string, TemplateVersion[]>
+    Record<string, TemplateVersionSummary[]>
   >({});
   // 버전 목록은 템플릿 선택 시점(사용자 액션)에 lazy 조회한다.
   // 시드된 단계의 versionId 는 템플릿을 다시 고르기 전까지 ID 텍스트로 둔다
@@ -299,7 +300,7 @@ export function CampaignBuilder({
     async (templateId: string) => {
       if (!templateId || versionsByTemplate[templateId]) return;
       try {
-        const res = await apiFetch<TemplateVersion[]>(
+        const res = await apiFetch<TemplateVersionSummary[]>(
           `${EMAIL_TEMPLATES_PATH}/${encodeURIComponent(templateId)}/versions?limit=200`
         );
         setVersionsByTemplate((prev) => ({ ...prev, [templateId]: res.data }));
@@ -310,20 +311,16 @@ export function CampaignBuilder({
     [versionsByTemplate]
   );
 
-  const selectedVersionForPreview: TemplateVersion | null = useMemo(() => {
-    const s = steps.find((x) => x.key === previewStepKey);
-    if (!s?.versionId) return null;
-    const versions = versionsByTemplate[s.templateId] ?? [];
-    return versions.find((v) => v.id === s.versionId) ?? null;
-  }, [steps, previewStepKey, versionsByTemplate]);
-
-  const selectedStepVersions = useMemo(
-    () =>
-      steps.map((s) =>
-        (versionsByTemplate[s.templateId] ?? []).find((v) => v.id === s.versionId)
-      ),
-    [steps, versionsByTemplate]
-  );
+  const stepVersionQueries = useQueries({
+    queries: steps.map((step) => ({
+      queryKey: ["templates", "version", step.versionId],
+      enabled: Boolean(step.versionId),
+      queryFn: async () => (await apiFetch<TemplateVersion>(`/api/v1/template-versions/${encodeURIComponent(step.versionId)}`)).data,
+    })),
+  });
+  const selectedStepVersions = stepVersionQueries.map((query) => query.data);
+  const previewIndex = steps.findIndex((step) => step.key === previewStepKey);
+  const selectedVersionForPreview = selectedStepVersions[previewIndex] ?? null;
   const bookingUrlRequired = bookingUrlBindingMissing(selectedStepVersions, "");
   const bookingUrlBindingIsMissing = bookingUrlBindingMissing(
     selectedStepVersions,
@@ -846,7 +843,7 @@ export function CampaignBuilder({
                     </SelectTrigger>
                     <SelectContent>
                       {templateRows.map((tpl) => (
-                        <SelectItem key={tpl.id} value={tpl.id}>
+                        <SelectItem key={tpl.template_id} value={tpl.template_id}>
                           {tpl.name}
                         </SelectItem>
                       ))}
@@ -871,13 +868,13 @@ export function CampaignBuilder({
                     </SelectTrigger>
                     <SelectContent>
                       {(versionsByTemplate[s.templateId] ?? []).map((v) => (
-                        <SelectItem key={v.id} value={v.id}>
-                          v{v.version_no} — {v.subject}
+                        <SelectItem key={v.template_version_id} value={v.template_version_id}>
+                          v{v.version_no}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  {s.versionId && !(versionsByTemplate[s.templateId] ?? []).some((v) => v.id === s.versionId) ? (
+                  {s.versionId && !(versionsByTemplate[s.templateId] ?? []).some((v) => v.template_version_id === s.versionId) ? (
                     <p className="font-mono text-2xs text-muted-foreground">
                       {shortHash(s.versionId, 18)}
                     </p>

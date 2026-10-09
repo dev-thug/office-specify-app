@@ -114,7 +114,7 @@ export function VersionEditor({
   templateId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: () => void;
+  onCreated: (id: string) => void;
 }) {
   const t = useTranslations("templates.editor");
   const tCommon = useTranslations("common");
@@ -177,7 +177,7 @@ export function VersionEditor({
       setBodyHtml("");
       setRows([]);
       onOpenChange(false);
-      onCreated();
+      onCreated(res.data.template_version_id);
     } catch (err) {
       idem.settle(err);
       setError(errorMessage(err));
@@ -189,6 +189,7 @@ export function VersionEditor({
           )
         );
       }
+    } finally {
       setPending(false);
     }
   }

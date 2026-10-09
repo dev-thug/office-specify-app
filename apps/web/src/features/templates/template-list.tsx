@@ -66,7 +66,7 @@ export function TemplateList() {
       cell: (row) => (
         <span className="flex items-center gap-2">
           <Link
-            href={`/app/templates/${row.id}`}
+            href={`/app/templates/${row.template_id}`}
             className="font-medium text-foreground underline-offset-4 hover:underline"
           >
             {row.name}
@@ -127,7 +127,7 @@ export function TemplateList() {
       <DataTable
         columns={columns}
         rows={filtered}
-        rowKey={(row) => row.id}
+        rowKey={(row) => row.template_id}
         page={lastPage?.page}
         onLoadMore={() => list.fetchNextPage()}
         loadingMore={list.isFetchingNextPage}
@@ -187,10 +187,11 @@ function CreateTemplateDialog({
       );
       idem.settle();
       setName("");
-      onCreated(res.data.id);
+      onCreated(res.data.template_id);
     } catch (err) {
       idem.settle(err);
       setError(errorMessage(err));
+    } finally {
       setPending(false);
     }
   }
