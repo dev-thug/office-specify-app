@@ -11,13 +11,9 @@ use serde_json::json;
 use std::sync::Arc;
 
 async fn test_app() -> Option<(TestApp, infrastructure::testing::TestWorld)> {
-    let url = match std::env::var("DATABASE_URL") {
-        Ok(u) if !u.is_empty() => u,
-        _ => {
-            eprintln!("DATABASE_URL not set — skipping API test");
-            return None;
-        }
-    };
+    // DB tests must never silently pass — a missing DATABASE_URL is a
+    // failure, not a skip.
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for DB tests");
     let owner = Db::connect(&url, None).await.unwrap();
     owner.migrate().await.unwrap();
     let db = Db::connect(&url, Some(ROLE_API)).await.unwrap();

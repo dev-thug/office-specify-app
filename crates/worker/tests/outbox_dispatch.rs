@@ -137,7 +137,7 @@ async fn dispatch_delivers_event_once() {
     let Some(db) = common::test_db().await else {
         return;
     };
-    let world = seed_workspace(&db).await.unwrap();
+    let world = seed_workspace(&common::seed_db().await).await.unwrap();
     let ws = world.workspace_id;
 
     let calls = Arc::new(AtomicUsize::new(0));
@@ -171,7 +171,7 @@ async fn consumer_failure_isolated_and_retried() {
     let Some(db) = common::test_db().await else {
         return;
     };
-    let world = seed_workspace(&db).await.unwrap();
+    let world = seed_workspace(&common::seed_db().await).await.unwrap();
     let ws = world.workspace_id;
 
     let fail_a = Arc::new(AtomicBool::new(true));
@@ -220,7 +220,7 @@ async fn concurrent_dispatchers_apply_once() {
     let Some(db) = common::test_db().await else {
         return;
     };
-    let world = seed_workspace(&db).await.unwrap();
+    let world = seed_workspace(&common::seed_db().await).await.unwrap();
     let ws = world.workspace_id;
 
     let calls = Arc::new(AtomicUsize::new(0));
@@ -265,7 +265,7 @@ async fn unsubscribed_event_is_published() {
     let Some(db) = common::test_db().await else {
         return;
     };
-    let world = seed_workspace(&db).await.unwrap();
+    let world = seed_workspace(&common::seed_db().await).await.unwrap();
     let ws = world.workspace_id;
 
     let r = runner(&db); // empty registry

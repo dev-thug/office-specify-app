@@ -7,13 +7,9 @@ use infrastructure::db::{Db, ROLE_API};
 /// per transaction — tests exercise RLS exactly like production even though
 /// the connection user is a superuser. Applies pending migrations first.
 pub async fn test_db() -> Option<Db> {
-    let url = match std::env::var("DATABASE_URL") {
-        Ok(u) if !u.is_empty() => u,
-        _ => {
-            eprintln!("DATABASE_URL not set — skipping DB test");
-            return None;
-        }
-    };
+    // DB tests must never silently pass — a missing DATABASE_URL is a
+    // failure, not a skip.
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for DB tests");
     // Migrate as the owner (no runtime role), then build the RLS-enforcing
     // handle for the test itself.
     let owner = Db::connect(&url, None).await.expect("connect failed");

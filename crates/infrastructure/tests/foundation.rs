@@ -215,8 +215,17 @@ async fn job_lease_fencing_and_reclaim() {
         .fetch_one(tx.conn())
         .await
         .unwrap();
-    assert_eq!(state, jobs::STATE_QUEUED);
-    tx.rollback().await.unwrap();
+    // R12: reclaimed non-external leases retry with backoff (retry_wait),
+    // not a blind requeue.
+    assert_eq!(state, jobs::STATE_RETRY_WAIT);
+    // Pull the backoff expiry forward so the job is claimable for the rest
+    // of the test.
+    sqlx::query("UPDATE jobs SET available_at = now() - interval '1s' WHERE id = $1")
+        .bind(job2)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
 
     // fail_or_retry → retry_wait; at MAX_ATTEMPTS → dead.
     let mut tx = db.begin(ws).await.unwrap();
