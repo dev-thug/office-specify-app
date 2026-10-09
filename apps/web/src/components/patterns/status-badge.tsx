@@ -42,7 +42,7 @@ const M = (tone: StatusTone, icon: LucideIcon, final: boolean): StatusMeta => ({
 
 /**
  * 도메인 상태 → 톤/아이콘 매핑.
- * 범위: 소스 §6.2 상태표 + DDL CHECK 집합(부록 A) + 작업 상태(queued/running/retry_wait/succeeded/dead/canceled).
+ * 범위: 소스 §6.2 상태표 + DDL CHECK 집합(부록 A) + 작업 큐 CHECK(queued/running/retry_wait/completed/dead/canceled/unknown).
  * 규칙: 아이콘+텍스트 병기(색상 단독 금지), unknown·confirming 은 비확정으로 명확히 표시.
  */
 export const STATUS_META = {
@@ -132,11 +132,11 @@ export const STATUS_META = {
   // ── 작업 큐 상태 ────────────────────────────
   running: M("info", Loader2, false),
   retry_wait: M("amber", Clock, false),
-  succeeded: M("success", CheckCircle2, true),
   dead: M("rose", OctagonX, true),
 
   // ── 공통 종결 ───────────────────────────────
   canceled: M("neutral", Ban, true),
+  discarded: M("neutral", Ban, true),
 } satisfies Record<string, StatusMeta>;
 
 const TONE_VARIANT = {

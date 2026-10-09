@@ -24,7 +24,13 @@ export function readCookie(name: string): string | undefined {
   for (const part of document.cookie.split(";")) {
     const trimmed = part.trim();
     if (trimmed.startsWith(prefix)) {
-      return decodeURIComponent(trimmed.slice(prefix.length));
+      const raw = trimmed.slice(prefix.length);
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        // 손상된 인코딩(% 뒤 비hex 등) — 있는 것처럼 행동하지 않는다.
+        return undefined;
+      }
     }
   }
   return undefined;

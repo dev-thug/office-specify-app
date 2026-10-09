@@ -1,26 +1,16 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { CheckCircle2Icon } from "lucide-react";
 
+/**
+ * 수신 거부 확인 — GET은 상태를 바꾸지 않으며, 실제 차단은 POST에서만 일어난다.
+ * API 배선은 컴플라이언스 태스크에서 한다 — 성공을 흉내 내지 않고
+ * 준비 중임을 명시한다.
+ */
 export function UnsubscribeConfirm() {
   const t = useTranslations("public.unsubscribe");
-  const [state, setState] = useState<"idle" | "pending" | "done">("idle");
-
-  if (state === "done") {
-    return (
-      <div className="flex flex-col items-center gap-3 py-10 text-center">
-        <CheckCircle2Icon className="size-10 text-teal" aria-hidden />
-        <h1 className="text-xl font-semibold">{t("doneTitle")}</h1>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          {t("doneDescription")}
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -33,15 +23,10 @@ export function UnsubscribeConfirm() {
         {/* 실제 범위는 /public/unsubscribe/:token 확인 응답에서 채운다 */}
         <span className="font-medium">—</span>
       </div>
-      <Button
-        type="button"
-        variant="destructive"
-        className="w-full"
-        disabled={state === "pending"}
-        onClick={() => setState("done")}
-      >
-        {state === "pending" ? t("confirming") : t("confirm")}
+      <Button type="button" variant="destructive" className="w-full" disabled>
+        {t("confirm")}
       </Button>
+      <p className="text-xs text-muted-foreground">{t("notAvailable")}</p>
     </div>
   );
 }

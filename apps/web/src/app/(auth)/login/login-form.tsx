@@ -2,13 +2,15 @@
 
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { login } from "@/lib/api/auth";
+import { idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
+import { safeNextPath } from "@/lib/safe-next";
 
 export function LoginForm() {
   const t = useTranslations("auth.login");
@@ -19,30 +21,37 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 멱등 키는 논리 작업당 한 번 발급 — 확정 응답(성공/재시도 불가 오류) 후에만 재발급한다.
+  const idemRef = useRef<string>(idempotencyKey());
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
     setError(null);
     try {
-      await login({ email, password });
-      const next = params.get("next");
-      router.push(next?.startsWith("/") ? next : "/app/dashboard");
+      await login({ email, password }, { idempotencyKey: idemRef.current });
+      router.push(safeNextPath(params.get("next")));
       router.refresh();
     } catch (err) {
-      const status = err instanceof ApiError ? err.status : 0;
-      const code = err instanceof ApiError ? err.code : "";
-      if (status === 401) setError(t("invalidCredentials"));
-      else if (status === 423 || code === "account_locked")
+      const apiErr = err instanceof ApiError ? err : null;
+      if (apiErr?.status === 401 || apiErr?.code === "INVALID_CREDENTIALS")
+        setError(t("invalidCredentials"));
+      else if (apiErr?.status === 429 || apiErr?.code === "ACCOUNT_LOCKED")
         setError(t("accountLocked"));
-      else if (code === "csrf_invalid") setError(t("csrfInvalid"));
+      else if (apiErr?.code === "CSRF_TOKEN_INVALID")
+        setError(t("csrfInvalid"));
       else setError(t("genericError"));
+      // 확정 응답이면 다음 시도는 새로운 논리 작업 — 키를 재발급한다.
+      // 네트워크 실패·retryable 오류는 같은 키를 유지해 재시도 중복을 막는다.
+      if (apiErr && apiErr.problem.retryable !== true && apiErr.status < 500) {
+        idemRef.current = idempotencyKey();
+      }
       setPending(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+    <form onSubmit={onSubmit} className="flex flex-col gap-4">
       <div className="grid gap-1.5">
         <Label htmlFor="login-email">{tAuth("email")}</Label>
         <Input

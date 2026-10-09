@@ -169,7 +169,8 @@
     "retry_wait": "재시도 대기",
     "succeeded": "성공",
     "dead": "중단됨",
-    "canceled": "취소됨"
+    "canceled": "취소됨",
+    "discarded": "폐기됨"
   },
   "auth": {
     "email": "이메일",
@@ -419,7 +420,8 @@
       "confirming": "처리 중…",
       "doneTitle": "수신 거부가 적용되었습니다",
       "doneDescription": "요청이 처리되었습니다. 이미 처리된 요청도 같은 결과를 표시합니다.",
-      "error": "처리하지 못했습니다. 잠시 후 다시 시도하세요."
+      "error": "처리하지 못했습니다. 잠시 후 다시 시도하세요.",
+      "notAvailable": "수신 거부 처리는 아직 연결되지 않았습니다. 잠시 후 다시 시도하세요."
     }
   },
   "design": {

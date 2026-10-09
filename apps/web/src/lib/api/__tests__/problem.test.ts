@@ -5,17 +5,17 @@ import { isProblemContentType, parseProblem, ApiError } from "@/lib/api/problem"
 describe("parseProblem", () => {
   it("parses a full problem+json body", () => {
     const p = parseProblem(409, {
-      type: "urn:outreach:problem:version-conflict",
+      type: "urn:outreach:problem:version-mismatch",
       title: "Version conflict",
       status: 409,
-      code: "version_conflict",
+      code: "VERSION_MISMATCH",
       detail: "row changed",
       request_id: "req-1",
       retryable: false,
       violations: [{ field: "name", code: "changed", detail: "name differs" }],
     });
     expect(p.status).toBe(409);
-    expect(p.code).toBe("version_conflict");
+    expect(p.code).toBe("VERSION_MISMATCH");
     expect(p.requestId).toBe("req-1");
     expect(p.retryable).toBe(false);
     expect(p.violations).toEqual([
@@ -53,10 +53,10 @@ describe("isProblemContentType", () => {
 describe("ApiError", () => {
   it("exposes status/code/requestId getters", () => {
     const err = new ApiError(
-      parseProblem(412, { code: "version_conflict", detail: "stale", request_id: "r" })
+      parseProblem(412, { code: "VERSION_MISMATCH", detail: "stale", request_id: "r" })
     );
     expect(err.status).toBe(412);
-    expect(err.code).toBe("version_conflict");
+    expect(err.code).toBe("VERSION_MISMATCH");
     expect(err.requestId).toBe("r");
     expect(err.message).toBe("stale");
   });

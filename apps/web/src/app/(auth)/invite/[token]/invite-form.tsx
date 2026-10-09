@@ -1,15 +1,17 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useParams, useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { acceptInvitation, getInvitation } from "@/lib/api/auth";
+import { idempotencyKey } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/problem";
 
 export function InviteForm() {
   const t = useTranslations("auth.invite");
@@ -20,6 +22,9 @@ export function InviteForm() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const locale = useLocale();
+  // 멱등 키는 논리 작업(이 초대 수락)당 하나 — 확정 응답 후에만 재발급.
+  const idemRef = useRef<string>(idempotencyKey());
 
   const preview = useQuery({
     queryKey: ["invitation", token],
@@ -53,14 +58,26 @@ export function InviteForm() {
     setPending(true);
     setError(null);
     try {
-      await acceptInvitation(token, {
-        display_name: displayName,
-        password,
-      });
+      await acceptInvitation(
+        token,
+        {
+          display_name: displayName,
+          password,
+        },
+        { idempotencyKey: idemRef.current }
+      );
       router.push("/app/dashboard");
       router.refresh();
-    } catch {
+    } catch (err) {
       setError(t("error"));
+      // 확정 응답(비재시도) 후 다음 시도는 새 작업 — 네트워크/5xx는 같은 키 유지.
+      if (
+        err instanceof ApiError &&
+        err.problem.retryable !== true &&
+        err.status < 500
+      ) {
+        idemRef.current = idempotencyKey();
+      }
       setPending(false);
     }
   }
@@ -79,12 +96,12 @@ export function InviteForm() {
           <div>
             <dt className="inline">{t("expiresAt")}: </dt>
             <dd className="inline font-medium text-foreground">
-              {new Date(invite.expires_at).toLocaleDateString()}
+              {new Date(invite.expires_at).toLocaleDateString(locale)}
             </dd>
           </div>
         ) : null}
       </dl>
-      <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+      <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <div className="grid gap-1.5">
           <Label htmlFor="invite-name">{tAuth("displayName")}</Label>
           <Input

@@ -38,9 +38,10 @@ describe("STATUS_META coverage", () => {
     // 가져오기·웹훅·작업
     "uploaded", "validating", "ready", "committing", "duplicate",
     "imported", "skipped", "received", "processed",
-    "retry_wait", "succeeded", "dead",
+    "retry_wait", "completed", "dead",
     // 에이전트·리서치
     "started", "definitive_failed", "reserved", "submitted",
+    "discarded",
   ];
 
   it.each(REQUIRED)("maps %s to a tone, icon and finality", (status) => {

@@ -108,13 +108,13 @@ describe("apiFetch envelope + errors", () => {
     mockFetch(403, {
       title: "Forbidden",
       status: 403,
-      code: "forbidden",
+      code: "FORBIDDEN",
       request_id: "req-e",
     });
     const err = await apiFetch("/api/v1/x", { method: "POST" }).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(err).toMatchObject({
-      code: "forbidden",
+      code: "FORBIDDEN",
       status: 403,
       requestId: "req-e",
     });

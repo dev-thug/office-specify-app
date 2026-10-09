@@ -169,7 +169,8 @@
     "retry_wait": "Retry wait",
     "succeeded": "Succeeded",
     "dead": "Dead",
-    "canceled": "Canceled"
+    "canceled": "Canceled",
+    "discarded": "Discarded"
   },
   "auth": {
     "email": "Email",
@@ -419,7 +420,8 @@
       "confirming": "Processing…",
       "doneTitle": "Unsubscribe applied",
       "doneDescription": "Your request was processed. Already-processed tokens show the same result.",
-      "error": "Could not process the request. Please try again."
+      "error": "Could not process the request. Please try again.",
+      "notAvailable": "Unsubscribe processing is not wired yet. Please try again later."
     }
   },
   "design": {
