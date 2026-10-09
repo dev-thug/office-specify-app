@@ -176,6 +176,32 @@ impl axum::extract::FromRequestParts<AppState> for AuthCtx {
     }
 }
 
+/// Resolved client IP for rate limiting (R6): the rightmost untrusted
+/// `X-Forwarded-For` entry, trusted only when the TCP peer itself is in
+/// `Config.trusted_proxies`; otherwise the peer address.
+pub fn client_ip(
+    config: &infrastructure::config::Config,
+    headers: &axum::http::HeaderMap,
+    peer: std::net::IpAddr,
+) -> std::net::IpAddr {
+    let trusted = config.trusted_proxies.iter().any(|n| n.contains(peer));
+    if !trusted {
+        return peer;
+    }
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        // Walk right-to-left skipping trusted proxies; the first untrusted
+        // entry is the client the last trusted proxy saw.
+        for part in xff.split(',').rev() {
+            match part.trim().parse::<std::net::IpAddr>() {
+                Ok(ip) if config.trusted_proxies.iter().any(|n| n.contains(ip)) => continue,
+                Ok(ip) => return ip,
+                Err(_) => continue,
+            }
+        }
+    }
+    peer
+}
+
 fn bearer_token(parts: &Parts) -> Option<String> {
     let v = parts
         .headers
@@ -231,6 +257,103 @@ impl axum::extract::FromRequestParts<AppState> for IfMatch {
             .map(IfMatch)
             .map_err(|_| ProblemError(AppError::validation("malformed If-Match header", vec![])))
     }
+}
+
+/// Cursor pagination params (spec §4.4, B.1.5). **Frozen interface** —
+/// module workers code against `api::extract::PageParams { limit, cursor }`.
+///
+/// `limit` defaults to 50 and clamps to `1..=200`: values >200 clamp down,
+/// 0/negative/non-numeric → 400 VALIDATION_FAILED. `cursor` is the opaque
+/// signed cursor string; decode it via [`PageParams::decode`].
+#[derive(Debug, Clone)]
+pub struct PageParams {
+    pub limit: u32,
+    pub cursor: Option<String>,
+}
+
+pub const PAGE_DEFAULT_LIMIT: u32 = 50;
+pub const PAGE_MAX_LIMIT: u32 = 200;
+
+impl PageParams {
+    /// Decode the signed cursor with the shared helper — bound to the
+    /// requesting principal and the endpoint's canonical filter hash.
+    /// `None` = first page.
+    pub fn decode(
+        &self,
+        hmac_key: &[u8],
+        principal: uuid::Uuid,
+        filter_hash: &str,
+    ) -> Result<Option<infrastructure::cursor::Cursor>, AppError> {
+        self.cursor
+            .as_deref()
+            .map(|c| infrastructure::cursor::Cursor::decode(c, hmac_key, principal, filter_hash))
+            .transpose()
+    }
+}
+
+impl axum::extract::FromRequestParts<AppState> for PageParams {
+    type Rejection = ProblemError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let invalid = || {
+            ProblemError(AppError::validation(
+                "invalid pagination parameters",
+                vec![contracts::Violation {
+                    field: "limit".into(),
+                    code: "invalid".into(),
+                }],
+            ))
+        };
+        let mut limit = PAGE_DEFAULT_LIMIT;
+        let mut cursor = None;
+        if let Some(query) = parts.uri.query() {
+            for pair in query.split('&') {
+                let mut it = pair.splitn(2, '=');
+                let (k, v) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+                match k {
+                    "limit" if !v.is_empty() => {
+                        let n: i64 = v.parse().map_err(|_| invalid())?;
+                        if n <= 0 {
+                            return Err(invalid());
+                        }
+                        limit = (n as u32).min(PAGE_MAX_LIMIT);
+                    }
+                    "cursor" if !v.is_empty() => {
+                        cursor = Some(urlencoding_decode(v));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(Self { limit, cursor })
+    }
+}
+
+/// Minimal percent-decoding for the cursor query value (cursors are
+/// base64url + '.'; only `+`/`%xx` need handling).
+fn urlencoding_decode(v: &str) -> String {
+    let mut out = String::with_capacity(v.len());
+    let bytes = v.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(' '),
+            b'%' if i + 2 < bytes.len() => {
+                let hex = &v[i + 1..i + 3];
+                match u8::from_str_radix(hex, 16) {
+                    Ok(b) => out.push(b as char),
+                    Err(_) => out.push('%'),
+                }
+                i += 2;
+            }
+            c => out.push(c as char),
+        }
+        i += 1;
+    }
+    out
 }
 
 /// `Idempotency-Key` required extractor (spec §4.4, ≤128 chars).

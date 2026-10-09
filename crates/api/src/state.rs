@@ -30,8 +30,15 @@ impl AppState {
         config: Arc<Config>,
         rate_limiter: Option<RateLimiter>,
     ) -> Self {
-        let fake = Arc::new(infrastructure::providers::fake::FakeMailProvider::from_env());
-        let delivery = Arc::new(infrastructure::providers::fake::FakeDeliveryProvider::new());
+        // Fake providers are scripted by Config.fake_provider_script (R27).
+        let fake = Arc::new(match &config.fake_provider_script {
+            Some(path) => infrastructure::providers::fake::FakeMailProvider::from_script(path),
+            None => infrastructure::providers::fake::FakeMailProvider::new(),
+        });
+        let delivery = Arc::new(match &config.fake_provider_script {
+            Some(path) => infrastructure::providers::fake::FakeDeliveryProvider::from_script(path),
+            None => infrastructure::providers::fake::FakeDeliveryProvider::new(),
+        });
         Self {
             db,
             config,

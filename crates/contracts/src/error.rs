@@ -333,13 +333,20 @@ impl AppError {
     }
 
     /// Build the RFC 9457 body. `instance` = request path.
+    /// R23: 5xx details are internal — the body carries a generic string;
+    /// the real detail is logged at the HTTP boundary with the request id.
     pub fn to_problem(&self, request_id: &str, instance: &str) -> Problem {
+        let detail = if self.status >= 500 {
+            "an internal error occurred".to_string()
+        } else {
+            self.detail.clone()
+        };
         Problem {
             problem_type: self.code.problem_type(),
             title: default_title(self.code),
             status: self.status,
             code: self.code,
-            detail: self.detail.clone(),
+            detail,
             instance: instance.to_string(),
             request_id: request_id.to_string(),
             retryable: self.code.retryable(),

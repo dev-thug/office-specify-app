@@ -15,8 +15,19 @@ pub fn map_sqlx(err: sqlx::Error) -> AppError {
                 "23505" => AppError::conflict("a conflicting record already exists"),
                 "23503" => AppError::conflict("referenced record does not exist"),
                 "23514" | "23502" => {
-                    AppError::new(ErrorCode::ValidationFailed, db.message().to_string())
-                        .with_status(422)
+                    // RAISE'd guard messages are authored domain text; a
+                    // postgres-authored CHECK/NOT NULL message leaks table,
+                    // column and constraint names — sanitize it (R23).
+                    let authored = !db.message().contains("constraint")
+                        && !db.message().contains("column")
+                        && !db.message().contains("relation");
+                    let detail = if authored {
+                        db.message().to_string()
+                    } else {
+                        tracing::warn!(sqlstate = %code, "constraint violation");
+                        "the request violates a data constraint".to_string()
+                    };
+                    AppError::new(ErrorCode::ValidationFailed, detail).with_status(422)
                 }
                 "40001" | "40P01" => AppError::new(
                     ErrorCode::Conflict,

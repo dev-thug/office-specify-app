@@ -23,8 +23,10 @@ impl RpcRequest {
 #[derive(Debug, Serialize)]
 pub struct RpcResponse {
     pub jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub id: Option<Value>,
+    /// Always present — JSON-RPC requires `"id": null` on responses where
+    /// the request id is unknown (parse/invalid-request errors), never
+    /// omitted (R24).
+    pub id: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -51,12 +53,12 @@ impl RpcResponse {
     pub fn result(id: Value, result: Value) -> Self {
         Self {
             jsonrpc: "2.0",
-            id: Some(id),
+            id,
             result: Some(result),
             error: None,
         }
     }
-    pub fn error(id: Option<Value>, code: i64, message: impl Into<String>) -> Self {
+    pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -68,27 +70,19 @@ impl RpcResponse {
             }),
         }
     }
-    pub fn app_error(id: Value, e: &contracts::AppError) -> Self {
-        Self {
-            jsonrpc: "2.0",
-            id: Some(id),
-            result: None,
-            error: Some(RpcError {
-                code: APP_ERROR,
-                message: e.code.as_str().to_string(),
-                data: Some(serde_json::json!({
-                    "code": e.code.as_str(),
-                    "detail": e.detail,
-                    "status": e.status(),
-                })),
-            }),
-        }
-    }
 }
 
-/// `tools/call` result per B.6.4: `structuredContent` + matching short text
-/// content + `isError`.
-pub fn tool_result_ok(structured: Value) -> Value {
+/// `tools/call` result per B.6.4: `structuredContent` is the business
+/// envelope `{ ok, data, error, request_id }` — enforced here in the
+/// dispatch layer so every tool conforms (R25). A matching short `text`
+/// content item accompanies it, plus `isError`.
+pub fn tool_result_ok(ctx: &contracts::Ctx, data: Value) -> Value {
+    let structured = serde_json::json!({
+        "ok": true,
+        "data": data,
+        "error": null,
+        "request_id": ctx.request_id,
+    });
     let text = serde_json::to_string(&structured).unwrap_or_else(|_| "{}".into());
     serde_json::json!({
         "structuredContent": structured,
@@ -97,10 +91,28 @@ pub fn tool_result_ok(structured: Value) -> Value {
     })
 }
 
-pub fn tool_result_err(code: &str, detail: &str) -> Value {
+/// Business failure inside `result` (R25): `isError: true` with the B.6.4
+/// envelope — 5xx details are sanitized like problem+json (R23).
+pub fn tool_result_err(ctx: &contracts::Ctx, e: &contracts::AppError) -> Value {
+    let message = if e.status() >= 500 {
+        "an internal error occurred".to_string()
+    } else {
+        e.detail.clone()
+    };
+    let structured = serde_json::json!({
+        "ok": false,
+        "data": null,
+        "error": {
+            "code": e.code.as_str(),
+            "message": message,
+            "retryable": e.code.retryable(),
+        },
+        "request_id": ctx.request_id,
+    });
+    let text = serde_json::to_string(&structured).unwrap_or_else(|_| "{}".into());
     serde_json::json!({
-        "structuredContent": { "code": code, "detail": detail },
-        "content": [{ "type": "text", "text": format!("{code}: {detail}") }],
+        "structuredContent": structured,
+        "content": [{ "type": "text", "text": text }],
         "isError": true,
     })
 }

@@ -2,8 +2,8 @@
 //!
 //! - POST `/mcp` — JSON-RPC requests and notifications.
 //!   Requests → JSON response; notifications → 202 with empty body.
-//!   A JSON array body is a batch; notifications inside batches are dropped
-//!   per JSON-RPC 2.0.
+//!   JSON array bodies (batches) are rejected `-32600` — batching was
+//!   removed from Streamable HTTP in protocol 2025-11-25 (R24).
 //! - GET `/mcp` → 405 (Streamable HTTP SSE stream is not implemented).
 //! - Auth: `Authorization: Bearer osk_…` service credential. Origin is
 //!   checked against `Config.mcp_allowed_origins` when the header is
@@ -69,7 +69,14 @@ async fn authenticate(state: &McpState, headers: &HeaderMap) -> Result<Ctx, (Sta
     };
     let cred = auth_repo::lookup_service_credential(&state.db, auth)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        // R23: real error goes to logs, never the client.
+        .map_err(|e| {
+            tracing::error!(error = %e, "mcp credential lookup failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "an internal error occurred".to_string(),
+            )
+        })?
         .ok_or_else(|| {
             (
                 StatusCode::UNAUTHORIZED,
@@ -115,7 +122,11 @@ async fn handle_post(
         Ok(c) => c,
         Err((status, msg)) => {
             // MCP auth failure → 401 JSON-RPC error body (B.6.4).
-            return (status, Json(RpcResponse::error(None, APP_ERROR, msg))).into_response();
+            return (
+                status,
+                Json(RpcResponse::error(Value::Null, APP_ERROR, msg)),
+            )
+                .into_response();
         }
     };
 
@@ -123,35 +134,32 @@ async fn handle_post(
     let Ok(value) = parsed else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(RpcResponse::error(None, PARSE_ERROR, "parse error")),
+            Json(RpcResponse::error(Value::Null, PARSE_ERROR, "parse error")),
         )
             .into_response();
     };
 
-    // Batch support.
-    if let Value::Array(items) = value {
-        let mut out = Vec::new();
-        for item in items {
-            let Ok(req) = serde_json::from_value::<RpcRequest>(item) else {
-                out.push(RpcResponse::error(None, INVALID_REQUEST, "invalid request"));
-                continue;
-            };
-            if req.is_notification() {
-                dispatch_notification(&req.method);
-                continue;
-            }
-            out.push(dispatch(&state, &ctx, req).await);
-        }
-        if out.is_empty() {
-            return StatusCode::ACCEPTED.into_response();
-        }
-        return Json(out).into_response();
+    // R24: JSON-RPC batches were removed in protocol 2025-11-25 — reject.
+    if value.is_array() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(RpcResponse::error(
+                Value::Null,
+                INVALID_REQUEST,
+                "batch requests are not supported",
+            )),
+        )
+            .into_response();
     }
 
     let Ok(req) = serde_json::from_value::<RpcRequest>(value) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(RpcResponse::error(None, INVALID_REQUEST, "invalid request")),
+            Json(RpcResponse::error(
+                Value::Null,
+                INVALID_REQUEST,
+                "invalid request",
+            )),
         )
             .into_response();
     };
@@ -159,7 +167,7 @@ async fn handle_post(
         return (
             StatusCode::BAD_REQUEST,
             Json(RpcResponse::error(
-                Some(req.id),
+                req.id,
                 INVALID_REQUEST,
                 "jsonrpc must be \"2.0\"",
             )),
@@ -199,28 +207,49 @@ async fn dispatch(state: &McpState, ctx: &Ctx, req: RpcRequest) -> RpcResponse {
             RpcResponse::result(req.id, serde_json::json!({ "tools": tools }))
         }
         "tools/call" => {
-            let name = req.params.get("name").and_then(Value::as_str).unwrap_or("");
-            let args = req
-                .params
-                .get("arguments")
-                .cloned()
-                .unwrap_or(Value::Object(Default::default()));
+            // R24: invalid/missing params → -32602, not -32601/-32600.
+            if !req.params.is_object() {
+                return RpcResponse::error(
+                    req.id,
+                    INVALID_PARAMS,
+                    "tools/call requires a params object",
+                );
+            }
+            let Some(name) = req.params.get("name").and_then(Value::as_str) else {
+                return RpcResponse::error(
+                    req.id,
+                    INVALID_PARAMS,
+                    "tools/call params.name is required",
+                );
+            };
+            let args = match req.params.get("arguments") {
+                None | Some(Value::Null) => Value::Object(Default::default()),
+                Some(v @ Value::Object(_)) => v.clone(),
+                Some(_) => {
+                    return RpcResponse::error(
+                        req.id,
+                        INVALID_PARAMS,
+                        "tools/call params.arguments must be an object",
+                    );
+                }
+            };
             let Some(tool) = state.tools.iter().find(|t| t.name == name) else {
                 return RpcResponse::error(
-                    Some(req.id),
+                    req.id,
                     METHOD_NOT_FOUND,
                     format!("unknown tool: {name}"),
                 );
             };
+            // R25: the B.6.4 envelope is enforced here, not per tool.
             match (tool.handler)(ctx.clone(), args).await {
-                Ok(v) => RpcResponse::result(req.id, tool_result_ok(v)),
-                Err(e) => RpcResponse::result(req.id, tool_result_err(e.code.as_str(), &e.detail)),
+                Ok(v) => RpcResponse::result(req.id, tool_result_ok(ctx, v)),
+                Err(e) => RpcResponse::result(req.id, tool_result_err(ctx, &e)),
             }
         }
         // Notifications sent as requests are acknowledged silently.
         m if m.starts_with("notifications/") => RpcResponse::result(req.id, Value::Null),
         _ => RpcResponse::error(
-            Some(req.id),
+            req.id,
             METHOD_NOT_FOUND,
             format!("method not found: {}", req.method),
         ),

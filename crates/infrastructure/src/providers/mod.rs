@@ -22,11 +22,14 @@ pub enum SendOutcome {
     Unknown { reason: String },
 }
 
-/// Errors for provider read paths.
+/// Errors for provider paths.
 #[derive(Debug, Clone)]
 pub enum ProviderError {
     /// Outage/timeout/5xx — retryable by the caller's policy.
     Unavailable(String),
+    /// Adapter has no credential/config — a permanent condition, never a
+    /// retryable `Unknown` (R27).
+    NotConfigured,
     /// OAuth token invalid/revoked → `INTEGRATION_REAUTH_REQUIRED`.
     ReauthRequired,
     /// Provider-side throttle.
@@ -84,8 +87,10 @@ pub trait MailProvider: Send + Sync {
         provider_message_id: &str,
     ) -> Result<ProviderMessage, ProviderError>;
     /// Submit an outbound message. `correlation_id` is our idempotency
-    /// anchor the fake provider echoes into custom headers.
-    async fn send(&self, req: SendRequest) -> SendOutcome;
+    /// anchor the fake provider echoes into custom headers. `Err` =
+    /// transport/config failure (e.g. `NotConfigured`) — distinct from
+    /// `SendOutcome::Unknown` which means "maybe delivered, reconcile".
+    async fn send(&self, req: SendRequest) -> Result<SendOutcome, ProviderError>;
     /// Reconcile an `Unknown` outcome by correlation id / recipient+subject.
     async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError>;
 }
@@ -142,6 +147,15 @@ pub trait CalendarProvider: Send + Sync {
         end: DateTime<Utc>,
         attendee_email: &str,
     ) -> CalOutcome<CalEvent>;
+    /// Reschedule/update an existing provider event (booking reschedule).
+    async fn update_event(
+        &self,
+        host: &str,
+        provider_event_id: &str,
+        title: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> CalOutcome<CalEvent>;
     async fn cancel_event(&self, host: &str, provider_event_id: &str) -> CalOutcome<()>;
 }
 
@@ -158,6 +172,6 @@ pub struct DeliveryCapabilities {
 #[async_trait]
 pub trait DeliveryProvider: Send + Sync {
     fn capabilities(&self) -> DeliveryCapabilities;
-    async fn send(&self, req: SendRequest) -> SendOutcome;
+    async fn send(&self, req: SendRequest) -> Result<SendOutcome, ProviderError>;
     async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError>;
 }

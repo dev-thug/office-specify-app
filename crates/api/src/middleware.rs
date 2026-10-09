@@ -40,7 +40,17 @@ pub async fn request_id(mut req: Request, next: Next) -> Response {
         HeaderValue::from_str(&rid).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
     if is_problem {
-        let (parts, body) = res.into_parts();
+        let (mut parts, body) = res.into_parts();
+        // R23: the real 5xx detail lives only in logs, correlated by
+        // request_id — never in the response body.
+        if parts.status.is_server_error()
+            && let Some(detail) = parts
+                .extensions
+                .remove::<crate::problem::InternalErrorDetail>()
+        {
+            tracing::error!(request_id = %rid, detail = %detail.0, "internal error");
+        }
+        let parts = parts;
         let bytes = axum::body::to_bytes(body, 1 << 20)
             .await
             .unwrap_or_default();
@@ -53,6 +63,32 @@ pub async fn request_id(mut req: Request, next: Next) -> Response {
             Err(_) => bytes.to_vec(),
         };
         res = Response::from_parts(parts, Body::from(body));
+    }
+    res
+}
+
+/// Protective response headers (R9, spec §4.4):
+/// `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+/// `X-Robots-Tag: noindex, nofollow` on public-capability and auth/PII
+/// routes; `Cache-Control: no-store` on every other API response.
+pub async fn protective_headers(req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let mut res = next.run(req).await;
+    let sensitive = path.starts_with("/public/v1/")
+        || path.starts_with("/webhooks/v1/")
+        || path.starts_with("/api/v1/auth/")
+        || path == "/api/v1/me";
+    let headers = res.headers_mut();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    if sensitive {
+        headers.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
+        headers.insert(
+            "x-robots-tag",
+            HeaderValue::from_static("noindex, nofollow"),
+        );
     }
     res
 }

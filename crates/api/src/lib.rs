@@ -5,6 +5,9 @@
 
 pub mod cookies;
 pub mod extractors;
+/// Frozen path alias: module workers import `api::extract::PageParams`
+/// (and friends) — the implementation lives in `extractors`.
+pub use extractors as extract;
 pub mod middleware;
 pub mod problem;
 pub mod routes;
@@ -46,6 +49,7 @@ pub fn build_app(state: AppState) -> axum::Router {
     let (router, _openapi) = build(state.config.dev_endpoints);
     router
         .layer(DefaultBodyLimit::max(1024 * 1024))
+        .layer(axum::middleware::from_fn(middleware::protective_headers))
         .layer(axum::middleware::from_fn(middleware::request_id))
         .with_state(state)
 }

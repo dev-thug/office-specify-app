@@ -28,10 +28,9 @@ impl ZohoMail {
 
     fn unconfigured<T>(&self) -> Result<T, ProviderError> {
         if self.credential_ref.is_none() {
-            Err(ProviderError::unavailable(format!(
-                "zoho mail not configured ({})",
-                self.datacenter_base
-            )))
+            // R27: a permanent config fault is `NotConfigured` — never
+            // `Unknown`, which would spawn pointless reconciliation.
+            Err(ProviderError::NotConfigured)
         } else {
             Err(ProviderError::unavailable(
                 "zoho mail adapter not implemented (foundation skeleton)",
@@ -59,10 +58,9 @@ impl MailProvider for ZohoMail {
     async fn get_message(&self, _id: &str) -> Result<ProviderMessage, ProviderError> {
         self.unconfigured()
     }
-    async fn send(&self, _req: SendRequest) -> SendOutcome {
-        SendOutcome::Unknown {
-            reason: "zoho mail adapter not configured".into(),
-        }
+    async fn send(&self, _req: SendRequest) -> Result<SendOutcome, ProviderError> {
+        let _ = (&self.http, &self.datacenter_base);
+        self.unconfigured()
     }
     async fn lookup_sent(
         &self,
@@ -88,7 +86,12 @@ impl ZohoCalendar {
     fn unavailable<T>(&self) -> CalOutcome<T> {
         let _ = &self.http;
         CalOutcome::Failed {
-            code: "DEPENDENCY_UNAVAILABLE".into(),
+            code: if self.credential_ref.is_none() {
+                // R27: distinct from Unknown — a permanent config fault.
+                "NOT_CONFIGURED".into()
+            } else {
+                "DEPENDENCY_UNAVAILABLE".into()
+            },
             message: if self.credential_ref.is_none() {
                 "zoho calendar not configured".into()
             } else {
@@ -115,6 +118,16 @@ impl CalendarProvider for ZohoCalendar {
         _s: DateTime<Utc>,
         _e: DateTime<Utc>,
         _attendee: &str,
+    ) -> CalOutcome<CalEvent> {
+        self.unavailable()
+    }
+    async fn update_event(
+        &self,
+        _host: &str,
+        _provider_event_id: &str,
+        _title: &str,
+        _s: DateTime<Utc>,
+        _e: DateTime<Utc>,
     ) -> CalOutcome<CalEvent> {
         self.unavailable()
     }

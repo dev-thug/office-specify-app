@@ -14,6 +14,12 @@ use contracts::AppError;
 
 pub const PROBLEM_CONTENT_TYPE: &str = "application/problem+json";
 
+/// Real error detail stripped from a 5xx problem body (R23) — carried in
+/// response extensions so the request-id middleware can log it with the
+/// request id.
+#[derive(Debug, Clone)]
+pub struct InternalErrorDetail(pub String);
+
 /// HTTP-boundary error type — wraps `contracts::AppError` for axum.
 #[derive(Debug)]
 pub struct ProblemError(pub AppError);
@@ -44,6 +50,10 @@ impl IntoResponse for ProblemError {
             StatusCode::from_u16(err.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let problem = err.to_problem("", "");
         let mut res = (status, axum::Json(problem)).into_response();
+        if err.status() >= 500 {
+            res.extensions_mut()
+                .insert(InternalErrorDetail(err.detail.clone()));
+        }
         res.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static(PROBLEM_CONTENT_TYPE),

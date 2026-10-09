@@ -45,17 +45,35 @@ fn auth_cookies(state: &AppState, session: &str, csrf: &str) -> [axum::http::Hea
     ]
 }
 
-/// Login rate limit: 10 attempts/minute per client IP, fail closed when
-/// Redis is configured (spec §16.3); no limiter configured → skipped.
-async fn login_rate_limit(state: &AppState, addr: &SocketAddr) -> Result<(), AppError> {
+/// Login rate limit (R6): 10 attempts/minute per client IP *and* per
+/// normalized email, fail closed when Redis is configured; no limiter
+/// configured → skipped. The client IP trusts `X-Forwarded-For` only when
+/// the TCP peer is in `TRUSTED_PROXIES` (spec §16.3, §4.10).
+async fn login_rate_limit(
+    state: &AppState,
+    headers: &HeaderMap,
+    addr: &SocketAddr,
+    email: &str,
+) -> Result<(), AppError> {
     if let Some(rl) = &state.rate_limiter {
-        rl.require(
-            &format!("login:{}", addr.ip()),
-            10,
-            Duration::from_secs(60),
-            infrastructure::ratelimit::FailMode::Closed,
+        let ip = crate::extractors::client_ip(&state.config, headers, addr.ip());
+        let email_key = domain::email_address::normalize(
+            email,
+            domain::email_address::LocalPartPolicy::Lowercase,
         )
-        .await?;
+        .map(|e| e.normalized_key)
+        .unwrap_or_else(|_| email.to_lowercase());
+        let hash = infrastructure::crypto::sha256_hex(email_key.as_bytes());
+        let window = Duration::from_secs(60);
+        for key in [format!("login:ip:{ip}"), format!("login:email:{hash}")] {
+            rl.require(
+                &key,
+                10,
+                window,
+                infrastructure::ratelimit::FailMode::Closed,
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -72,10 +90,11 @@ async fn login_rate_limit(state: &AppState, addr: &SocketAddr) -> Result<(), App
 async fn login(
     axum::extract::State(state): axum::extract::State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     request_id: crate::extractors::RequestIdHeader,
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ProblemError> {
-    login_rate_limit(&state, &addr).await?;
+    login_rate_limit(&state, &headers, &addr, &req.email).await?;
     let workspace_id = state
         .db
         .default_workspace_id()
