@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.99"
+license = "Proprietary"
+
+[workspace.dependencies]
+contracts = { path = "crates/contracts" }
+domain = { path = "crates/domain" }
+infrastructure = { path = "crates/infrastructure" }
+application = { path = "crates/application" }
+api = { path = "crates/api" }
+worker = { path = "crates/worker" }
+mcp = { path = "crates/mcp" }
+
+anyhow = "1"
+async-trait = "0.1"
+axum = "0.8"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+csv = "1"
+futures = "0.3"
+hex = "0.4"
+http = "1"
+idna = "1"
+rand = "0.9"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "cookies"] }
+schemars = { version = "0.8", features = ["uuid1", "chrono"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = [
+    "postgres",
+    "runtime-tokio",
+    "tls-rustls",
+    "uuid",
+    "chrono",
+    "json",
+    "ipnetwork",
+    "migrate",
+    "macros",
+] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+utoipa = { version = "5", features = ["chrono", "uuid"] }
+utoipa-axum = "0.2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+argon2 = "0.6"
+sha2 = "0.10"
+hmac = "0.12"
+aes-gcm = "0.10"
+redis = { version = "1", features = ["tokio-comp"] }
+ammonia = "4"
+
+[profile.release]
+lto = "thin"

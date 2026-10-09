@@ -1,0 +1,14 @@
+[package]
+name = "domain"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+contracts.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+idna.workspace = true

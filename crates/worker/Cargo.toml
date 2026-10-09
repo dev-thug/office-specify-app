@@ -1,0 +1,25 @@
+[package]
+name = "worker"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "outreach-worker"
+path = "src/main.rs"
+
+[dependencies]
+contracts.workspace = true
+domain.workspace = true
+infrastructure.workspace = true
+application.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+rand.workspace = true
