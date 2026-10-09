@@ -37,3 +37,14 @@ were required.
   through the dedicated auth repository only).
 - Deviation X1 adds `user_password_credentials` in `0002_password_auth.sql`
   (FK `user_id → users.id ON DELETE CASCADE`).
+- `0004_scan_functions.sql` (addition, not an A.4 fix — **semantic**
+  companion): FORCE RLS means the worker runner cannot enumerate
+  "workspaces with pending jobs/outbox" — with `app.workspace_id` unset the
+  policies match zero rows for every role including the table owner, and
+  A.4 forbids BYPASSRLS on runtime accounts. The migration adds three
+  `SECURITY DEFINER` functions owned by the migration superuser (which
+  bypasses RLS): `runnable_job_workspaces()`, `pending_outbox_workspaces()`
+  and `reclaim_expired_job_leases()`. They expose only workspace ids / a
+  row count; all row access still happens inside per-workspace RLS
+  transactions. EXECUTE is revoked from PUBLIC and granted to
+  `api_runtime`/`worker_runtime` only.

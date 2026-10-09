@@ -1,0 +1,43 @@
+{
+  "protocolVersion": "2025-11-25",
+  "server": {
+    "name": "outreach-os",
+    "version": "0.0.0"
+  },
+  "tools": [
+    {
+      "description": "Liveness check — returns ok:true for the calling principal.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "title": "OpsPingInput",
+        "type": "object"
+      },
+      "name": "ops.ping",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "principal_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "principal_id",
+          "workspace_id"
+        ],
+        "title": "OpsPingOutput",
+        "type": "object"
+      }
+    }
+  ]
+}
