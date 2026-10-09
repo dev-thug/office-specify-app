@@ -11,8 +11,11 @@ pub mod consumers;
 pub mod handlers;
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use futures::{FutureExt, StreamExt};
 
 use consumers::{EventConsumer, EventCtx};
 use contracts::AppError;
@@ -88,8 +91,12 @@ pub fn registry() -> JobRegistry {
 /// In-memory per-(event, consumer) retry backoff — outbox_events has no
 /// attempt columns, so failures are throttled in the dispatcher only.
 struct Backoff {
+    event_type: String,
     failures: u32,
     next_at: Instant,
+    /// Last failure timestamp — entries older than BACKOFF_PRUNE are
+    /// dropped so the map cannot grow without bound (R17).
+    last_failure: Instant,
 }
 
 pub struct Runner {
@@ -100,11 +107,17 @@ pub struct Runner {
     pub poll_interval: Duration,
     /// First retry delay after a consumer failure; doubles up to 5 min.
     pub backoff_base: Duration,
+    /// Job lease length in seconds (R13). Heartbeats run every lease/3.
+    pub lease_seconds: i64,
+    /// Max jobs handled concurrently per poll (R13; `WORKER_CONCURRENCY`).
+    pub concurrency: usize,
     backoffs: Mutex<HashMap<(Uuid, &'static str), Backoff>>,
 }
 
 const OUTBOX_BATCH: i64 = 100;
 const BACKOFF_CAP: Duration = Duration::from_secs(300);
+/// Backoff entries idle longer than this are pruned (R17).
+const BACKOFF_PRUNE: Duration = Duration::from_secs(3600);
 
 impl Runner {
     pub fn new(db: Db, registry: JobRegistry) -> Self {
@@ -114,12 +127,15 @@ impl Runner {
             owner: format!("worker-{}", Uuid::new_v4()),
             poll_interval: Duration::from_millis(500),
             backoff_base: Duration::from_secs(2),
+            lease_seconds: 60,
+            concurrency: 4,
             backoffs: Mutex::new(HashMap::new()),
         }
     }
 
     /// One poll iteration: reclaim expired leases, find workspaces with
-    /// runnable jobs, claim and handle each.
+    /// runnable jobs, claim and handle each — bounded-concurrency batches
+    /// with a per-job heartbeat (R13).
     pub async fn run_once(&self) -> Result<usize, AppError> {
         jobs::reclaim_expired(&self.db).await?;
         let mut handled = 0;
@@ -127,16 +143,46 @@ impl Runner {
             // Claim in its own tx so the lease commits before work starts.
             let claimed: Vec<Job> = {
                 let mut tx = self.db.begin(ws).await?;
-                let jobs = jobs::claim(&mut tx, &self.owner, jobs::BATCH_SIZE).await?;
+                let jobs =
+                    jobs::claim_lease(&mut tx, &self.owner, jobs::BATCH_SIZE, self.lease_seconds)
+                        .await?;
                 tx.commit().await?;
                 jobs
             };
-            for job in claimed {
-                self.handle_one(job).await;
-                handled += 1;
-            }
+            handled += claimed.len();
+            futures::stream::iter(claimed)
+                .for_each_concurrent(self.concurrency, |job| self.handle_one(job))
+                .await;
         }
         Ok(handled)
+    }
+
+    /// Heartbeat task for a running job (R13): extends the lease every
+    /// lease/3, fenced by the lease token; exits when the fencing check
+    /// fails or the handle aborts it on completion.
+    fn spawn_heartbeat(&self, job: &Job) -> tokio::task::JoinHandle<()> {
+        let db = self.db.clone();
+        let ws = job.workspace_id;
+        let job_id = job.id;
+        let token = job.lease_token.unwrap_or_default();
+        let every = Duration::from_millis(((self.lease_seconds.max(1) * 1000) / 3).max(50) as u64);
+        let lease_seconds = self.lease_seconds;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(every).await;
+                let ok = match db.begin(ws).await {
+                    Ok(mut tx) => {
+                        let r = jobs::heartbeat_lease(&mut tx, job_id, token, lease_seconds).await;
+                        let _ = tx.commit().await;
+                        matches!(r, Ok(true))
+                    }
+                    Err(_) => false,
+                };
+                if !ok {
+                    return;
+                }
+            }
+        })
     }
 
     async fn handle_one(&self, job: Job) {
@@ -169,15 +215,26 @@ impl Runner {
             return;
         };
 
+        // R13: a job outliving its lease is kept alive by heartbeats —
+        // reclaim must never double-execute a slow handler.
+        let heartbeat = self.spawn_heartbeat(&job);
+
         let mut tx = match self.db.begin(job.workspace_id).await {
             Ok(t) => t,
             Err(e) => {
+                heartbeat.abort();
                 tracing::error!(error = %e, "begin failed");
                 return;
             }
         };
-        match handler.handle(&ctx, &mut tx, job.payload.clone()).await {
-            Ok(()) => {
+        // R14: a panicking handler becomes a failed attempt
+        // (HANDLER_PANIC), never a crashed worker process.
+        let outcome = AssertUnwindSafe(handler.handle(&ctx, &mut tx, job.payload.clone()))
+            .catch_unwind()
+            .await;
+        heartbeat.abort();
+        match outcome {
+            Ok(Ok(())) => {
                 match jobs::complete(&mut tx, job.id, ctx.lease_token).await {
                     Ok(true) => {
                         if let Err(e) = tx.commit().await {
@@ -191,31 +248,50 @@ impl Runner {
                     }
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let _ = tx.rollback().await;
-                let code = e.code.as_str();
-                let mut ftx = match self.db.begin(job.workspace_id).await {
-                    Ok(t) => t,
-                    Err(e2) => {
-                        tracing::error!(error = %e2, "fail tx begin failed");
-                        return;
-                    }
-                };
-                let is_external = handler.external_effect();
-                // §16.4: external-effect handlers are not auto-retried after
-                // the submitting boundary — they mark their own business row
-                // `unknown` and finish; a runner-level error before that
-                // boundary may retry.
-                if let Err(e2) = jobs::fail_or_retry(&mut ftx, &job, ctx.lease_token, code).await {
-                    tracing::error!(job_id = %job.id, error = %e2, "fail_or_retry failed");
-                }
-                if is_external {
-                    tracing::warn!(job_id = %job.id, code, "external-effect job failed");
-                }
-                let _ = ftx.commit().await;
-                tracing::warn!(job_id = %job.id, kind = %job.kind, code, "job failed");
+                self.fail_job(
+                    &job,
+                    ctx.lease_token,
+                    e.code.as_str(),
+                    handler.external_effect(),
+                )
+                .await;
+                tracing::warn!(job_id = %job.id, kind = %job.kind, code = e.code.as_str(), "job failed");
+            }
+            Err(_panic) => {
+                let _ = tx.rollback().await;
+                self.fail_job(
+                    &job,
+                    ctx.lease_token,
+                    "HANDLER_PANIC",
+                    handler.external_effect(),
+                )
+                .await;
+                tracing::error!(job_id = %job.id, kind = %job.kind, "job handler panicked");
             }
         }
+    }
+
+    /// Record a failed attempt (retry with backoff or dead) in its own tx.
+    async fn fail_job(&self, job: &Job, lease_token: Uuid, code: &str, is_external: bool) {
+        // §16.4: external-effect handlers are not auto-retried after the
+        // submitting boundary — they mark their own business row `unknown`
+        // and finish; a runner-level error before that boundary may retry.
+        let mut ftx = match self.db.begin(job.workspace_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(job_id = %job.id, error = %e, "fail tx begin failed");
+                return;
+            }
+        };
+        if let Err(e) = jobs::fail_or_retry(&mut ftx, job, lease_token, code).await {
+            tracing::error!(job_id = %job.id, error = %e, "fail_or_retry failed");
+        }
+        if is_external {
+            tracing::warn!(job_id = %job.id, code, "external-effect job failed");
+        }
+        let _ = ftx.commit().await;
     }
 
     // ------------------------- outbox dispatcher -------------------------
@@ -228,13 +304,16 @@ impl Runner {
         }
     }
 
-    fn record_backoff(&self, event_id: Uuid, consumer: &'static str) {
+    fn record_backoff(&self, event: &OutboxRow, consumer: &'static str) {
         let mut m = self.backoffs.lock().unwrap();
-        let e = m.entry((event_id, consumer)).or_insert(Backoff {
+        let e = m.entry((event.id, consumer)).or_insert_with(|| Backoff {
+            event_type: event.event_type.clone(),
             failures: 0,
             next_at: Instant::now(),
+            last_failure: Instant::now(),
         });
         e.failures += 1;
+        e.last_failure = Instant::now();
         let delay = (self.backoff_base * 2u32.saturating_pow(e.failures.saturating_sub(1).min(9)))
             .min(BACKOFF_CAP);
         e.next_at = Instant::now() + delay;
@@ -242,6 +321,42 @@ impl Runner {
 
     fn clear_backoff(&self, event_id: Uuid, consumer: &'static str) {
         self.backoffs.lock().unwrap().remove(&(event_id, consumer));
+    }
+
+    /// Drop every backoff entry for an event (called once it publishes).
+    fn clear_event_backoffs(&self, event_id: Uuid) {
+        self.backoffs
+            .lock()
+            .unwrap()
+            .retain(|(id, _), _| *id != event_id);
+    }
+
+    /// R17: events whose EVERY subscribed consumer is in active backoff.
+    /// They are excluded from the claim so a run of poison events cannot
+    /// starve deliverable ones. Also prunes entries idle >1h so the map
+    /// stays bounded.
+    fn fully_backed_off_ids(&self) -> Vec<Uuid> {
+        let mut m = self.backoffs.lock().unwrap();
+        let now = Instant::now();
+        m.retain(|_, b| now.duration_since(b.last_failure) < BACKOFF_PRUNE);
+        let mut active: HashMap<Uuid, (String, Vec<&'static str>)> = HashMap::new();
+        for ((event_id, consumer), b) in m.iter() {
+            if now < b.next_at {
+                active
+                    .entry(*event_id)
+                    .or_insert_with(|| (b.event_type.clone(), Vec::new()))
+                    .1
+                    .push(*consumer);
+            }
+        }
+        active
+            .into_iter()
+            .filter(|(_, (event_type, backing))| {
+                let subscribed = self.registry.consumers_for(event_type);
+                !subscribed.is_empty() && subscribed.iter().all(|c| backing.contains(&c.name()))
+            })
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// One outbox tick: scan workspaces with unpublished events, deliver each
@@ -264,9 +379,10 @@ impl Runner {
     /// first). Also the unit tests use — scans don't bleed across parallel
     /// workspaces this way.
     pub async fn dispatch_workspace(&self, workspace_id: Uuid) -> Result<usize, AppError> {
+        let excluded = self.fully_backed_off_ids();
         let events: Vec<OutboxRow> = {
             let mut tx = self.db.begin(workspace_id).await?;
-            let events = outbox::claim_unpublished(&mut tx, OUTBOX_BATCH).await?;
+            let events = outbox::claim_unpublished(&mut tx, OUTBOX_BATCH, &excluded).await?;
             tx.commit().await?;
             events
         };
@@ -326,7 +442,7 @@ impl Runner {
                     }
                     Err(e) => {
                         tracing::warn!(event_id = %event.id, consumer = consumer.name(), code = %e.code.as_str(), "consumer commit failed");
-                        self.record_backoff(event.id, consumer.name());
+                        self.record_backoff(event, consumer.name());
                         all_processed = false;
                     }
                 },
@@ -334,7 +450,7 @@ impl Runner {
                     let _ = tx.rollback().await;
                     // Never log payloads — event id, consumer, code only.
                     tracing::warn!(event_id = %event.id, consumer = consumer.name(), code = %e.code.as_str(), "consumer failed");
-                    self.record_backoff(event.id, consumer.name());
+                    self.record_backoff(event, consumer.name());
                     all_processed = false;
                 }
             }
@@ -352,6 +468,8 @@ impl Runner {
                     tracing::error!(event_id = %event.id, error = %e, "mark_published failed");
                 }
                 let _ = tx.commit().await;
+                // R17: published events never need backoff state again.
+                self.clear_event_backoffs(event.id);
             }
             Err(e) => tracing::error!(event_id = %event.id, error = %e, "publish tx begin failed"),
         }

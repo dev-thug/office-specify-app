@@ -8,7 +8,9 @@
 //! key with a different `request_hash` is `409 IDEMPOTENCY_KEY_REUSED`.
 //!
 //! The claim row commits before `f` runs, so a crash leaves a stale
-//! `processing` row until `expires_at` — intentional (safe) per §4.4.
+//! `processing` row; `locked_until` (R15, migration 0005) bounds the wait —
+//! a same-key same-hash request takes the claim over after 5 minutes, and
+//! reads ignore `expires_at`-passed records entirely.
 
 use std::future::Future;
 use std::time::Duration;
@@ -27,6 +29,9 @@ pub const KEY_MAX_LEN: usize = 128;
 /// How long followers poll a `processing` claim before 409 REQUEST_IN_PROGRESS.
 pub const POLL_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// R15: lease on `processing` claims. A crashed leader's key becomes
+/// claimable by an identical request after this, not after `RETENTION`.
+pub const PROCESSING_LEASE: Duration = Duration::from_secs(5 * 60);
 
 /// Identity of one idempotent call. `endpoint` must be the canonical route
 /// pattern (e.g. `POST /api/v1/imports`), never a raw URI containing tokens.
@@ -73,10 +78,19 @@ impl<T> Outcome<T> {
     }
 }
 
-type RecordRow = (Vec<u8>, String, Option<i32>, Option<serde_json::Value>);
+type RecordRow = (
+    Vec<u8>,
+    String,
+    Option<i32>,
+    Option<serde_json::Value>,
+    Option<chrono::DateTime<Utc>>,
+    chrono::DateTime<Utc>,
+);
 
 enum Claim {
-    Leader,
+    /// We hold the claim; carries the lease deadline we wrote — used to
+    /// fence the failure-cleanup so a takeover's row is never deleted.
+    Leader(chrono::DateTime<Utc>),
     Existing {
         request_hash: Vec<u8>,
         state: String,
@@ -89,10 +103,12 @@ async fn try_claim(db: &Db, scope: &Scope, request_hash: &[u8]) -> Result<Claim,
     // Claim or observe — separate short tx so the claim is visible to
     // followers before the business tx starts.
     let mut tx = db.begin(scope.workspace_id).await?;
+    let my_lease = Utc::now() + chrono::Duration::from_std(PROCESSING_LEASE).unwrap();
     let claimed: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO idempotency_records
-            (workspace_id, scope_key, endpoint, idempotency_key, request_hash, state, expires_at)
-         VALUES ($1, $2, $3, $4, $5, 'processing', $6)
+            (workspace_id, scope_key, endpoint, idempotency_key, request_hash,
+             state, locked_until, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'processing', $6, $7)
          ON CONFLICT (workspace_id, scope_key, endpoint, idempotency_key) DO NOTHING
          RETURNING id",
     )
@@ -101,16 +117,18 @@ async fn try_claim(db: &Db, scope: &Scope, request_hash: &[u8]) -> Result<Claim,
     .bind(&scope.endpoint)
     .bind(&scope.key)
     .bind(request_hash)
+    .bind(my_lease)
     .bind(Utc::now() + chrono::Duration::from_std(RETENTION).unwrap())
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)?;
     if claimed.is_some() {
         tx.commit().await?;
-        return Ok(Claim::Leader);
+        return Ok(Claim::Leader(my_lease));
     }
     let row: Option<RecordRow> = sqlx::query_as(
-        "SELECT request_hash, state, response_status, response_body FROM idempotency_records
+        "SELECT request_hash, state, response_status, response_body, locked_until, expires_at
+           FROM idempotency_records
           WHERE workspace_id = $1 AND scope_key = $2 AND endpoint = $3 AND idempotency_key = $4",
     )
     .bind(scope.workspace_id)
@@ -120,16 +138,73 @@ async fn try_claim(db: &Db, scope: &Scope, request_hash: &[u8]) -> Result<Claim,
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)?;
-    let _ = tx.rollback().await;
     match row {
-        Some((request_hash, state, response_status, response_body)) => Ok(Claim::Existing {
-            request_hash,
-            state,
-            response_status,
-            response_body,
-        }),
+        Some((stored_hash, state, response_status, response_body, locked_until, expires_at)) => {
+            // R15: reads ignore records past expires_at — delete the corpse
+            // and claim as leader.
+            if expires_at <= Utc::now() {
+                sqlx::query(
+                    "DELETE FROM idempotency_records
+                      WHERE workspace_id = $1 AND scope_key = $2 AND endpoint = $3
+                        AND idempotency_key = $4 AND expires_at <= now()",
+                )
+                .bind(scope.workspace_id)
+                .bind(scope.scope_key())
+                .bind(&scope.endpoint)
+                .bind(&scope.key)
+                .execute(tx.conn())
+                .await
+                .map_err(map_sqlx)?;
+                tx.commit().await?;
+                return Box::pin(try_claim(db, scope, request_hash)).await;
+            }
+            // R15: an expired processing lease is taken over by an identical
+            // request (same key + same request_hash). A different hash is
+            // still IDEMPOTENCY_KEY_REUSED — decided by the caller.
+            let lease_expired = locked_until.is_none_or(|l| l <= Utc::now());
+            if state == "processing" && lease_expired && stored_hash == request_hash {
+                let took = sqlx::query(
+                    "UPDATE idempotency_records
+                        SET locked_until = $5
+                      WHERE workspace_id = $1 AND scope_key = $2 AND endpoint = $3
+                        AND idempotency_key = $4 AND state = 'processing'
+                        AND (locked_until IS NULL OR locked_until <= now())",
+                )
+                .bind(scope.workspace_id)
+                .bind(scope.scope_key())
+                .bind(&scope.endpoint)
+                .bind(&scope.key)
+                .bind(my_lease)
+                .execute(tx.conn())
+                .await
+                .map_err(map_sqlx)?
+                .rows_affected();
+                if took == 1 {
+                    tx.commit().await?;
+                    return Ok(Claim::Leader(my_lease));
+                }
+                // Lost the takeover race — observe the winner instead.
+                let _ = tx.rollback().await;
+                return Ok(Claim::Existing {
+                    request_hash: stored_hash,
+                    state,
+                    response_status,
+                    response_body,
+                });
+            }
+            tx.commit().await?;
+            Ok(Claim::Existing {
+                request_hash: stored_hash,
+                state,
+                response_status,
+                response_body,
+            })
+        }
         // Row existed for conflict but vanished (expired cleanup) — retry as leader.
-        None => Box::pin(try_claim(db, scope, request_hash)).await,
+        None => {
+            let _ = tx.rollback().await;
+            Box::pin(try_claim(db, scope, request_hash)).await
+        }
     }
 }
 
@@ -160,7 +235,7 @@ where
     let deadline = std::time::Instant::now() + POLL_TIMEOUT;
     loop {
         match try_claim(db, scope, request_hash).await? {
-            Claim::Leader => {
+            Claim::Leader(my_lease) => {
                 let mut tx = db.begin(scope.workspace_id).await?;
                 match f(&mut tx).await {
                     Ok(stored) => {
@@ -169,7 +244,8 @@ where
                         })?;
                         sqlx::query(
                             "UPDATE idempotency_records
-                                SET state = 'completed', response_status = $5, response_body = $6
+                                SET state = 'completed', locked_until = NULL,
+                                    response_status = $5, response_body = $6
                               WHERE workspace_id = $1 AND scope_key = $2
                                 AND endpoint = $3 AND idempotency_key = $4",
                         )
@@ -187,18 +263,24 @@ where
                     }
                     Err(e) => {
                         let _ = tx.rollback().await;
-                        // Release the claim so a retry may proceed.
+                        // Release the claim so a retry may proceed — fenced
+                        // to OUR lease value so a takeover's claim is never
+                        // deleted from under it (R15).
                         let mut cleanup = db.begin(scope.workspace_id).await?;
                         let _ = sqlx::query(
                             "DELETE FROM idempotency_records
                               WHERE workspace_id = $1 AND scope_key = $2
                                 AND endpoint = $3 AND idempotency_key = $4
-                                AND state = 'processing'",
+                                AND state = 'processing'
+                                AND (locked_until IS NULL
+                                     OR locked_until <= now()
+                                     OR locked_until = $5)",
                         )
                         .bind(scope.workspace_id)
                         .bind(scope.scope_key())
                         .bind(&scope.endpoint)
                         .bind(&scope.key)
+                        .bind(my_lease)
                         .execute(cleanup.conn())
                         .await;
                         let _ = cleanup.commit().await;

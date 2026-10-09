@@ -78,19 +78,27 @@ pub async fn pending_workspaces(db: &Db) -> Result<Vec<Uuid>, AppError> {
 }
 
 /// Claim unpublished events of one workspace inside its RLS transaction.
-/// `FOR UPDATE SKIP LOCKED` makes concurrent dispatchers safe.
-pub async fn claim_unpublished(tx: &mut Tx<'_>, limit: i64) -> Result<Vec<OutboxRow>, AppError> {
+/// `FOR UPDATE SKIP LOCKED` makes concurrent dispatchers safe. `exclude`
+/// holds event ids whose every subscriber is in active backoff (R17) so a
+/// run of poison events cannot starve the batch.
+pub async fn claim_unpublished(
+    tx: &mut Tx<'_>,
+    limit: i64,
+    exclude: &[Uuid],
+) -> Result<Vec<OutboxRow>, AppError> {
     sqlx::query_as::<_, OutboxRow>(
         "SELECT id, workspace_id, event_type, aggregate_type, aggregate_id,
                 aggregate_version, payload, created_at
            FROM outbox_events
           WHERE workspace_id = $1 AND published_at IS NULL
+            AND NOT (id = ANY($3))
           ORDER BY created_at, id
           LIMIT $2
           FOR UPDATE SKIP LOCKED",
     )
     .bind(tx.workspace_id())
     .bind(limit)
+    .bind(exclude)
     .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)

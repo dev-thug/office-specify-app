@@ -52,12 +52,25 @@ pub struct Job {
     pub attempt_count: i32,
     pub last_error_code: Option<String>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// True when the handler performs external side effects — reclaim never
+    /// requeues these (R12; migration 0005).
+    pub external_effect: bool,
     pub created_at: DateTime<Utc>,
 }
 
-/// Enqueue inside the business transaction. `dedupe_key = None` generates a
-/// unique key ("once:<uuid>"); `Some(key)` makes a second equivalent enqueue
-/// fail with Conflict (UNIQUE (workspace_id, kind, dedupe_key)).
+/// Job kinds whose handlers perform external side effects (integration
+/// contracts: `external_effect=true`). Durable and visible to SQL via the
+/// `external_effect` column — lease-expiry reclaim must never blindly
+/// re-submit them (R12). Kept here so `enqueue`'s frozen signature can set
+/// the flag without a caller-supplied parameter.
+pub fn kind_has_external_effect(kind: &str) -> bool {
+    matches!(kind, "sending.dispatch_outbound" | "booking.confirm")
+}
+
+/// Enqueue inside the business transaction (R11). `dedupe_key = None`
+/// generates a unique key ("once:<uuid>"); `Some(key)` makes the enqueue
+/// idempotent on UNIQUE (workspace_id, kind, dedupe_key) — a duplicate
+/// returns the existing job's id instead of failing.
 pub async fn enqueue(
     tx: &mut Tx<'_>,
     kind: &str,
@@ -69,9 +82,11 @@ pub async fn enqueue(
     let key = dedupe_key
         .map(str::to_string)
         .unwrap_or_else(|| format!("once:{}", Uuid::new_v4()));
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO jobs (workspace_id, kind, payload_version, payload, available_at, dedupe_key)
-         VALUES ($1, $2, $3, $4, $5, $6)
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO jobs
+            (workspace_id, kind, payload_version, payload, available_at, dedupe_key, external_effect)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (workspace_id, kind, dedupe_key) DO NOTHING
          RETURNING id",
     )
     .bind(tx.workspace_id())
@@ -80,24 +95,64 @@ pub async fn enqueue(
     .bind(&payload)
     .bind(available_at)
     .bind(&key)
-    .fetch_one(tx.conn())
+    .bind(kind_has_external_effect(kind))
+    .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)?;
-    Ok(id)
+    if let Some(id) = id {
+        return Ok(id);
+    }
+    // Duplicate dedupe key — return the existing job's id.
+    sqlx::query_scalar(
+        "SELECT id FROM jobs WHERE workspace_id = $1 AND kind = $2 AND dedupe_key = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(kind)
+    .bind(&key)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
 }
 
 /// Lease up to `limit` runnable jobs — A.6.7 verbatim. Runs inside a
-/// workspace tx (`Db::begin`); the runner keeps it open while handling.
+/// workspace tx (`Db::begin`). Rows at MAX_ATTEMPTS are moved to `dead`
+/// first and never leased again (R12 — the cap bounds every retry path,
+/// not just handler-error paths).
 pub async fn claim(tx: &mut Tx<'_>, lease_owner: &str, limit: i64) -> Result<Vec<Job>, AppError> {
+    claim_lease(tx, lease_owner, limit, LEASE_SECONDS).await
+}
+
+/// `claim` with an explicit lease duration in seconds.
+pub async fn claim_lease(
+    tx: &mut Tx<'_>,
+    lease_owner: &str,
+    limit: i64,
+    lease_seconds: i64,
+) -> Result<Vec<Job>, AppError> {
     let ws = tx
         .workspace_id()
         .ok_or_else(|| AppError::internal("jobs::claim requires a workspace tx"))?;
+    // Attempt-cap enforcement lives here so crash/panic-reclaimed rows
+    // cannot cycle forever (I3/I5 → R12).
+    sqlx::query(
+        "UPDATE jobs SET state = 'dead', finished_at = now(),
+                last_error_code = 'MAX_ATTEMPTS',
+                lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL
+          WHERE workspace_id = $1 AND state IN ('queued','retry_wait')
+            AND attempt_count >= $2",
+    )
+    .bind(ws)
+    .bind(MAX_ATTEMPTS)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
     let rows = sqlx::query_as::<_, Job>(
         "WITH candidates AS (
             SELECT id FROM jobs
              WHERE workspace_id = $1
                AND state IN ('queued','retry_wait')
                AND available_at <= now()
+               AND attempt_count < $4
              ORDER BY available_at, id
              LIMIT $3
              FOR UPDATE SKIP LOCKED
@@ -106,7 +161,7 @@ pub async fn claim(tx: &mut Tx<'_>, lease_owner: &str, limit: i64) -> Result<Vec
            SET state = 'running',
                lease_owner = $2,
                lease_token = gen_random_uuid(),
-               lease_expires_at = now() + interval '60 seconds',
+               lease_expires_at = now() + make_interval(secs => $5),
                attempt_count = attempt_count + 1
           FROM candidates AS c
          WHERE j.workspace_id = $1 AND j.id = c.id
@@ -115,6 +170,8 @@ pub async fn claim(tx: &mut Tx<'_>, lease_owner: &str, limit: i64) -> Result<Vec
     .bind(ws)
     .bind(lease_owner)
     .bind(limit)
+    .bind(MAX_ATTEMPTS)
+    .bind(lease_seconds as f64)
     .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)?;
@@ -123,11 +180,26 @@ pub async fn claim(tx: &mut Tx<'_>, lease_owner: &str, limit: i64) -> Result<Vec
 
 /// Extend the lease. False = fencing token stale (job reclaimed) — stop.
 pub async fn heartbeat(tx: &mut Tx<'_>, job_id: Uuid, lease_token: Uuid) -> Result<bool, AppError> {
+    heartbeat_lease(tx, job_id, lease_token, LEASE_SECONDS).await
+}
+
+/// `heartbeat` with an explicit lease duration in seconds (runner uses the
+/// same duration it claimed with).
+pub async fn heartbeat_lease(
+    tx: &mut Tx<'_>,
+    job_id: Uuid,
+    lease_token: Uuid,
+    lease_seconds: i64,
+) -> Result<bool, AppError> {
     let n = sqlx::query(
         "UPDATE jobs
-            SET lease_expires_at = now() + interval '60 seconds'
+            SET lease_expires_at = now() + make_interval(secs => $4)
           WHERE workspace_id = $1 AND id = $2 AND lease_token = $3",
     )
+    .bind(tx.workspace_id())
+    .bind(job_id)
+    .bind(lease_token)
+    .bind(lease_seconds as f64)
     .bind(tx.workspace_id())
     .bind(job_id)
     .bind(lease_token)

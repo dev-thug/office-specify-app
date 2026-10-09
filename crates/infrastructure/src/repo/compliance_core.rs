@@ -187,7 +187,10 @@ pub async fn insert_suppression(
             "suppression_id": suppression_id,
         }),
         Utc::now(),
-        Some(&format!("pause_enrollments:{email_address_id}")),
+        // R11: keyed per suppression, not per address — a re-suppression
+        // after release produces a new suppression id and therefore a new
+        // pause job (the old one must not swallow it).
+        Some(&format!("pause_enrollments:{suppression_id}")),
     )
     .await?;
 
@@ -259,24 +262,34 @@ pub async fn issue_unsubscribe_token(
     Ok(RawToken { token, token_id })
 }
 
-/// Resolve a token to (email_address_id, outbound_message_id) if unused and
-/// not revoked — used by the public unsubscribe endpoints.
+/// Resolved unsubscribe token row (R16). Used tokens still resolve — a
+/// repeat POST is an idempotent success (T24), distinguished by
+/// `used_at`/`revoked_at` rather than a generic 404.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UnsubscribeToken {
+    pub email_address_id: Uuid,
+    pub outbound_message_id: Uuid,
+    pub used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// Resolve a token inside the token's workspace tx — obtain the workspace
+/// via `crate::public_tokens::resolve_unsubscribe_token` first.
 pub async fn resolve_unsubscribe_token(
     tx: &mut Tx<'_>,
     token: &str,
-) -> Result<Option<(Uuid, Uuid)>, AppError> {
+) -> Result<Option<UnsubscribeToken>, AppError> {
     let hash = crate::crypto::sha256_bytes(token.as_bytes());
-    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "SELECT email_address_id, outbound_message_id FROM unsubscribe_tokens
-          WHERE workspace_id = $1 AND token_hash = $2
-            AND used_at IS NULL AND revoked_at IS NULL",
+    sqlx::query_as::<_, UnsubscribeToken>(
+        "SELECT email_address_id, outbound_message_id, used_at, revoked_at
+           FROM unsubscribe_tokens
+          WHERE workspace_id = $1 AND token_hash = $2",
     )
     .bind(tx.workspace_id())
     .bind(&hash[..])
     .fetch_optional(tx.conn())
     .await
-    .map_err(map_sqlx)?;
-    Ok(row)
+    .map_err(map_sqlx)
 }
 
 /// Mark a token used (one-time semantics).
