@@ -139,6 +139,38 @@ async fn bootstrap(
     password_stdin: bool,
     password_out: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    // F4: resolve the password source AND validate the destination before
+    // touching the database — a generated password with no --password-out
+    // is undisclosable, so failing after committing workspace + admin +
+    // credential would leave a real account nobody can log into.
+    let (password, generated) = if password_stdin {
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
+        (buf.trim().to_string(), false)
+    } else if let Ok(p) = std::env::var("OUTREACH_ADMIN_PASSWORD") {
+        (p, false)
+    } else {
+        let Some(path) = &password_out else {
+            bail!(
+                "no admin password source and no destination for a generated one: \
+                 set OUTREACH_ADMIN_PASSWORD, pass --admin-password-stdin, or pass \
+                 --password-out <path>"
+            );
+        };
+        // write_secret_0600 writes exactly once (create_new) — refuse an
+        // existing file up front rather than after the DB writes.
+        if path.exists() {
+            bail!("--password-out {} already exists", path.display());
+        }
+        (
+            format!("{}!", &infrastructure::crypto::generate_token()[..24]),
+            true,
+        )
+    };
+    if password.len() < 12 || password.len() > 128 {
+        bail!("admin password must be 12–128 chars");
+    }
+
     let db = connect()?;
     // Idempotent: reuse the first workspace when one exists.
     let workspace_id = match auth_repo::first_workspace_id(&db).await? {
@@ -148,24 +180,6 @@ async fn bootstrap(
         }
         None => auth_repo::insert_workspace(&db, workspace_name).await?,
     };
-
-    // Password comes from stdin, env, or generation — never argv, never
-    // printed (R3).
-    let (password, generated) = if password_stdin {
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf)?;
-        (buf.trim().to_string(), false)
-    } else if let Ok(p) = std::env::var("OUTREACH_ADMIN_PASSWORD") {
-        (p, false)
-    } else {
-        (
-            format!("{}!", &infrastructure::crypto::generate_token()[..24]),
-            true,
-        )
-    };
-    if password.len() < 12 || password.len() > 128 {
-        bail!("admin password must be 12–128 chars");
-    }
 
     let email = domain::email_address::normalize(
         admin_email,
@@ -211,11 +225,8 @@ async fn bootstrap(
     println!("workspace_id = {workspace_id}");
     println!("admin_email  = {email}");
     if generated {
-        let Some(path) = password_out else {
-            bail!(
-                "generated admin password requires --password-out <path> (or set OUTREACH_ADMIN_PASSWORD / --admin-password-stdin)"
-            );
-        };
+        // Validated before any DB write — presence is guaranteed.
+        let path = password_out.expect("generated password implies --password-out");
         write_secret_0600(&path, &password)?;
         println!("admin_password written to {}", path.display());
     }
