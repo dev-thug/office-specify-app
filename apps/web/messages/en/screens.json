@@ -179,7 +179,7 @@
   },
   "design": {
     "title": "Design system",
-    "description": "Dev-only page showcasing ported primitives and Outreach patterns in both themes.",
+    "description": "Dev-only page showcasing ported primitives and Office patterns in both themes.",
     "emptyTitle": "Primitive catalog",
     "emptyDescription": "Inspect components in both themes below."
   }

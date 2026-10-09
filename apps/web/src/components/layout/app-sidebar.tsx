@@ -121,7 +121,7 @@ export function AppSidebar({ onOpenCommandPalette }: AppSidebarProps) {
     >
       {/* 헤더 52px — 로고 + 워드마크 */}
       <div className="flex h-13 shrink-0 items-center px-4">
-        <Link href="/app/dashboard" aria-label="Outreach OS">
+        <Link href="/app/dashboard" aria-label="Office">
           <Logo />
         </Link>
       </div>

@@ -1,6 +1,6 @@
-# Outreach OS
+# Office
 
-Outreach OS is a Rust workspace for the API, background worker, MCP server, and operator CLI, with a Next.js web app in `apps/web/`. Its approved implementation decisions and the binding product design are recorded in [the implementation spec](docs/superpowers/specs/2026-10-09-outreach-os-design.md) and [the source design](docs/design/source/outreach-os-design-v1.0.md).
+Office is a Rust workspace for the API, background worker, MCP server, and operator CLI, with a Next.js web app in `apps/web/`. Its approved implementation decisions and the binding product design are recorded in [the implementation spec](docs/superpowers/specs/2026-10-09-outreach-os-design.md) and [the source design](docs/design/source/outreach-os-design-v1.0.md).
 
 For a local setup, see [Local development](docs/runbooks/local-development.md). Operator procedures are in [Unknown send reconciliation](docs/runbooks/unknown-send-reconciliation.md) and [Database restore](docs/runbooks/restore.md). The current test evidence and uncovered requirements are listed in [the T01–T36 matrix](docs/design/test-matrix.md).
 
@@ -29,3 +29,7 @@ release gates; successful fake-provider tests do not close those gates.
 
 Independent implementation work used `gpt-6-luna` with `max` reasoning. The agent
 interface did not expose a separate execution-mode setting.
+
+## License
+
+Office is available under the [MIT License](LICENSE).

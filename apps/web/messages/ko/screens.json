@@ -179,7 +179,7 @@
   },
   "design": {
     "title": "디자인 시스템",
-    "description": "포팅된 프리미티브와 Outreach 패턴을 두 테마에서 확인하는 개발용 페이지입니다.",
+    "description": "포팅된 프리미티브와 Office 패턴을 두 테마에서 확인하는 개발용 페이지입니다.",
     "emptyTitle": "프리미티브 카탈로그",
     "emptyDescription": "아래에서 두 테마의 컴포넌트를 확인하세요."
   }

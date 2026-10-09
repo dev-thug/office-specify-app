@@ -1,7 +1,7 @@
 {
   "protocolVersion": "2025-11-25",
   "server": {
-    "name": "outreach-os",
+    "name": "office",
     "version": "0.0.0"
   },
   "tools": [

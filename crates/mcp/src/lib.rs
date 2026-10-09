@@ -20,7 +20,7 @@ pub struct ToolServices {
 
 /// Protocol version this server speaks.
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
-pub const SERVER_NAME: &str = "outreach-os";
+pub const SERVER_NAME: &str = "office";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// A tool exposed over MCP. `input_schema`/`output_schema` are JSON Schemas

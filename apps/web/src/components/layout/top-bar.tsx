@@ -56,7 +56,7 @@ export function TopBar({ onOpenCommandPalette }: TopBarProps) {
               </SheetDescription>
               <Link
                 href="/app/dashboard"
-                aria-label="Outreach OS"
+                aria-label="Office"
                 onClick={() => setNavOpen(false)}
               >
                 <Logo />

@@ -1,4 +1,4 @@
-# Outreach OS Web — Design System
+# Office Web — Design System
 
 `src/app/globals.css`의 토큰 정의가 단일 진실이다. 이 문서는 레이어 구조와 규칙을
 설명한다. Specify 디자인 시스템을 포팅했으나 이 파일은 손으로 유지한다.
