@@ -68,6 +68,59 @@ pub async fn create_user(db: &Db, email: &str, display_name: &str) -> Result<Use
     Ok(row)
 }
 
+/// In-transaction variants of the global user helpers — `users` has no
+/// RLS, so they run unchanged inside the invitation-accept workspace tx
+/// (R4: user create + credential set must commit with the single-use
+/// claim).
+pub async fn find_user_by_email_tx(
+    tx: &mut Tx<'_>,
+    email: &str,
+) -> Result<Option<UserRow>, AppError> {
+    sqlx::query_as::<_, UserRow>(
+        "SELECT id, email, display_name, status FROM users WHERE lower(email) = lower($1)",
+    )
+    .bind(email)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+pub async fn create_user_tx(
+    tx: &mut Tx<'_>,
+    email: &str,
+    display_name: &str,
+) -> Result<UserRow, AppError> {
+    sqlx::query_as::<_, UserRow>(
+        "INSERT INTO users (email, display_name) VALUES ($1, $2)
+         RETURNING id, email, display_name, status",
+    )
+    .bind(email)
+    .bind(display_name)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+pub async fn set_password_credential_tx(
+    tx: &mut Tx<'_>,
+    user_id: Uuid,
+    password_hash: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO user_password_credentials (user_id, password_hash)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE
+            SET password_hash = $2, failed_attempts = 0, locked_until = NULL,
+                updated_at = now()",
+    )
+    .bind(user_id)
+    .bind(password_hash)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(())
+}
+
 // -------------------------------------------------- password credentials
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -120,6 +173,8 @@ pub async fn set_password_credential(
 
 /// Record a failed login; returns the resulting locked_until. At
 /// LOGIN_MAX_FAILURES sets `locked_until = now() + 15m` (spec §4.5).
+/// An expired lock resets the counter to 1 on the next failed attempt —
+/// the lock is a bounded penalty, not a ratchet (R5).
 pub async fn record_login_failure(
     db: &Db,
     user_id: Uuid,
@@ -127,10 +182,13 @@ pub async fn record_login_failure(
     let mut tx = db.begin_global().await?;
     let row: Option<(i32, Option<DateTime<Utc>>)> = sqlx::query_as(
         "UPDATE user_password_credentials
-            SET failed_attempts = failed_attempts + 1,
-                locked_until = CASE WHEN failed_attempts + 1 >= $2
-                                    THEN now() + interval '15 minutes'
-                                    ELSE locked_until END,
+            SET failed_attempts = CASE
+                    WHEN locked_until < now() THEN 1
+                    ELSE failed_attempts + 1 END,
+                locked_until = CASE
+                    WHEN locked_until < now() THEN NULL
+                    WHEN failed_attempts + 1 >= $2 THEN now() + interval '15 minutes'
+                    ELSE locked_until END,
                 updated_at = now()
           WHERE user_id = $1
           RETURNING failed_attempts, locked_until",
@@ -210,6 +268,24 @@ pub async fn find_principal_for_user(
     .map_err(map_sqlx)?;
     tx.commit().await?;
     Ok(row)
+}
+
+/// Human principal for a user inside an open tx (accept-invitation path —
+/// keeps the global-table read inside the accept transaction).
+pub async fn find_principal_for_user_tx(
+    tx: &mut Tx<'_>,
+    user_id: Uuid,
+) -> Result<Option<PrincipalRow>, AppError> {
+    sqlx::query_as::<_, PrincipalRow>(
+        "SELECT id, workspace_id, kind, user_id, name, role, status, permission_version
+           FROM principals
+          WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(user_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
 }
 
 /// Insert a principal inside a workspace tx.
@@ -504,10 +580,15 @@ pub async fn find_invitation_by_token(
     Ok(row)
 }
 
+/// Single-use claim of an invitation (R4): the conditional UPDATE is the
+/// first statement of the accept transaction — the row lock serializes
+/// concurrent accepts so exactly one wins. Returns false when the
+/// invitation is already accepted, revoked or expired.
 pub async fn mark_invitation_accepted(tx: &mut Tx<'_>, id: Uuid) -> Result<bool, AppError> {
     let n = sqlx::query(
         "UPDATE member_invitations SET accepted_at = now()
-          WHERE workspace_id = $1 AND id = $2 AND accepted_at IS NULL",
+          WHERE workspace_id = $1 AND id = $2
+            AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()",
     )
     .bind(tx.workspace_id())
     .bind(id)

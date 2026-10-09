@@ -88,16 +88,26 @@ impl Role {
                 OperationsRead,
                 AgentsRun,
             ],
+            // §5.3: members edit own/unassigned CRM records (crm_can_edit
+            // still enforces ownership), reply under a send grant, compose
+            // campaign drafts under a compose grant, pause campaigns in
+            // their own scope, and view their own activity. They never get
+            // approve/grant/admin scopes.
             Role::Member => &[
                 CrmRead,
+                CrmWrite,
                 CrmPropose,
                 ResearchPropose,
                 TemplatesRead,
                 MailRead,
                 MailCompose,
+                MailSend,
+                CampaignCompose,
+                CampaignPause,
                 BookingRead,
                 BookingPropose,
                 ApprovalsRead,
+                OperationsRead,
             ],
             Role::Agent | Role::System => &[],
         };
@@ -308,6 +318,117 @@ impl Ctx {
             permission_version: 0,
             auth: AuthMethod::System { job_id },
             agent_run_id: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every role × scope cell of §5.3 — the conjunctive formula relies on
+    /// exactly these implied sets.
+    #[test]
+    fn role_implied_scopes_table() {
+        use Scope::*;
+        let all: &[(&[Scope], &[Scope])] = &[
+            // (expected scopes, forbidden scopes)
+            (
+                &[
+                    CrmRead,
+                    CrmWrite,
+                    CrmPropose,
+                    CrmImport,
+                    CrmExport,
+                    ResearchPropose,
+                    ResearchWrite,
+                    TemplatesRead,
+                    TemplatesWrite,
+                    MailRead,
+                    MailCompose,
+                    MailSend,
+                    MailApprove,
+                    MailAssign,
+                    CampaignCompose,
+                    CampaignPause,
+                    BookingRead,
+                    BookingPropose,
+                    ApprovalsRead,
+                    OperationsRead,
+                    AgentsRun,
+                ],
+                &[],
+            ),
+            (
+                &[
+                    CrmRead,
+                    CrmWrite,
+                    CrmPropose,
+                    CrmImport,
+                    CrmExport,
+                    ResearchPropose,
+                    ResearchWrite,
+                    TemplatesRead,
+                    TemplatesWrite,
+                    MailRead,
+                    MailCompose,
+                    MailSend,
+                    MailApprove,
+                    MailAssign,
+                    CampaignCompose,
+                    CampaignPause,
+                    BookingRead,
+                    BookingPropose,
+                    ApprovalsRead,
+                    OperationsRead,
+                    AgentsRun,
+                ],
+                &[],
+            ),
+            (
+                &[
+                    CrmRead,
+                    CrmWrite,
+                    CrmPropose,
+                    TemplatesRead,
+                    MailRead,
+                    MailCompose,
+                    MailSend,
+                    CampaignCompose,
+                    CampaignPause,
+                    BookingRead,
+                    BookingPropose,
+                    ApprovalsRead,
+                    OperationsRead,
+                    ResearchPropose,
+                ],
+                &[
+                    CrmImport,
+                    CrmExport,
+                    ResearchWrite,
+                    TemplatesWrite,
+                    MailApprove,
+                    MailAssign,
+                    AgentsRun,
+                ],
+            ),
+        ];
+        let roles = [Role::Admin, Role::Manager, Role::Member];
+        for (role, (yes, no)) in roles.iter().zip(all.iter()) {
+            let scopes = role.implied_scopes();
+            for s in yes.iter() {
+                assert!(scopes.contains(*s), "{role:?} missing {s:?}");
+            }
+            for s in no.iter() {
+                assert!(!scopes.contains(*s), "{role:?} should not have {s:?}");
+            }
+        }
+        // Agents/system carry explicit credential scopes only.
+        for role in [Role::Agent, Role::System] {
+            assert!(
+                role.implied_scopes().is_empty(),
+                "{role:?} has implied scopes"
+            );
         }
     }
 }

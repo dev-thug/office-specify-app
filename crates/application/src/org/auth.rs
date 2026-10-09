@@ -36,16 +36,26 @@ pub async fn login(
     request_id: &str,
 ) -> Result<LoginOutcome, AppError> {
     let user = repo::find_user_by_email(db, email).await?;
+    // Constant work (R10): every failure path runs an argon2 verify —
+    // unknown email, disabled user and missing credential all verify
+    // against the dummy hash so they cannot be told apart by timing.
+    let cred = match &user {
+        Some(u) => repo::get_password_credential(db, u.id).await?,
+        None => None,
+    };
+    let password_ok = crypto::verify_password(
+        password,
+        cred.as_ref()
+            .map(|c| c.password_hash.as_str())
+            .unwrap_or(DUMMY_HASH),
+    );
     let Some(user) = user else {
-        // Constant-ish time: verify against a dummy hash so missing users
-        // are not distinguishable by timing.
-        let _ = crypto::verify_password(password, DUMMY_HASH);
         return Err(invalid_credentials());
     };
     if user.status != "active" {
         return Err(invalid_credentials());
     }
-    let Some(cred) = repo::get_password_credential(db, user.id).await? else {
+    let Some(cred) = cred else {
         return Err(invalid_credentials());
     };
     if let Some(locked) = cred.locked_until
@@ -58,7 +68,7 @@ pub async fn login(
         )
         .with_retry_after(secs));
     }
-    if !crypto::verify_password(password, &cred.password_hash) {
+    if !password_ok {
         let locked = repo::record_login_failure(db, user.id).await?;
         if let Some(until) = locked
             && until > Utc::now()
@@ -169,18 +179,26 @@ pub async fn accept_invitation(
         .filter(|i| i.accepted_at.is_none() && i.revoked_at.is_none() && i.expires_at > Utc::now())
         .ok_or_else(|| AppError::not_found("invitation not found or expired"))?;
 
-    // Create (or reuse) the user row — global table.
-    let user = match repo::find_user_by_email(db, &inv.email).await? {
-        Some(u) => u,
-        None => repo::create_user(db, &inv.email, display_name).await?,
-    };
+    // Password hashing is pure CPU — do it before the tx so it cannot widen
+    // the race window (R4).
     let hash = crypto::hash_password(password)?;
-    repo::set_password_credential(db, user.id, &hash).await?;
 
+    // R4: the conditional single-use UPDATE is the FIRST statement of the
+    // accept transaction — the row lock serializes concurrent accepts and
+    // the losing request gets a generic 404. User create, password set,
+    // principal, session and audit all commit with the claim.
     let mut tx = db.begin(inv.workspace_id).await?;
-    // A re-accept race or a second invitation for the same email reuses the
-    // existing principal when present.
-    let principal_id = match repo::find_principal_for_user(db, inv.workspace_id, user.id).await? {
+    if !repo::mark_invitation_accepted(&mut tx, inv.id).await? {
+        let _ = tx.rollback().await;
+        return Err(AppError::not_found("invitation not found or expired"));
+    }
+    let user = match repo::find_user_by_email_tx(&mut tx, &inv.email).await? {
+        Some(u) => u,
+        None => repo::create_user_tx(&mut tx, &inv.email, display_name).await?,
+    };
+    repo::set_password_credential_tx(&mut tx, user.id, &hash).await?;
+    // A second invitation for the same email reuses the existing principal.
+    let principal_id = match repo::find_principal_for_user_tx(&mut tx, user.id).await? {
         Some(p) => p.id,
         None => {
             repo::insert_principal(
@@ -194,7 +212,8 @@ pub async fn accept_invitation(
             .await?
         }
     };
-    repo::mark_invitation_accepted(&mut tx, inv.id).await?;
+    let (session_id, session_token) =
+        repo::create_session(&mut tx, principal_id, session_ttl).await?;
     infrastructure::audit::record(
         &mut tx,
         infrastructure::audit::AuditEntry::new(
@@ -208,14 +227,9 @@ pub async fn accept_invitation(
     .await?;
     tx.commit().await?;
 
-    // Log the new member in.
     let principal = repo::find_principal_for_user(db, inv.workspace_id, user.id)
         .await?
         .ok_or_else(|| AppError::internal("principal missing after accept"))?;
-    let mut tx = db.begin(inv.workspace_id).await?;
-    let (session_id, session_token) =
-        repo::create_session(&mut tx, principal.id, session_ttl).await?;
-    tx.commit().await?;
 
     Ok(LoginOutcome {
         session_token,

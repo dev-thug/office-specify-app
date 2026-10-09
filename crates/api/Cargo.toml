@@ -35,3 +35,6 @@ reqwest.workspace = true
 [dev-dependencies]
 rand.workspace = true
 tempfile = "3"
+# Enable the fixture module for integration tests only (R2).
+infrastructure = { workspace = true, features = ["testing"] }
+redis.workspace = true

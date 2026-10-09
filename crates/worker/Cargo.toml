@@ -24,3 +24,8 @@ async-trait.workspace = true
 tokio.workspace = true
 rand.workspace = true
 sqlx.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+# Enable the fixture module for integration tests only (R2).
+infrastructure = { workspace = true, features = ["testing"] }

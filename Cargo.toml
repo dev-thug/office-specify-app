@@ -28,6 +28,7 @@ futures = "0.3"
 hex = "0.4"
 http = "1"
 idna = "1"
+ipnetwork = "0.20"
 rand = "0.9"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "cookies"] }
 schemars = { version = "0.8", features = ["uuid1", "chrono"] }

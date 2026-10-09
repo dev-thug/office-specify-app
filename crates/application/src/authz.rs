@@ -104,8 +104,37 @@ pub async fn mailbox_grant(
     ))
 }
 
+/// Scope each mailbox permission requires — the §5.2 formula is
+/// conjunctive: grant row AND role/kind clause AND credential scope.
+fn perm_scope(perm: MailboxPerm) -> Scope {
+    match perm {
+        MailboxPerm::Read => Scope::MailRead,
+        MailboxPerm::Compose => Scope::MailCompose,
+        MailboxPerm::Send => Scope::MailSend,
+        MailboxPerm::Approve => Scope::MailApprove,
+        MailboxPerm::Assign => Scope::MailAssign,
+    }
+}
+
+/// §5.4 role/kind clause: `can_approve` additionally requires an
+/// Admin/Manager human; `can_send` is never held by an agent.
+fn perm_role_ok(ctx: &Ctx, perm: MailboxPerm) -> bool {
+    match perm {
+        MailboxPerm::Approve => {
+            ctx.principal_kind == PrincipalKind::Human
+                && matches!(ctx.role, Role::Admin | Role::Manager)
+        }
+        MailboxPerm::Send => ctx.principal_kind != PrincipalKind::Agent,
+        _ => true,
+    }
+}
+
 /// Require a mailbox permission. `MAILBOX_ACCESS_DENIED` (403); callers that
 /// must hide existence map to 404 themselves.
+///
+/// Conjunctive (§5.2/R7): the grant row AND the §5.4 role clause AND the
+/// credential/role-implied scope must all hold — a bad grant row alone can
+/// never authorize.
 pub async fn require_mailbox(
     tx: &mut Tx<'_>,
     ctx: &Ctx,
@@ -118,14 +147,14 @@ pub async fn require_mailbox(
             "no access to this mailbox",
         ));
     };
-    let ok = match perm {
+    let grant_ok = match perm {
         MailboxPerm::Read => grant.can_read,
         MailboxPerm::Compose => grant.can_compose,
         MailboxPerm::Send => grant.can_send,
         MailboxPerm::Approve => grant.can_approve,
         MailboxPerm::Assign => grant.can_assign,
     };
-    if ok {
+    if grant_ok && perm_role_ok(ctx, perm) && ctx.scopes.contains(perm_scope(perm)) {
         Ok(grant)
     } else {
         Err(AppError::new(

@@ -8,6 +8,11 @@ license.workspace = true
 name = "outreach-cli"
 path = "src/main.rs"
 
+[features]
+## Enables `seed-demo` and the test fixtures it relies on (R2):
+##   cargo run -p outreach-cli --features testing -- seed-demo
+testing = ["infrastructure/testing"]
+
 [dependencies]
 contracts.workspace = true
 domain.workspace = true

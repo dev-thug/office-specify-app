@@ -4,7 +4,6 @@
 //!   openapi     — write contracts/openapi/openapi.json
 //!   mcp-schema  — write contracts/mcp/tools.json
 
-use std::io::Read;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
@@ -26,16 +25,22 @@ enum Cmd {
     Migrate,
     /// Create the first workspace + admin login + system worker principal (A.7).
     /// Workspace starts with emergency_stop=true (DDL default).
+    ///
+    /// Password input (R3 — never via argv, never echoed): set
+    /// `OUTREACH_ADMIN_PASSWORD`, pass `--admin-password-stdin` to read one
+    /// line from stdin, or pass `--password-out <path>` to generate one
+    /// (written once, mode 0600; only the path is printed).
     Bootstrap {
         #[arg(long, default_value = "Outreach Workspace")]
         workspace_name: String,
         #[arg(long, default_value = "admin@outreach.local")]
         admin_email: String,
-        /// Read the admin password from stdin; generates one when unset.
+        /// Read the admin password from stdin (a single line, not echoed).
         #[arg(long)]
         admin_password_stdin: bool,
+        /// Write a generated admin password to this path (mode 0600).
         #[arg(long)]
-        admin_password: Option<String>,
+        password_out: Option<PathBuf>,
     },
     /// Export the OpenAPI document to contracts/openapi/openapi.json.
     Openapi {
@@ -48,7 +53,9 @@ enum Cmd {
         out: PathBuf,
     },
     /// Insert synthetic demo data — a workspace with admin/manager/member/
-    /// agent/system principals, a fake mail account and grants. Dev only.
+    /// agent/system principals, a fake mail account and grants.
+    /// Dev/test only; requires `--features testing` (R2).
+    #[cfg(feature = "testing")]
     SeedDemo,
 }
 
@@ -70,13 +77,13 @@ async fn main() -> anyhow::Result<()> {
             workspace_name,
             admin_email,
             admin_password_stdin,
-            admin_password,
+            password_out,
         } => {
             bootstrap(
                 &workspace_name,
                 &admin_email,
                 admin_password_stdin,
-                admin_password,
+                password_out,
             )
             .await?
         }
@@ -89,8 +96,14 @@ async fn main() -> anyhow::Result<()> {
             write_json(&out, &mcp::server::tools_document())?;
             println!("wrote {}", out.display());
         }
+        #[cfg(feature = "testing")]
         Cmd::SeedDemo => {
-            let db = connect()?;
+            let config = Config::from_env().map_err(|e| anyhow::anyhow!("{e}"))?;
+            // R2: seed data may only ever land in dev/test databases.
+            if !config.app_env.is_dev_or_test() {
+                bail!("seed-demo refused: APP_ENV must be development or test");
+            }
+            let db = Db::connect(&config.database_url, Some(ROLE_API)).await?;
             let world = infrastructure::testing::seed_workspace(&db).await?;
             println!("seeded workspace {}", world.workspace_id);
             for p in [
@@ -100,10 +113,9 @@ async fn main() -> anyhow::Result<()> {
                 &world.member_b,
             ] {
                 println!(
-                    "  {:7} {} (password: {})",
+                    "  {:7} {} (fixture password)",
                     format!("{:?}", p.role).to_lowercase(),
                     p.email.as_deref().unwrap_or("-"),
-                    infrastructure::testing::TEST_PASSWORD
                 );
             }
         }
@@ -125,7 +137,7 @@ async fn bootstrap(
     workspace_name: &str,
     admin_email: &str,
     password_stdin: bool,
-    password: Option<String>,
+    password_out: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let db = connect()?;
     // Idempotent: reuse the first workspace when one exists.
@@ -137,18 +149,19 @@ async fn bootstrap(
         None => auth_repo::insert_workspace(&db, workspace_name).await?,
     };
 
-    let password = match (password_stdin, password) {
-        (true, _) => {
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)?;
-            buf.trim().to_string()
-        }
-        (false, Some(p)) => p,
-        (false, None) => {
-            let p = format!("{}!", &infrastructure::crypto::generate_token()[..24]);
-            eprintln!("generated admin password (shown once below)");
-            p
-        }
+    // Password comes from stdin, env, or generation — never argv, never
+    // printed (R3).
+    let (password, generated) = if password_stdin {
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
+        (buf.trim().to_string(), false)
+    } else if let Ok(p) = std::env::var("OUTREACH_ADMIN_PASSWORD") {
+        (p, false)
+    } else {
+        (
+            format!("{}!", &infrastructure::crypto::generate_token()[..24]),
+            true,
+        )
     };
     if password.len() < 12 || password.len() > 128 {
         bail!("admin password must be 12–128 chars");
@@ -197,8 +210,34 @@ async fn bootstrap(
 
     println!("workspace_id = {workspace_id}");
     println!("admin_email  = {email}");
-    println!("admin_password = {password}");
+    if generated {
+        let Some(path) = password_out else {
+            bail!(
+                "generated admin password requires --password-out <path> (or set OUTREACH_ADMIN_PASSWORD / --admin-password-stdin)"
+            );
+        };
+        write_secret_0600(&path, &password)?;
+        println!("admin_password written to {}", path.display());
+    }
     println!("log in via POST /api/v1/auth/login");
+    Ok(())
+}
+
+/// Write the generated password exactly once, mode 0600 (R3).
+fn write_secret_0600(path: &PathBuf, secret: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path).context("password-out file")?;
+    std::io::Write::write_all(&mut f, secret.as_bytes())?;
+    std::io::Write::write_all(&mut f, b"\n")?;
     Ok(())
 }
 

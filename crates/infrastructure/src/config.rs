@@ -43,6 +43,11 @@ pub struct Config {
     pub fake_provider_script: Option<PathBuf>,
     /// Dev/test-only fake inbound-mail endpoint (spec §4.9).
     pub dev_endpoints: bool,
+    /// Max jobs the worker handles concurrently per poll (R13).
+    pub worker_concurrency: usize,
+    /// TCP peers allowed to set `X-Forwarded-For` (CIDR list). Defaults to
+    /// loopback only — the Next.js server is the expected proxy (§4.10).
+    pub trusted_proxies: Vec<ipnetwork::IpNetwork>,
 }
 
 #[derive(Debug)]
@@ -58,10 +63,18 @@ impl std::error::Error for ConfigError {}
 
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
+        // Fail closed (R1): APP_ENV must be an explicit known value.
+        // Unset → production (secure-by-default); unknown → startup error.
         let env = match std::env::var("APP_ENV").as_deref() {
-            Ok("prod") | Ok("production") => AppEnv::Prod,
+            Ok("development") | Ok("dev") => AppEnv::Dev,
             Ok("test") => AppEnv::Test,
-            _ => AppEnv::Dev,
+            Ok("production") | Ok("prod") => AppEnv::Prod,
+            Ok(other) => {
+                return Err(ConfigError(format!(
+                    "APP_ENV must be development|test|production, got {other:?}"
+                )));
+            }
+            Err(_) => AppEnv::Prod,
         };
         let get = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
         let database_url = get("DATABASE_URL")
@@ -78,10 +91,52 @@ impl Config {
             None if env.is_dev_or_test() => Some([7u8; 32]),
             None => None,
         };
+        // Prod requirements (R1): a real HMAC key ≥32 bytes and Redis —
+        // both are startup errors when absent, never silent fallbacks.
+        let hmac_key = match get("OUTREACH_HMAC_KEY") {
+            Some(k) => {
+                let key = base64_decode(&k).unwrap_or_else(|| k.as_bytes().to_vec());
+                if key.len() < 32 {
+                    return Err(ConfigError(
+                        "OUTREACH_HMAC_KEY must be at least 32 bytes".into(),
+                    ));
+                }
+                key
+            }
+            None if env.is_dev_or_test() => b"outreach-dev-hmac-key".to_vec(),
+            None => {
+                return Err(ConfigError(
+                    "OUTREACH_HMAC_KEY is required in production".into(),
+                ));
+            }
+        };
+        let redis_url = get("REDIS_URL");
+        if env == AppEnv::Prod && redis_url.is_none() {
+            return Err(ConfigError(
+                "REDIS_URL is required in production (rate limits fail closed)".into(),
+            ));
+        }
+        let trusted_proxies = get("TRUSTED_PROXIES")
+            .map(|s| {
+                s.split(',')
+                    .map(|p| {
+                        p.trim().parse::<ipnetwork::IpNetwork>().map_err(|_| {
+                            ConfigError(format!("TRUSTED_PROXIES entry {p:?} is not a CIDR"))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_else(|| {
+                vec![
+                    ipnetwork::IpNetwork::V4("127.0.0.1/32".parse().unwrap()),
+                    ipnetwork::IpNetwork::V6("::1/128".parse().unwrap()),
+                ]
+            });
         Ok(Self {
             app_env: env,
             database_url,
-            redis_url: get("REDIS_URL"),
+            redis_url,
             api_addr: get("API_ADDR")
                 .unwrap_or_else(|| "127.0.0.1:8080".into())
                 .parse()
@@ -97,9 +152,7 @@ impl Config {
                 })
                 .transpose()?,
             cookie_secure: env == AppEnv::Prod,
-            hmac_key: get("OUTREACH_HMAC_KEY")
-                .map(|k| base64_decode(&k).unwrap_or_else(|| k.as_bytes().to_vec()))
-                .unwrap_or_else(|| b"outreach-dev-hmac-key".to_vec()),
+            hmac_key,
             secret_store_key,
             objects_dir: get("OBJECTS_DIR")
                 .map(PathBuf::from)
@@ -117,6 +170,16 @@ impl Config {
                 .unwrap_or_default(),
             fake_provider_script: get("FAKE_PROVIDER_SCRIPT").map(PathBuf::from),
             dev_endpoints: env.is_dev_or_test(),
+            worker_concurrency: get("WORKER_CONCURRENCY")
+                .map(|s| {
+                    s.parse::<usize>().map_err(|_| {
+                        ConfigError("WORKER_CONCURRENCY must be a positive integer".into())
+                    })
+                })
+                .transpose()?
+                .unwrap_or(4)
+                .max(1),
+            trusted_proxies,
         })
     }
 
@@ -138,6 +201,11 @@ impl Config {
             mcp_allowed_origins: vec!["https://agent.example".into()],
             fake_provider_script: None,
             dev_endpoints: true,
+            worker_concurrency: 4,
+            trusted_proxies: vec![
+                ipnetwork::IpNetwork::V4("127.0.0.1/32".parse().unwrap()),
+                ipnetwork::IpNetwork::V6("::1/128".parse().unwrap()),
+            ],
         }
     }
 }

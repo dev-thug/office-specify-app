@@ -4,6 +4,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+## Test/dev fixtures (`infrastructure::testing`). Off by default so release
+## builds never ship `seed_workspace`/TEST_PASSWORD. Enabled through
+## dev-dependencies of crates whose tests need it, and by the cli's
+## `testing` feature for `seed-demo`:
+##   cargo run -p outreach-cli --features testing -- seed-demo
+testing = []
+
 [dependencies]
 contracts.workspace = true
 domain.workspace = true
@@ -29,6 +37,11 @@ hex.workspace = true
 ammonia.workspace = true
 csv.workspace = true
 http.workspace = true
+ipnetwork.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+# Self dev-dependency: infrastructure's own integration tests need the
+# `testing` fixtures even when built standalone (`cargo test -p
+# infrastructure`), where no other crate's dev-dep unifies the feature in.
+infrastructure = { path = ".", features = ["testing"] }

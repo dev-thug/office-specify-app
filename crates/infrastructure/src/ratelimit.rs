@@ -49,15 +49,24 @@ impl RateLimiter {
     ) -> Result<Decision, AppError> {
         let rkey = format!("rl:{key}:{}", window.as_secs());
         let mut conn = self.redis.conn();
+        // True fixed window (R6): INCR, then PEXPIRE NX so the TTL is set
+        // only on the first hit — later hits never stretch the window.
         let result: redis::RedisResult<(i64, i64)> = redis::pipe()
             .atomic()
             .incr(&rkey, 1)
-            .expire(&rkey, window.as_secs() as i64)
+            .cmd("PEXPIRE")
+            .arg(&rkey)
+            .arg(window.as_millis() as i64)
+            .arg("NX")
             .query_async(&mut conn)
             .await;
         match result {
             Ok((count, _)) => {
-                let ttl: i64 = conn.ttl(&rkey).await.unwrap_or(window.as_secs() as i64);
+                let ttl: i64 = conn
+                    .pttl(&rkey)
+                    .await
+                    .map(|ms: i64| (ms / 1000).max(0))
+                    .unwrap_or(window.as_secs() as i64);
                 let allowed = count <= i64::from(limit);
                 Ok(Decision {
                     allowed,
