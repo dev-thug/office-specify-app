@@ -23,11 +23,7 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    pub fn new(
-        sort_values: Vec<serde_json::Value>,
-        filter_hash: String,
-        principal: Uuid,
-    ) -> Self {
+    pub fn new(sort_values: Vec<serde_json::Value>, filter_hash: String, principal: Uuid) -> Self {
         Self {
             v: CURSOR_VERSION,
             sort_values,
@@ -42,9 +38,7 @@ impl Cursor {
     }
 
     pub fn encode(&self, hmac_key: &[u8]) -> String {
-        let body = crypto::b64_encode(
-            &serde_json::to_vec(self).unwrap_or_else(|_| b"{}".to_vec()),
-        );
+        let body = crypto::b64_encode(&serde_json::to_vec(self).unwrap_or_else(|_| b"{}".to_vec()));
         let sig = crypto::b64_encode(&crypto::hmac_sha256(hmac_key, body.as_bytes()));
         format!("{body}.{sig}")
     }
@@ -82,7 +76,10 @@ mod tests {
         let key = b"k";
         let p = Uuid::new_v4();
         let c = Cursor::new(
-            vec![serde_json::json!("2026-01-01T00:00:00Z"), serde_json::json!(Uuid::new_v4())],
+            vec![
+                serde_json::json!("2026-01-01T00:00:00Z"),
+                serde_json::json!(Uuid::new_v4()),
+            ],
             "fh".into(),
             p,
         );

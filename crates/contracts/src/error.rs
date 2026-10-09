@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Stable API error codes. Includes every code in source B.5 plus the generic
 /// transport-level codes of spec §4.3. Serialization is the wire string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum ErrorCode {
     // ---- generic (spec §4.3) ----
     #[serde(rename = "VALIDATION_FAILED")]
@@ -224,12 +224,17 @@ impl ErrorCode {
     /// Default retryability per B.5 (client guidance, not a server guarantee).
     pub fn retryable(self) -> bool {
         use ErrorCode::*;
-        match self {
-            AuthenticationRequired | RateLimited | IntegrationReauthRequired
-            | CalendarAvailabilityUnavailable | DependencyUnavailable | Internal => true,
-            VersionPreconditionRequired | VersionMismatch => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            AuthenticationRequired
+                | RateLimited
+                | IntegrationReauthRequired
+                | CalendarAvailabilityUnavailable
+                | DependencyUnavailable
+                | Internal
+                | VersionPreconditionRequired
+                | VersionMismatch
+        )
     }
 
     pub fn problem_type(self) -> String {
@@ -238,14 +243,14 @@ impl ErrorCode {
 }
 
 /// Field-level violation inside a problem detail (B.1.2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Violation {
     pub field: String,
     pub code: String,
 }
 
 /// RFC 9457 problem detail with project extensions (B.1.2).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Problem {
     #[serde(rename = "type")]
     pub problem_type: String,

@@ -319,12 +319,14 @@ pub async fn lookup_session(db: &Db, raw_token: &str) -> Result<Option<SessionAu
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)?;
-    sqlx::query("UPDATE user_sessions SET last_seen_at = now() WHERE id = $1 AND workspace_id = $2")
-        .bind(session.id)
-        .bind(session.workspace_id)
-        .execute(tx.conn())
-        .await
-        .map_err(map_sqlx)?;
+    sqlx::query(
+        "UPDATE user_sessions SET last_seen_at = now() WHERE id = $1 AND workspace_id = $2",
+    )
+    .bind(session.id)
+    .bind(session.workspace_id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
     tx.commit().await?;
     Ok(principal.map(|p| SessionAuth {
         session,
@@ -391,15 +393,22 @@ pub async fn lookup_service_credential(
 ) -> Result<Option<CredentialAuth>, AppError> {
     let hash = crypto::sha256_bytes(raw_token.as_bytes());
     let mut tx = db.begin_preauth().await?;
-    let row: Option<(Uuid, Uuid, Uuid, Vec<String>, DateTime<Utc>, Option<DateTime<Utc>>)> =
-        sqlx::query_as(
-            "SELECT id, workspace_id, principal_id, scopes, expires_at, revoked_at
+    type CredentialRow = (
+        Uuid,
+        Uuid,
+        Uuid,
+        Vec<String>,
+        DateTime<Utc>,
+        Option<DateTime<Utc>>,
+    );
+    let row: Option<CredentialRow> = sqlx::query_as(
+        "SELECT id, workspace_id, principal_id, scopes, expires_at, revoked_at
                FROM service_credentials WHERE token_hash = $1",
-        )
-        .bind(&hash[..])
-        .fetch_optional(tx.conn())
-        .await
-        .map_err(map_sqlx)?;
+    )
+    .bind(&hash[..])
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
     let Some((cred_id, ws, principal_id, scopes, expires_at, revoked_at)) = row else {
         tx.commit().await?;
         return Ok(None);
@@ -514,13 +523,11 @@ pub async fn mark_invitation_accepted(tx: &mut Tx<'_>, id: Uuid) -> Result<bool,
 /// Insert a workspace (global table, no RLS). Bootstrap path only.
 pub async fn insert_workspace(db: &Db, name: &str) -> Result<Uuid, AppError> {
     let mut tx = db.begin_global().await?;
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO workspaces (name) VALUES ($1) RETURNING id",
-    )
-    .bind(name)
-    .fetch_one(tx.conn())
-    .await
-    .map_err(map_sqlx)?;
+    let id: Uuid = sqlx::query_scalar("INSERT INTO workspaces (name) VALUES ($1) RETURNING id")
+        .bind(name)
+        .fetch_one(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
     tx.commit().await?;
     Ok(id)
 }

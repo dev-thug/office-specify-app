@@ -67,22 +67,31 @@ pub struct OutboxRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// Fetch unpublished events. Runs on the pool identity (no workspace role):
-/// the dispatcher fans out across workspaces, then marks each event inside
-/// that workspace's tx. Events are ordered by (workspace, created_at) per
-/// the pending index.
-pub async fn claim_unpublished(db: &Db, limit: i64) -> Result<Vec<OutboxRow>, AppError> {
+/// Workspaces with unpublished events — dispatcher entry point. Goes
+/// through the `pending_outbox_workspaces()` SECURITY DEFINER function
+/// (migration 0004); rows are then claimed per workspace under RLS.
+pub async fn pending_workspaces(db: &Db) -> Result<Vec<Uuid>, AppError> {
+    sqlx::query_scalar("SELECT pending_outbox_workspaces()")
+        .fetch_all(db.pool())
+        .await
+        .map_err(map_sqlx)
+}
+
+/// Claim unpublished events of one workspace inside its RLS transaction.
+/// `FOR UPDATE SKIP LOCKED` makes concurrent dispatchers safe.
+pub async fn claim_unpublished(tx: &mut Tx<'_>, limit: i64) -> Result<Vec<OutboxRow>, AppError> {
     sqlx::query_as::<_, OutboxRow>(
         "SELECT id, workspace_id, event_type, aggregate_type, aggregate_id,
                 aggregate_version, payload, created_at
            FROM outbox_events
-          WHERE published_at IS NULL
+          WHERE workspace_id = $1 AND published_at IS NULL
           ORDER BY created_at, id
-          LIMIT $1
+          LIMIT $2
           FOR UPDATE SKIP LOCKED",
     )
+    .bind(tx.workspace_id())
     .bind(limit)
-    .fetch_all(db.pool())
+    .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)
 }

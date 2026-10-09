@@ -79,14 +79,15 @@ pub trait MailProvider: Send + Sync {
         cursor: Option<String>,
         limit: u32,
     ) -> Result<(Vec<ProviderMessage>, Option<String>), ProviderError>;
-    async fn get_message(&self, provider_message_id: &str)
-        -> Result<ProviderMessage, ProviderError>;
+    async fn get_message(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<ProviderMessage, ProviderError>;
     /// Submit an outbound message. `correlation_id` is our idempotency
     /// anchor the fake provider echoes into custom headers.
     async fn send(&self, req: SendRequest) -> SendOutcome;
     /// Reconcile an `Unknown` outcome by correlation id / recipient+subject.
-    async fn lookup_sent(&self, correlation_id: &str)
-        -> Result<Option<SentLookup>, ProviderError>;
+    async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError>;
 }
 
 #[derive(Debug, Clone)]
@@ -158,8 +159,5 @@ pub struct DeliveryCapabilities {
 pub trait DeliveryProvider: Send + Sync {
     fn capabilities(&self) -> DeliveryCapabilities;
     async fn send(&self, req: SendRequest) -> SendOutcome;
-    async fn lookup_sent(
-        &self,
-        correlation_id: &str,
-    ) -> Result<Option<SentLookup>, ProviderError>;
+    async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError>;
 }

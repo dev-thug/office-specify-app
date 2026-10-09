@@ -29,7 +29,10 @@ impl Db {
         runtime_role: Option<&'static str>,
         default_workspace_id: Option<Uuid>,
     ) -> Self {
-        debug_assert!(matches!(runtime_role, None | Some(ROLE_API) | Some(ROLE_WORKER)));
+        debug_assert!(matches!(
+            runtime_role,
+            None | Some(ROLE_API) | Some(ROLE_WORKER)
+        ));
         Self {
             pool,
             runtime_role,
@@ -59,9 +62,9 @@ impl Db {
     /// session/service-credential/public-token lookups and invitation
     /// previews. Errors when `default_workspace_id` is unset.
     pub async fn begin_preauth(&self) -> Result<Tx<'_>, AppError> {
-        let ws = self.default_workspace_id.ok_or_else(|| {
-            AppError::internal("DEFAULT_WORKSPACE_ID is not configured")
-        })?;
+        let ws = self
+            .default_workspace_id
+            .ok_or_else(|| AppError::internal("DEFAULT_WORKSPACE_ID is not configured"))?;
         self.begin(ws).await
     }
 

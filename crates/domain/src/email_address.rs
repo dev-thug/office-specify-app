@@ -69,8 +69,8 @@ pub fn normalize(raw: &str, policy: LocalPartPolicy) -> Result<NormalizedEmail, 
     if domain.is_empty() {
         return Err(NormalizeError::EmptyDomain);
     }
-    let domain_ascii = idna::domain_to_ascii(&domain.to_lowercase())
-        .map_err(|_| NormalizeError::DomainInvalid)?;
+    let domain_ascii =
+        idna::domain_to_ascii(&domain.to_lowercase()).map_err(|_| NormalizeError::DomainInvalid)?;
     if domain_ascii.is_empty() {
         return Err(NormalizeError::DomainInvalid);
     }
@@ -111,9 +111,21 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        assert_eq!(normalize("", LocalPartPolicy::Lowercase), Err(NormalizeError::Empty));
-        assert_eq!(normalize("noatsign", LocalPartPolicy::Lowercase), Err(NormalizeError::MissingAt));
-        assert_eq!(normalize("@x.com", LocalPartPolicy::Lowercase), Err(NormalizeError::EmptyLocal));
-        assert_eq!(normalize("a@", LocalPartPolicy::Lowercase), Err(NormalizeError::EmptyDomain));
+        assert_eq!(
+            normalize("", LocalPartPolicy::Lowercase),
+            Err(NormalizeError::Empty)
+        );
+        assert_eq!(
+            normalize("noatsign", LocalPartPolicy::Lowercase),
+            Err(NormalizeError::MissingAt)
+        );
+        assert_eq!(
+            normalize("@x.com", LocalPartPolicy::Lowercase),
+            Err(NormalizeError::EmptyLocal)
+        );
+        assert_eq!(
+            normalize("a@", LocalPartPolicy::Lowercase),
+            Err(NormalizeError::EmptyDomain)
+        );
     }
 }

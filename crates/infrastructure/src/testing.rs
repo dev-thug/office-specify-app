@@ -81,6 +81,10 @@ pub fn ctx_for_credential(
 /// the `Db` was built with a runtime role.
 pub async fn seed_workspace(db: &Db) -> Result<TestWorld, AppError> {
     let workspace_id = auth_repo::insert_workspace(db, "Test Workspace").await?;
+    // users.email is globally UNIQUE and the test DB persists across runs —
+    // namespace every seeded address.
+    let suffix = &workspace_id.simple().to_string()[..8];
+    let email = |local: &str| format!("{local}+{suffix}@test.dev");
 
     async fn human(
         db: &Db,
@@ -110,18 +114,17 @@ pub async fn seed_workspace(db: &Db) -> Result<TestWorld, AppError> {
         })
     }
 
-    let admin = human(db, workspace_id, "admin@test.dev", "Admin", "admin").await?;
-    let manager = human(db, workspace_id, "manager@test.dev", "Manager", "manager").await?;
-    let member_a = human(db, workspace_id, "member.a@test.dev", "Member A", "member").await?;
-    let member_b = human(db, workspace_id, "member.b@test.dev", "Member B", "member").await?;
+    let admin = human(db, workspace_id, &email("admin"), "Admin", "admin").await?;
+    let manager = human(db, workspace_id, &email("manager"), "Manager", "manager").await?;
+    let member_a = human(db, workspace_id, &email("member.a"), "Member A", "member").await?;
+    let member_b = human(db, workspace_id, &email("member.b"), "Member B", "member").await?;
 
     let mut tx = db.begin(workspace_id).await?;
     let agent_id =
         auth_repo::insert_principal(&mut tx, "agent", None, "Test Agent", "agent", "active")
             .await?;
     let system_id =
-        auth_repo::insert_principal(&mut tx, "system", None, "System", "system", "active")
-            .await?;
+        auth_repo::insert_principal(&mut tx, "system", None, "System", "system", "active").await?;
     let connection_id: Uuid = sqlx::query_scalar(
         "INSERT INTO integration_connections
             (workspace_id, provider, region, secret_ref, status, connected_by)
@@ -144,7 +147,11 @@ pub async fn seed_workspace(db: &Db) -> Result<TestWorld, AppError> {
     .fetch_one(tx.conn())
     .await
     .map_err(map_sqlx)?;
-    for pid in [admin.principal_id, manager.principal_id, member_a.principal_id] {
+    for pid in [
+        admin.principal_id,
+        manager.principal_id,
+        member_a.principal_id,
+    ] {
         sqlx::query(
             "INSERT INTO mail_account_grants
                 (workspace_id, mail_account_id, principal_id,

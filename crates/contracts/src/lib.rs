@@ -8,9 +8,7 @@ mod shared;
 
 pub use envelope::{Envelope, Meta, Page};
 pub use error::{AppError, ErrorCode, Problem, Violation};
-pub use shared::{
-    AuthMethod, Ctx, PrincipalKind, Role, Scope, ScopeSet,
-};
+pub use shared::{AuthMethod, Ctx, PrincipalKind, Role, Scope, ScopeSet};
 
 // Per-module DTOs (spec §6). Module workers own these files.
 pub mod agents;

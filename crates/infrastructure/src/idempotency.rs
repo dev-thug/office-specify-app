@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use contracts::{AppError, ErrorCode};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use crate::crypto;
@@ -54,6 +54,7 @@ pub struct Stored<T> {
     pub body: T,
 }
 
+#[derive(Debug)]
 pub enum Outcome<T> {
     /// `f` ran and its result was persisted.
     Fresh(Stored<T>),
@@ -71,6 +72,8 @@ impl<T> Outcome<T> {
         matches!(self, Self::Replayed(_))
     }
 }
+
+type RecordRow = (Vec<u8>, String, Option<i32>, Option<serde_json::Value>);
 
 enum Claim {
     Leader,
@@ -106,7 +109,7 @@ async fn try_claim(db: &Db, scope: &Scope, request_hash: &[u8]) -> Result<Claim,
         tx.commit().await?;
         return Ok(Claim::Leader);
     }
-    let row: Option<(Vec<u8>, String, Option<i32>, Option<serde_json::Value>)> = sqlx::query_as(
+    let row: Option<RecordRow> = sqlx::query_as(
         "SELECT request_hash, state, response_status, response_body FROM idempotency_records
           WHERE workspace_id = $1 AND scope_key = $2 AND endpoint = $3 AND idempotency_key = $4",
     )
@@ -161,8 +164,9 @@ where
                 let mut tx = db.begin(scope.workspace_id).await?;
                 match f(&mut tx).await {
                     Ok(stored) => {
-                        let body = serde_json::to_value(&stored.body)
-                            .map_err(|e| AppError::internal(format!("idempotency serialize: {e}")))?;
+                        let body = serde_json::to_value(&stored.body).map_err(|e| {
+                            AppError::internal(format!("idempotency serialize: {e}"))
+                        })?;
                         sqlx::query(
                             "UPDATE idempotency_records
                                 SET state = 'completed', response_status = $5, response_body = $6
@@ -215,12 +219,11 @@ where
                     ));
                 }
                 if state == "completed" {
-                    let body: T = serde_json::from_value(
-                        response_body.unwrap_or(serde_json::Value::Null),
-                    )
-                    .map_err(|e| {
-                        AppError::internal(format!("idempotency deserialize: {e}"))
-                    })?;
+                    let body: T =
+                        serde_json::from_value(response_body.unwrap_or(serde_json::Value::Null))
+                            .map_err(|e| {
+                                AppError::internal(format!("idempotency deserialize: {e}"))
+                            })?;
                     return Ok(Outcome::Replayed(Stored {
                         status: response_status.unwrap_or(200) as u16,
                         body,

@@ -13,9 +13,11 @@ pub struct RedisClient {
 
 impl RedisClient {
     pub async fn connect(url: &str) -> Result<Self, AppError> {
-        let client = redis::Client::open(url)
+        let client = redis::Client::open(url).map_err(map_redis)?;
+        let conn = client
+            .get_multiplexed_async_connection()
+            .await
             .map_err(map_redis)?;
-        let conn = client.get_multiplexed_async_connection().await.map_err(map_redis)?;
         Ok(Self { conn })
     }
 

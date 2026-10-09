@@ -54,10 +54,7 @@ pub struct RawToken {
 /// The single lock-order rule of A.6.4: lock the `email_addresses` row
 /// `FOR UPDATE` before any suppression/send-permit decision. Returns false
 /// when the address doesn't exist in this workspace.
-pub async fn lock_email_address(
-    tx: &mut Tx<'_>,
-    email_address_id: Uuid,
-) -> Result<bool, AppError> {
+pub async fn lock_email_address(tx: &mut Tx<'_>, email_address_id: Uuid) -> Result<bool, AppError> {
     let found: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM email_addresses
           WHERE workspace_id = $1 AND id = $2

@@ -64,6 +64,11 @@ impl AuditEntry {
         self.outcome = format!("denied:{}", code.as_str());
         self
     }
+
+    pub fn with_target(mut self, target_id: Uuid) -> Self {
+        self.target_id = Some(target_id);
+        self
+    }
 }
 
 pub async fn record(tx: &mut Tx<'_>, entry: AuditEntry) -> Result<(), AppError> {

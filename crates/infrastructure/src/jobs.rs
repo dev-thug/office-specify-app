@@ -211,35 +211,38 @@ pub async fn fail_or_retry(
     } else {
         let next = Utc::now()
             + chrono::Duration::milliseconds((backoff_seconds(job.attempt_count) * 1000.0) as i64);
-        transition(tx, job.id, lease_token, STATE_RETRY_WAIT, Some(next), Some(error_code)).await
+        transition(
+            tx,
+            job.id,
+            lease_token,
+            STATE_RETRY_WAIT,
+            Some(next),
+            Some(error_code),
+        )
+        .await
     }
 }
 
 /// Workspaces with runnable jobs — the runner iterates these so every job
-/// executes under its own RLS context.
+/// executes under its own RLS context. The scan itself goes through the
+/// `runnable_job_workspaces()` SECURITY DEFINER function (migration 0004):
+/// FORCE RLS would otherwise hide every row when no workspace GUC is set.
 pub async fn runnable_workspaces(db: &Db) -> Result<Vec<Uuid>, AppError> {
-    sqlx::query_scalar(
-        "SELECT DISTINCT workspace_id FROM jobs
-          WHERE state IN ('queued','retry_wait') AND available_at <= now()",
-    )
-    .fetch_all(db.pool())
-    .await
-    .map_err(map_sqlx)
+    sqlx::query_scalar("SELECT runnable_job_workspaces()")
+        .fetch_all(db.pool())
+        .await
+        .map_err(map_sqlx)
 }
 
 /// Crash recovery: expired leases return to `queued` (attempt_count already
 /// incremented at claim time, so MAX_ATTEMPTS still bounds retries).
+/// Definer function for the same reason as `runnable_workspaces`.
 pub async fn reclaim_expired(db: &Db) -> Result<u64, AppError> {
-    let n = sqlx::query(
-        "UPDATE jobs SET state = 'queued', lease_owner = NULL,
-                lease_token = NULL, lease_expires_at = NULL
-          WHERE state = 'running' AND lease_expires_at < now()",
-    )
-    .execute(db.pool())
-    .await
-    .map_err(map_sqlx)?
-    .rows_affected();
-    Ok(n)
+    let n: i64 = sqlx::query_scalar("SELECT reclaim_expired_job_leases()")
+        .fetch_one(db.pool())
+        .await
+        .map_err(map_sqlx)?;
+    Ok(n as u64)
 }
 
 /// Worker-side context passed to handlers.

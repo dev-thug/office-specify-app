@@ -98,9 +98,7 @@ impl Config {
                 .transpose()?,
             cookie_secure: env == AppEnv::Prod,
             hmac_key: get("OUTREACH_HMAC_KEY")
-                .map(|k| {
-                    base64_decode(&k).unwrap_or_else(|| k.as_bytes().to_vec())
-                })
+                .map(|k| base64_decode(&k).unwrap_or_else(|| k.as_bytes().to_vec()))
                 .unwrap_or_else(|| b"outreach-dev-hmac-key".to_vec()),
             secret_store_key,
             objects_dir: get("OBJECTS_DIR")
@@ -149,5 +147,9 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(s.trim())
         .ok()
-        .or_else(|| base64::engine::general_purpose::STANDARD.decode(s.trim()).ok())
+        .or_else(|| {
+            base64::engine::general_purpose::STANDARD
+                .decode(s.trim())
+                .ok()
+        })
 }

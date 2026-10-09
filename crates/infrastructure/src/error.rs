@@ -14,11 +14,10 @@ pub fn map_sqlx(err: sqlx::Error) -> AppError {
             match code.as_ref() {
                 "23505" => AppError::conflict("a conflicting record already exists"),
                 "23503" => AppError::conflict("referenced record does not exist"),
-                "23514" | "23502" => AppError::new(
-                    ErrorCode::ValidationFailed,
-                    db.message().to_string(),
-                )
-                .with_status(422),
+                "23514" | "23502" => {
+                    AppError::new(ErrorCode::ValidationFailed, db.message().to_string())
+                        .with_status(422)
+                }
                 "40001" | "40P01" => AppError::new(
                     ErrorCode::Conflict,
                     "concurrent modification; retry the request",

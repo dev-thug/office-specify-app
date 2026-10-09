@@ -60,31 +60,30 @@ impl FakeMailProvider {
     /// Prime from `FAKE_PROVIDER_SCRIPT` JSON; falls back to empty script.
     pub fn from_env() -> Self {
         let p = Self::new();
-        if let Ok(path) = std::env::var("FAKE_PROVIDER_SCRIPT") {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if let Ok(sf) = serde_json::from_str::<ScriptFile>(&text) {
-                    for block in sf.free_busy {
-                        p.free_busy
-                            .lock()
-                            .unwrap()
-                            .push_back(CalOutcome::Ok(vec![block]));
-                    }
-                    let mut st = p.state.lock().unwrap();
-                    for s in sf.send {
-                        st.script.push_back(match s {
-                            ScriptedSend::Accepted => SendOutcome::Accepted {
-                                provider_message_id: String::new(),
-                            },
-                            ScriptedSend::Rejected { code } => SendOutcome::Rejected {
-                                permanent: true,
-                                code,
-                            },
-                            ScriptedSend::Unknown => SendOutcome::Unknown {
-                                reason: "scripted".into(),
-                            },
-                        });
-                    }
-                }
+        if let Ok(path) = std::env::var("FAKE_PROVIDER_SCRIPT")
+            && let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(sf) = serde_json::from_str::<ScriptFile>(&text)
+        {
+            for block in sf.free_busy {
+                p.free_busy
+                    .lock()
+                    .unwrap()
+                    .push_back(CalOutcome::Ok(vec![block]));
+            }
+            let mut st = p.state.lock().unwrap();
+            for s in sf.send {
+                st.script.push_back(match s {
+                    ScriptedSend::Accepted => SendOutcome::Accepted {
+                        provider_message_id: String::new(),
+                    },
+                    ScriptedSend::Rejected { code } => SendOutcome::Rejected {
+                        permanent: true,
+                        code,
+                    },
+                    ScriptedSend::Unknown => SendOutcome::Unknown {
+                        reason: "scripted".into(),
+                    },
+                });
             }
         }
         p
@@ -160,11 +159,7 @@ impl MailProvider for FakeMailProvider {
         match outcome {
             SendOutcome::Accepted { .. } => {
                 let id = format!("fake-{}", uuid::Uuid::new_v4());
-                self.state
-                    .lock()
-                    .unwrap()
-                    .sent
-                    .push((req, id.clone()));
+                self.state.lock().unwrap().sent.push((req, id.clone()));
                 SendOutcome::Accepted {
                     provider_message_id: id,
                 }
@@ -173,10 +168,7 @@ impl MailProvider for FakeMailProvider {
         }
     }
 
-    async fn lookup_sent(
-        &self,
-        correlation_id: &str,
-    ) -> Result<Option<SentLookup>, ProviderError> {
+    async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError> {
         let found = self
             .state
             .lock()
@@ -292,10 +284,7 @@ impl DeliveryProvider for FakeDeliveryProvider {
             other => other,
         }
     }
-    async fn lookup_sent(
-        &self,
-        correlation_id: &str,
-    ) -> Result<Option<SentLookup>, ProviderError> {
+    async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError> {
         let found = self
             .state
             .lock()

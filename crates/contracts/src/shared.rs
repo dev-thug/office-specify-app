@@ -17,9 +17,7 @@ pub struct Ctx {
     pub agent_run_id: Option<Uuid>,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PrincipalKind {
     Human,
@@ -27,9 +25,7 @@ pub enum PrincipalKind {
     System,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Admin,
@@ -105,7 +101,7 @@ impl Role {
             ],
             Role::Agent | Role::System => &[],
         };
-        ScopeSet::from_iter(set.iter().copied())
+        ScopeSet::of(set.iter().copied())
     }
 }
 
@@ -237,7 +233,9 @@ impl ScopeSet {
         Self::default()
     }
 
-    pub fn from_iter<I: IntoIterator<Item = Scope>>(it: I) -> Self {
+    /// Named differently from `FromIterator::from_iter` on purpose — clippy
+    /// flags the confusion and a ScopeSet is not a general collection.
+    pub fn of<I: IntoIterator<Item = Scope>>(it: I) -> Self {
         Self(it.into_iter().collect())
     }
 
@@ -260,7 +258,11 @@ impl ScopeSet {
     /// Parse a scope string list (e.g. `service_credentials.scopes` TEXT[]).
     /// Unknown entries are dropped; callers that need strictness validate first.
     pub fn from_strings<I: IntoIterator<Item = S>, S: AsRef<str>>(it: I) -> Self {
-        Self(it.into_iter().filter_map(|s| Scope::parse(s.as_ref())).collect())
+        Self(
+            it.into_iter()
+                .filter_map(|s| Scope::parse(s.as_ref()))
+                .collect(),
+        )
     }
 
     pub fn to_strings(&self) -> Vec<String> {
@@ -290,7 +292,12 @@ pub enum AuthMethod {
 
 impl Ctx {
     /// System-acting context used by workers inside a claimed job.
-    pub fn system(workspace_id: Uuid, principal_id: Uuid, job_id: Uuid, request_id: String) -> Self {
+    pub fn system(
+        workspace_id: Uuid,
+        principal_id: Uuid,
+        job_id: Uuid,
+        request_id: String,
+    ) -> Self {
         Self {
             request_id,
             workspace_id,

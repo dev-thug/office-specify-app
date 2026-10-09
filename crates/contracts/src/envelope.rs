@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// `{ "data": ..., "meta": { "request_id": ... } }` (B.1.2). List responses
 /// additionally set `page`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Envelope<T> {
     pub data: T,
     pub meta: Meta,
@@ -27,13 +27,13 @@ impl<T> Envelope<T> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Meta {
     pub request_id: String,
 }
 
 /// Cursor pagination block (B.1.5).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Page {
     pub next_cursor: Option<String>,
     pub has_more: bool,
