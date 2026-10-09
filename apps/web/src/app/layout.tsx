@@ -4,6 +4,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import type { ReactNode } from "react";
 
 import { Toaster } from "@/components/ui/sonner";
+import { MotionProvider } from "@/providers/motion-provider";
 import { QueryProvider } from "@/providers/query-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 
@@ -31,7 +32,9 @@ export default async function RootLayout({
       <body className="min-h-dvh antialiased">
         <ThemeProvider>
           <QueryProvider>
-            <NextIntlClientProvider>{children}</NextIntlClientProvider>
+            <MotionProvider>
+              <NextIntlClientProvider>{children}</NextIntlClientProvider>
+            </MotionProvider>
           </QueryProvider>
           <Toaster />
         </ThemeProvider>

@@ -15,30 +15,22 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-interface AppSidebarProps {
+interface SidebarNavContentProps {
   onOpenCommandPalette?: () => void;
+  /** 모바일 시트에서 행을 누르면 시트를 닫는다. */
+  onNavigate?: () => void;
 }
 
-/**
- * ChatGPT/Codex 배치 — 테두리 없는 260px 사이드바가 app-shell 면 위에 놓인다.
- * 헤더 52px(h-13) + 36px 행(h-9, rounded-lg).
- */
-export function AppSidebar({ onOpenCommandPalette }: AppSidebarProps) {
+/** 검색 진입점 + 섹션별 탐색 — 데스크톱 aside 와 모바일 Sheet 가 공유한다. */
+export function SidebarNavContent({
+  onOpenCommandPalette,
+  onNavigate,
+}: SidebarNavContentProps) {
   const t = useTranslations();
   const pathname = usePathname();
 
   return (
-    <aside
-      aria-label={t("common.sidebarLabel")}
-      className="group/sidebar relative hidden h-full w-[260px] shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex"
-    >
-      {/* 헤더 52px — 로고 + 워드마크 */}
-      <div className="flex h-13 shrink-0 items-center px-4">
-        <Link href="/app/dashboard" aria-label="Outreach OS">
-          <Logo />
-        </Link>
-      </div>
-
+    <>
       {/* 검색 진입점 — Input 과 같은 pill */}
       <div className="px-2 pb-1">
         <button
@@ -71,6 +63,7 @@ export function AppSidebar({ onOpenCommandPalette }: AppSidebarProps) {
                   <div key={item.key}>
                     <Link
                       href={item.href}
+                      onClick={onNavigate}
                       aria-current={isActive(pathname, item.href) ? "page" : undefined}
                       className={cn(
                         "flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
@@ -86,6 +79,7 @@ export function AppSidebar({ onOpenCommandPalette }: AppSidebarProps) {
                       <Link
                         key={child.key}
                         href={child.href}
+                        onClick={onNavigate}
                         aria-current={isActive(pathname, child.href) ? "page" : undefined}
                         className={cn(
                           "ml-4 flex h-9 w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
@@ -105,6 +99,33 @@ export function AppSidebar({ onOpenCommandPalette }: AppSidebarProps) {
           ))}
         </nav>
       </ScrollArea>
+    </>
+  );
+}
+
+interface AppSidebarProps {
+  onOpenCommandPalette?: () => void;
+}
+
+/**
+ * ChatGPT/Codex 배치 — 테두리 없는 260px 사이드바가 app-shell 면 위에 놓인다.
+ * 헤더 52px(h-13) + 36px 행(h-9, rounded-lg). md 미만에서는 TopBar 의 Sheet 사용.
+ */
+export function AppSidebar({ onOpenCommandPalette }: AppSidebarProps) {
+  const t = useTranslations();
+
+  return (
+    <aside
+      aria-label={t("common.sidebarLabel")}
+      className="group/sidebar relative hidden h-full w-[260px] shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex"
+    >
+      {/* 헤더 52px — 로고 + 워드마크 */}
+      <div className="flex h-13 shrink-0 items-center px-4">
+        <Link href="/app/dashboard" aria-label="Outreach OS">
+          <Logo />
+        </Link>
+      </div>
+      <SidebarNavContent onOpenCommandPalette={onOpenCommandPalette} />
     </aside>
   );
 }

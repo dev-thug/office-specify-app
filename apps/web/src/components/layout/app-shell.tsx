@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <AppSidebar onOpenCommandPalette={openPalette} />
         <main className="min-w-0 flex-1 py-2 pr-2">
           <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-app-panel shadow-xs">
-            <TopBar />
+            <TopBar onOpenCommandPalette={openPalette} />
             <div className="panel-scroll-subtle min-h-0 flex-1 overflow-y-auto">
               {children}
             </div>

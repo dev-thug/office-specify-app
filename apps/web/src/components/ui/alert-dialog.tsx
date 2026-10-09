@@ -2,14 +2,29 @@
 
 import * as React from "react";
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
+import { AnimatePresence, motion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 
+// Portal orphaning 방지: Dialog와 동일한 forceMount + Framer Motion 패턴.
+const AlertDialogOpenContext = React.createContext<boolean | undefined>(
+  undefined
+);
+
 function AlertDialog({
+  open,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />;
+  return (
+    <AlertDialogOpenContext.Provider value={open}>
+      <AlertDialogPrimitive.Root
+        data-slot="alert-dialog"
+        open={open}
+        {...props}
+      />
+    </AlertDialogOpenContext.Provider>
+  );
 }
 
 function AlertDialogTrigger({
@@ -46,8 +61,57 @@ function AlertDialogOverlay({
 
 function AlertDialogContent({
   className,
+  children,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content>) {
+  const open = React.useContext(AlertDialogOpenContext);
+
+  // Controlled mode: forceMount + Framer Motion
+  if (open !== undefined) {
+    return (
+      <AlertDialogPrimitive.Portal forceMount data-slot="alert-dialog-portal">
+        <AnimatePresence>
+          {open && (
+            <>
+              <AlertDialogPrimitive.Overlay
+                forceMount
+                data-slot="alert-dialog-overlay"
+                asChild
+              >
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="fixed inset-0 z-50 bg-scrim backdrop-blur-sm"
+                />
+              </AlertDialogPrimitive.Overlay>
+              <AlertDialogPrimitive.Content
+                forceMount
+                data-slot="alert-dialog-content"
+                asChild
+                {...props}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{ duration: 0.2 }}
+                  className={cn(
+                    "bg-popover text-popover-foreground fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] gap-4 rounded-3xl border p-6 shadow-lg sm:max-w-lg",
+                    className
+                  )}
+                >
+                  {children}
+                </motion.div>
+              </AlertDialogPrimitive.Content>
+            </>
+          )}
+        </AnimatePresence>
+      </AlertDialogPrimitive.Portal>
+    );
+  }
+
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
@@ -58,7 +122,9 @@ function AlertDialogContent({
           className
         )}
         {...props}
-      />
+      >
+        {children}
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   );
 }

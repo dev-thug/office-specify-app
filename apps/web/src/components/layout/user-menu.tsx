@@ -38,7 +38,7 @@ export function UserMenu() {
     retry: false,
     staleTime: 60_000,
   });
-  const name = data?.principal?.name;
+  const name = data?.display_name;
 
   const logoutMutation = useMutation({
     mutationFn: logout,
@@ -73,9 +73,9 @@ export function UserMenu() {
           <UserRoundIcon className="size-4 text-muted-foreground" />
           <span className="truncate">{name ?? t("unknownUser")}</span>
         </DropdownMenuLabel>
-        {data?.principal?.role ? (
+        {data?.role ? (
           <DropdownMenuLabel className="pt-0 text-xs font-normal text-muted-foreground">
-            {data.principal.role}
+            {data.role}
           </DropdownMenuLabel>
         ) : null}
         <DropdownMenuSeparator />

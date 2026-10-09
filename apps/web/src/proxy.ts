@@ -57,6 +57,13 @@ export default function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // 정적 자산·아이콘·API 프록시는 건너뛰고 페이지만 처리한다.
-  matcher: ["/((?!api|_next|_vercel|.*\\..*).*)"],
+  // 명시 매처 — 정적 자산·API 프록시는 애초에 실행되지 않는다.
+  // /app/* 는 세션 게이트, 나머지 페이지 경로는 로케일 쿠키 보존용.
+  matcher: [
+    "/",
+    "/app/:path*",
+    "/login",
+    "/invite/:path*",
+    "/public/:path*",
+  ],
 };
