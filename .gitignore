@@ -1,0 +1,10 @@
+target/
+node_modules/
+.next/
+.env
+.env.*
+!.env.example
+.superpowers/
+/var/
+*.log
+.DS_Store
