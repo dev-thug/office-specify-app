@@ -1,0 +1,22 @@
+{
+  "primitives": "Primitives",
+  "patterns": "Outreach patterns",
+  "buttons": "Buttons",
+  "badges": "Badges",
+  "statusBadges": "Status badges",
+  "forms": "Form controls",
+  "surfaces": "Surfaces & cards",
+  "feedback": "Feedback",
+  "navigation": "Tabs & accordion",
+  "overlays": "Overlays",
+  "dataTable": "DataTable",
+  "conflictDiff": "ConflictDiff (412)",
+  "confirmIrreversible": "ConfirmIrreversible",
+  "emptyError": "Empty & error states",
+  "light": "Light",
+  "dark": "Dark",
+  "sampleAction": "Action",
+  "openDialog": "Open dialog",
+  "openSheet": "Open sheet",
+  "showToast": "Show toast"
+}

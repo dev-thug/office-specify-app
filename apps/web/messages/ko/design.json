@@ -1,0 +1,22 @@
+{
+  "primitives": "프리미티브",
+  "patterns": "Outreach 패턴",
+  "buttons": "버튼",
+  "badges": "배지",
+  "statusBadges": "상태 배지",
+  "forms": "폼 컨트롤",
+  "surfaces": "표면·카드",
+  "feedback": "피드백",
+  "navigation": "탭·아코디언",
+  "overlays": "오버레이",
+  "dataTable": "DataTable",
+  "conflictDiff": "ConflictDiff (412)",
+  "confirmIrreversible": "ConfirmIrreversible",
+  "emptyError": "빈 상태·오류 상태",
+  "light": "라이트",
+  "dark": "다크",
+  "sampleAction": "동작",
+  "openDialog": "대화상자 열기",
+  "openSheet": "시트 열기",
+  "showToast": "토스트 표시"
+}

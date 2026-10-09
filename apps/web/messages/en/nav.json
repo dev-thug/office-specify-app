@@ -1,0 +1,30 @@
+{
+  "dashboard": "Dashboard",
+  "companies": "Companies",
+  "contacts": "Contacts",
+  "inbox": "Inbox",
+  "templates": "Templates",
+  "campaigns": "Campaigns",
+  "approvals": "Approvals",
+  "meetings": "Meetings",
+  "meetingTypes": "Meeting types",
+  "agents": "Agents",
+  "imports": "Imports",
+  "compliance": "Compliance",
+  "complianceReviews": "Basis reviews",
+  "operations": "Operations",
+  "operationsIntegrations": "Integrations",
+  "settings": "Settings",
+  "settingsMailAccounts": "Mail accounts",
+  "settingsCalendars": "Calendars",
+  "settingsPolicies": "Policies",
+  "settingsSecurity": "Security",
+  "sections": {
+    "main": "Main",
+    "crm": "Sales",
+    "communication": "Communication",
+    "meetings": "Meetings",
+    "automation": "Automation",
+    "admin": "Administration"
+  }
+}
