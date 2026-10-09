@@ -509,6 +509,91 @@ async fn approval_request_transitions_guarded() {
     tx.rollback().await.unwrap();
 }
 
+/// F2: the recorded decision must MATCH the outcome — a 'rejected'
+/// decision cannot approve a request, and an 'approved' decision cannot
+/// reject one (migration 0007).
+#[tokio::test]
+async fn approval_status_requires_matching_decision() {
+    let db = common::test_db().await.unwrap();
+    let world = seed_workspace(&db).await.unwrap();
+    let ws = world.workspace_id;
+    let mut tx = db.begin(ws).await.unwrap();
+
+    let (l1, _r1) = launch(&mut tx, &world).await;
+    let (l2, _r2) = launch(&mut tx, &world).await;
+    let hash = [9u8; 32];
+    let expires = Utc::now() + chrono::Duration::days(1);
+    let req_rejected = infrastructure::repo::approvals::insert_request(
+        &mut tx,
+        world.admin.principal_id,
+        infrastructure::repo::approvals::ApprovalTarget::CampaignLaunch(l1),
+        &hash,
+        expires,
+    )
+    .await
+    .unwrap();
+    let req_approved = infrastructure::repo::approvals::insert_request(
+        &mut tx,
+        world.admin.principal_id,
+        infrastructure::repo::approvals::ApprovalTarget::CampaignLaunch(l2),
+        &hash,
+        expires,
+    )
+    .await
+    .unwrap();
+
+    // Same-tx decision rows while both requests are still pending.
+    for (req, decision) in [
+        (req_rejected, "rejected"),
+        (req_approved, "approved"),
+    ] {
+        sqlx::query(
+            "INSERT INTO approval_decisions
+                (workspace_id, approval_request_id, decided_by, decision, snapshot_hash, version_at_decision)
+             VALUES ($1, $2, $3, $4, $5, 1)",
+        )
+        .bind(ws)
+        .bind(req)
+        .bind(world.manager.principal_id)
+        .bind(decision)
+        .bind(&hash[..])
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    }
+
+    // A rejection on record cannot be flipped to approved (0006's bug).
+    expect_guard(
+        &mut tx,
+        "UPDATE approval_requests SET status = 'approved' WHERE workspace_id = $1 AND id = $2",
+        &[req_rejected],
+    )
+    .await;
+    // Nor can an approval be recorded then rejected.
+    expect_guard(
+        &mut tx,
+        "UPDATE approval_requests SET status = 'rejected' WHERE workspace_id = $1 AND id = $2",
+        &[req_approved],
+    )
+    .await;
+    // Matching transitions succeed.
+    for (req, status) in [
+        (req_rejected, "rejected"),
+        (req_approved, "approved"),
+    ] {
+        sqlx::query(
+            "UPDATE approval_requests SET status = $3 WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(req)
+        .bind(status)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    }
+    tx.rollback().await.unwrap();
+}
+
 // ------------------------------------------------------------- R22
 
 /// R22: the grant matrix — assert each ruled privilege via
