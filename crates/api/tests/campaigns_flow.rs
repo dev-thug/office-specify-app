@@ -1363,6 +1363,445 @@ async fn campaign_create_is_idempotent() {
 }
 
 #[tokio::test]
+async fn campaign_authoring_rejects_follow_up_steps_and_delays() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (_identity, channel) = marketing_channel(db, &world).await;
+    let tv = template_version(db, &world, "s", "b", json!({})).await;
+
+    let mut delayed = campaign_body(world.mail_account_id, channel, tv);
+    delayed["name"] = json!("delayed campaign");
+    delayed["steps"] = json!([
+        {"step_order": 1, "template_version_id": tv, "delay_hours": 1}
+    ]);
+    let res = post(
+        &app,
+        &admin,
+        &csrf,
+        "/api/v1/campaigns",
+        delayed,
+        Some("reject-delayed-campaign"),
+        None,
+    )
+    .await;
+    let p = TestApp::problem(res, StatusCode::BAD_REQUEST).await;
+    assert_eq!(p["code"], "VALIDATION_FAILED");
+
+    let mut follow_up = campaign_body(world.mail_account_id, channel, tv);
+    follow_up["name"] = json!("multi-step campaign");
+    follow_up["steps"] = json!([
+        {"step_order": 1, "template_version_id": tv, "delay_hours": 0},
+        {"step_order": 2, "template_version_id": tv, "delay_hours": 0}
+    ]);
+    let res = post(
+        &app,
+        &admin,
+        &csrf,
+        "/api/v1/campaigns",
+        follow_up,
+        Some("reject-follow-up-campaign"),
+        None,
+    )
+    .await;
+    let p = TestApp::problem(res, StatusCode::BAD_REQUEST).await;
+    assert_eq!(p["code"], "VALIDATION_FAILED");
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let campaigns: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM campaigns WHERE workspace_id = $1")
+            .bind(world.workspace_id)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    assert_eq!(
+        campaigns, 0,
+        "invalid automation must not create a campaign"
+    );
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn revision_authoring_rejects_follow_up_steps_and_delays() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (_identity, channel) = marketing_channel(db, &world).await;
+    let tv = template_version(db, &world, "s", "b", json!({})).await;
+    let (campaign, _) =
+        create_campaign(&app, &admin, &csrf, &world, channel, tv, "rev-single-step").await;
+
+    let mut delayed = json!({
+        "delivery_channel_id": channel,
+        "timezone": "UTC",
+        "schedule_rules": {"weekdays": [1], "window_start": "09:00", "window_end": "18:00"},
+        "steps": [{"step_order": 1, "template_version_id": tv, "delay_hours": 1}]
+    });
+    let res = post(
+        &app,
+        &admin,
+        &csrf,
+        &format!("/api/v1/campaigns/{campaign}/revisions"),
+        delayed.take(),
+        Some("reject-delayed-revision"),
+        Some(1),
+    )
+    .await;
+    let p = TestApp::problem(res, StatusCode::BAD_REQUEST).await;
+    assert_eq!(p["code"], "VALIDATION_FAILED");
+
+    let follow_up = json!({
+        "delivery_channel_id": channel,
+        "timezone": "UTC",
+        "schedule_rules": {"weekdays": [1], "window_start": "09:00", "window_end": "18:00"},
+        "steps": [
+            {"step_order": 1, "template_version_id": tv, "delay_hours": 0},
+            {"step_order": 2, "template_version_id": tv, "delay_hours": 0}
+        ]
+    });
+    let res = post(
+        &app,
+        &admin,
+        &csrf,
+        &format!("/api/v1/campaigns/{campaign}/revisions"),
+        follow_up,
+        Some("reject-follow-up-revision"),
+        Some(1),
+    )
+    .await;
+    let p = TestApp::problem(res, StatusCode::BAD_REQUEST).await;
+    assert_eq!(p["code"], "VALIDATION_FAILED");
+
+    let detail =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaigns/{campaign}")).await).await;
+    assert_eq!(detail["revisions"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn new_launch_rejects_preserved_legacy_follow_up_revision() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (_identity, channel) = marketing_channel(db, &world).await;
+    let tv = template_version(db, &world, "s", "b", json!({})).await;
+    let (campaign, _) =
+        create_campaign(&app, &admin, &csrf, &world, channel, tv, "legacy-revision").await;
+
+    let legacy_revision = {
+        let mut tx = db.begin(world.workspace_id).await.unwrap();
+        let revision_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO campaign_revisions
+                (workspace_id, campaign_id, mail_account_id, delivery_channel_id,
+                 revision_no, timezone, schedule_rules, created_by)
+             VALUES ($1, $2, $3, $4, 2, 'UTC',
+                     '{\"weekdays\":[1,2,3,4,5,6,7],\"window_start\":\"00:00\",\"window_end\":\"23:59\"}', $5)
+             RETURNING id",
+        )
+        .bind(world.workspace_id)
+        .bind(campaign)
+        .bind(world.mail_account_id)
+        .bind(channel)
+        .bind(world.admin.principal_id)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        for step_order in [1_i32, 2] {
+            sqlx::query(
+                "INSERT INTO campaign_steps
+                    (workspace_id, revision_id, template_version_id, step_order, delay_hours)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(world.workspace_id)
+            .bind(revision_id)
+            .bind(tv)
+            .bind(step_order)
+            .bind(if step_order == 1 { 0 } else { 24 })
+            .execute(tx.conn())
+            .await
+            .unwrap();
+        }
+        tx.commit().await.unwrap();
+        revision_id
+    };
+
+    let recipient = recipient(db, &world, "legacy-follow-up", true).await;
+    let res = post(
+        &app,
+        &admin,
+        &csrf,
+        &format!("/api/v1/campaigns/{campaign}/launches"),
+        json!({"revision_id": legacy_revision, "email_address_ids": [recipient]}),
+        Some("reject-legacy-multistep-launch"),
+        None,
+    )
+    .await;
+    let p = TestApp::problem(res, StatusCode::CONFLICT).await;
+    assert_eq!(p["code"], "CONFLICT");
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let retained_steps: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM campaign_steps WHERE workspace_id=$1 AND revision_id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(legacy_revision)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let launches: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM campaign_launches WHERE workspace_id=$1 AND revision_id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(legacy_revision)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(retained_steps, 2, "legacy revision data must be retained");
+    assert_eq!(launches, 0, "rejected launch must have no side effects");
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn accepted_legacy_step_cancels_queued_follow_ups_without_deleting_revision() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (identity, channel) = marketing_channel(db, &world).await;
+    let tv = template_version(db, &world, "s", "b", json!({})).await;
+    let (campaign, _) = create_campaign(
+        &app,
+        &admin,
+        &csrf,
+        &world,
+        channel,
+        tv,
+        "legacy-follow-up-stop",
+    )
+    .await;
+    let address = recipient(db, &world, "legacy-flow", true).await;
+
+    let (legacy_revision, enrollment_id, first_outbound, follow_up_outbound, dispatch_job_id) = {
+        let mut tx = db.begin(world.workspace_id).await.unwrap();
+        let legacy_revision = infrastructure::repo::campaigns::insert_revision(
+            &mut tx,
+            campaign,
+            world.mail_account_id,
+            channel,
+            2,
+            "UTC",
+            &json!({
+                "weekdays": [1, 2, 3, 4, 5, 6, 7],
+                "window_start": "00:00",
+                "window_end": "23:59"
+            }),
+            true,
+            true,
+            world.admin.principal_id,
+        )
+        .await
+        .unwrap();
+        let first_step =
+            infrastructure::repo::campaigns::insert_step(&mut tx, legacy_revision, tv, 1, 0)
+                .await
+                .unwrap();
+        let follow_up_step =
+            infrastructure::repo::campaigns::insert_step(&mut tx, legacy_revision, tv, 2, 24)
+                .await
+                .unwrap();
+        let launch = infrastructure::repo::campaigns::insert_launch(
+            &mut tx,
+            legacy_revision,
+            channel,
+            world.admin.principal_id,
+            chrono::Utc::now() + chrono::Duration::days(2),
+        )
+        .await
+        .unwrap();
+        let enrollment = infrastructure::repo::campaigns::insert_enrollment(
+            &mut tx,
+            launch,
+            legacy_revision,
+            address,
+            None,
+            "pending",
+            None,
+        )
+        .await
+        .unwrap();
+        infrastructure::repo::campaigns::freeze_revision(&mut tx, legacy_revision)
+            .await
+            .unwrap();
+        infrastructure::repo::campaigns::freeze_launch_row(&mut tx, launch, &[7_u8; 32])
+            .await
+            .unwrap();
+        for status in ["awaiting_approval", "approved", "running"] {
+            infrastructure::repo::campaigns::transition_launch(&mut tx, launch, status, None)
+                .await
+                .unwrap();
+        }
+        infrastructure::repo::campaigns::set_enrollment_state(
+            &mut tx,
+            enrollment,
+            "active",
+            Some(first_step),
+            Some(chrono::Utc::now()),
+            None,
+        )
+        .await
+        .unwrap();
+        let basis = infrastructure::repo::campaigns::valid_marketing_basis(&mut tx, address)
+            .await
+            .unwrap()
+            .unwrap();
+        let first_outbound = infrastructure::repo::campaigns::insert_step_outbound(
+            &mut tx,
+            world.mail_account_id,
+            channel,
+            identity,
+            address,
+            Some(basis),
+            launch,
+            legacy_revision,
+            enrollment,
+            first_step,
+            world.admin.principal_id,
+            "sender@example.test",
+            "legacy-flow@rcpt.dev",
+            "First",
+            "first",
+            None,
+            &[1_u8; 32],
+        )
+        .await
+        .unwrap();
+        let follow_up_outbound = infrastructure::repo::campaigns::insert_step_outbound(
+            &mut tx,
+            world.mail_account_id,
+            channel,
+            identity,
+            address,
+            Some(basis),
+            launch,
+            legacy_revision,
+            enrollment,
+            follow_up_step,
+            world.admin.principal_id,
+            "sender@example.test",
+            "legacy-flow@rcpt.dev",
+            "Follow up",
+            "follow up",
+            None,
+            &[2_u8; 32],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE outbound_messages SET status='accepted', accepted_at=now()
+              WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(world.workspace_id)
+        .bind(first_outbound)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        infrastructure::repo::campaigns::queue_outbound_at(
+            &mut tx,
+            follow_up_outbound,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let dispatch_job_id = infrastructure::repo::campaigns::enqueue_dedup(
+            &mut tx,
+            "sending.dispatch_outbound",
+            json!({"outbound_message_id": follow_up_outbound}),
+            chrono::Utc::now(),
+            &infrastructure::repo::campaigns::dispatch_dedupe_key(follow_up_outbound),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        (
+            legacy_revision,
+            enrollment,
+            first_outbound,
+            follow_up_outbound,
+            dispatch_job_id,
+        )
+    };
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    application::campaigns::schedule_next_step(
+        &mut tx,
+        world.system.principal_id,
+        dispatch_job_id,
+        enrollment_id,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let state: (String, Option<String>) = sqlx::query_as(
+        "SELECT status, stop_reason FROM campaign_enrollments WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(enrollment_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let follow_up_status: (String, Option<String>) = sqlx::query_as(
+        "SELECT status, failure_code FROM outbound_messages WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(follow_up_outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let first_status: String =
+        sqlx::query_scalar("SELECT status FROM outbound_messages WHERE workspace_id=$1 AND id=$2")
+            .bind(world.workspace_id)
+            .bind(first_outbound)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    let queued_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id=$1 AND kind='sending.dispatch_outbound'
+          AND dedupe_key=$2 AND state IN ('queued','retry_wait','running')",
+    )
+    .bind(world.workspace_id)
+    .bind(infrastructure::repo::campaigns::dispatch_dedupe_key(
+        follow_up_outbound,
+    ))
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let retained_steps: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM campaign_steps WHERE workspace_id=$1 AND revision_id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(legacy_revision)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(state.0, "stopped");
+    assert_eq!(state.1.as_deref(), Some("follow_up_automation_disabled"));
+    assert_eq!(follow_up_status.0, "canceled");
+    assert_eq!(follow_up_status.1, None);
+    assert_eq!(queued_jobs, 0);
+    assert_eq!(retained_steps, 2);
+    assert_eq!(first_status, "accepted");
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
 async fn revision_requires_if_match() {
     let Some((app, world)) = test_app().await else {
         return;
@@ -1378,7 +1817,7 @@ async fn revision_requires_if_match() {
         "delivery_channel_id": channel,
         "timezone": "UTC",
         "schedule_rules": {"weekdays": [1], "window_start": "09:00", "window_end": "18:00"},
-        "steps": [{"step_order": 1, "template_version_id": tv, "delay_hours": 2}]
+        "steps": [{"step_order": 1, "template_version_id": tv, "delay_hours": 0}]
     });
     // Missing If-Match → 428.
     let res = post(
@@ -1434,7 +1873,7 @@ async fn revision_requires_if_match() {
     assert_eq!(revision["steps"].as_array().unwrap().len(), 1);
     assert_eq!(revision["steps"][0]["template_version_id"], tv.to_string());
     assert_eq!(revision["steps"][0]["step_order"], 1);
-    assert_eq!(revision["steps"][0]["delay_hours"], 2);
+    assert_eq!(revision["steps"][0]["delay_hours"], 0);
 }
 
 #[tokio::test]

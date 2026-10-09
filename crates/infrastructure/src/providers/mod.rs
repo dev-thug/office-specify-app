@@ -7,6 +7,7 @@
 
 pub mod fake;
 pub mod zoho;
+pub mod zoho_campaigns;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -75,6 +76,20 @@ pub struct SentLookup {
 /// Mailbox provider: sync + send (source §6.3-B, B.7).
 #[async_trait]
 pub trait MailProvider: Send + Sync {
+    /// Resolve a workspace/mailbox-bound live client. Fakes are already bound
+    /// by the caller and return None. Never infer tenant identity from From.
+    async fn for_mailbox(
+        &self,
+        _workspace_id: uuid::Uuid,
+        _mail_account_id: uuid::Uuid,
+    ) -> Result<Option<std::sync::Arc<dyn MailProvider>>, ProviderError> {
+        Ok(None)
+    }
+    /// A live polling adapter can limit pages per job while retaining cursor progress.
+    fn sync_page_budget(&self) -> usize {
+        20
+    }
+
     fn capabilities(&self) -> MailCapabilities;
     /// Page provider messages; `cursor` is provider-owned opaque state.
     async fn list_messages(
@@ -176,3 +191,6 @@ pub trait DeliveryProvider: Send + Sync {
     async fn send(&self, req: SendRequest) -> Result<SendOutcome, ProviderError>;
     async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError>;
 }
+
+pub mod zoho_email_api;
+pub mod zoho_mail_client;

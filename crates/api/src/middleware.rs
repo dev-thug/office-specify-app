@@ -77,6 +77,7 @@ pub async fn protective_headers(req: Request, next: Next) -> Response {
     let sensitive = path.starts_with("/public/v1/")
         || path.starts_with("/webhooks/v1/")
         || path.starts_with("/api/v1/auth/")
+        || path.starts_with("/api/v1/integrations/")
         || path == "/api/v1/me";
     let headers = res.headers_mut();
     headers.insert(

@@ -110,8 +110,28 @@ For the full operator command list, run `cargo run -p cli -- --help`. Privacy-er
 
 ## Fake provider behavior
 
-The API and worker use fake providers; the worker does not construct real Zoho, calendar, or delivery clients. A fake `accepted` result means only that the in-process fake accepted the request. It does not mean delivered or read. The default fake mail outcome is accepted; supported `FAKE_PROVIDER_SCRIPT` outcome names and JSON shape are documented in [`fake.rs`](../../crates/infrastructure/src/providers/fake.rs).
+Explicit `Config::test()` fixtures and an unconfigured `APP_ENV=dev` server use fake providers. Other runtime configurations use the mailbox-bound Zoho Mail router and fail closed when credentials or account authorization are unavailable. `APP_ENV=test` alone does not enable fake external authentication. Real Calendar and marketing delivery adapters remain disabled in runtime. A fake `accepted` result means only that the in-process fake accepted the request. It does not mean delivered or read. The default fake mail outcome is accepted; supported `FAKE_PROVIDER_SCRIPT` outcome names and JSON shape are documented in [`fake.rs`](../../crates/infrastructure/src/providers/fake.rs).
 
 Fake state is in memory and private to each process. Restarting the worker loses its fake sent-message lookup history. The development inbound endpoint at `POST /api/v1/dev/fake-mail/inbound` injects into the API process's fake instance; a separate worker process has a different instance and will not see that injected message. The worker loads both fake mail and fake delivery outcome queues from `FAKE_PROVIDER_SCRIPT` when its provider context starts. Do not use these fakes to claim a real provider integration or to rehearse cross-process recovery.
 
 The implementation spec keeps external-provider, legal, security, and backup/restore release gates closed. See §20 of the source design before treating any integration as production-ready.
+
+## Zoho setup
+
+Register a server-based application in the US Zoho API Console. Set the client
+ID, client secret and exact redirect URI on the server; start the binaries with
+the private environment loaded (they do not automatically load `.env`).
+Use Settings → Mail accounts for the Campaigns connection setup/checklist.
+Mail and Campaigns have separate `ZOHO_MAIL_*` and `ZOHO_CAMPAIGNS_*` settings.
+OAuth state is session/workspace bound and single-use; refresh tokens are stored
+encrypted. Missing configuration must be fixed before opening a Zoho consent URL.
+
+Campaigns Free supports the regular v1.1 API, not the separate Email API v2
+prepaid template store. Optional template CRUD requires all of
+`ZOHO_EMAIL_API_ENABLED=true`, `ZOHO_EMAIL_API_KEY`, and
+`ZOHO_EMAIL_API_WORKSPACE_ID`. Keys stay on the server. This does not sign up,
+purchase credits or upgrade an existing Campaigns organization.
+Template write outcomes that cannot be confirmed are not automatically retried;
+refresh the remote library and reconcile before using a new operation key.
+See the [implementation status](../design/zoho-integration-status.md) for what is
+actually wired versus SDK-only or still pending.

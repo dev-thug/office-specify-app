@@ -19,9 +19,10 @@ impl AppEnv {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     pub app_env: AppEnv,
+    pub zoho: crate::providers::zoho_campaigns::ZohoSettings,
     pub database_url: String,
     pub redis_url: Option<String>,
     pub api_addr: SocketAddr,
@@ -48,6 +49,20 @@ pub struct Config {
     /// TCP peers allowed to set `X-Forwarded-For` (CIDR list). Defaults to
     /// loopback only — the Next.js server is the expected proxy (§4.10).
     pub trusted_proxies: Vec<ipnetwork::IpNetwork>,
+}
+
+// Configuration contains database credentials and cryptographic key material.
+// Keep debug output metadata-only even when callers log the whole configuration.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("app_env", &self.app_env)
+            .field("api_addr", &self.api_addr)
+            .field("mcp_addr", &self.mcp_addr)
+            .field("cookie_secure", &self.cookie_secure)
+            .field("worker_concurrency", &self.worker_concurrency)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug)]
@@ -135,6 +150,18 @@ impl Config {
             });
         Ok(Self {
             app_env: env,
+            zoho: crate::providers::zoho_campaigns::ZohoSettings::from_env(
+                &get("PUBLIC_BASE_URL")
+                    .or_else(|| get("OUTREACH_PUBLIC_BASE_URL"))
+                    .unwrap_or_else(|| {
+                        if env.is_dev_or_test() {
+                            "http://localhost:3000".into()
+                        } else {
+                            String::new()
+                        }
+                    }),
+                env.is_dev_or_test(),
+            ),
             database_url,
             redis_url,
             api_addr: get("API_ADDR")
@@ -187,6 +214,10 @@ impl Config {
     pub fn test() -> Self {
         Self {
             app_env: AppEnv::Test,
+            zoho: crate::providers::zoho_campaigns::ZohoSettings {
+                fake_for_tests: true,
+                ..Default::default()
+            },
             database_url: String::new(),
             redis_url: None,
             api_addr: "127.0.0.1:0".parse().unwrap(),
@@ -272,6 +303,20 @@ pub fn public_base_url(workspace_value: Option<String>) -> Result<String, contra
 
 #[cfg(test)]
 mod public_origin_tests {
+    #[test]
+    fn debug_output_excludes_credentials_and_key_material() {
+        let mut config = super::Config::test();
+        config.database_url =
+            "postgres://private-user:private-password@localhost/private-db".into();
+        config.hmac_key = b"private-hmac-key-material".to_vec();
+        config.zoho.mail_client_secret = Some(crate::providers::zoho_campaigns::SecretValue::new(
+            "private-client-secret",
+        ));
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("private-"));
+        assert!(!debug.contains("database_url"));
+        assert!(!debug.contains("hmac_key"));
+    }
     #[test]
     fn generated_capabilities_use_only_explicit_safe_origins() {
         for valid in [

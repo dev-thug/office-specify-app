@@ -39,6 +39,7 @@ import {
   useMailAccounts,
   type MailAccount,
 } from "@/lib/api/settings";
+import { CampaignsConnectionSettings } from "@/features/marketing/connection-settings";
 import { ConnectUrlDialog } from "@/features/operations/connect-url-dialog";
 import { apiErrorText } from "@/features/settings/api-error";
 import { formatDateTime } from "@/features/settings/format";
@@ -157,6 +158,8 @@ export function MailAccountsScreen() {
         }
       />
       <p className="text-2xs text-muted-foreground">{t("oauthNotice")}</p>
+
+      <CampaignsConnectionSettings />
 
       <DataTable
         columns={columns}

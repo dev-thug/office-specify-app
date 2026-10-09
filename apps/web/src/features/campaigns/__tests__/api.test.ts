@@ -81,7 +81,7 @@ describe("campaigns API", () => {
         delivery_channel_id: "ch1",
         timezone: "Asia/Seoul",
         schedule_rules: { weekdays: [1] },
-        steps: [{ step_order: 1, template_version_id: "v1", delay_hours: 24 }],
+        steps: [{ step_order: 1, template_version_id: "v1", delay_hours: 0 }],
         stop_on_reply: true,
         stop_on_booking: false,
       },

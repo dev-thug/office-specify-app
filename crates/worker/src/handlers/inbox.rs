@@ -6,7 +6,8 @@ use std::sync::Arc;
 use contracts::AppError;
 use infrastructure::db::Tx;
 use infrastructure::jobs::{JobCtx, JobHandler};
-use infrastructure::providers::MailProvider;
+use infrastructure::providers::{MailProvider, ProviderError};
+use infrastructure::repo::inbox as inbox_repo;
 use uuid::Uuid;
 
 use crate::{JobRegistry, WorkerContext};
@@ -41,10 +42,18 @@ impl JobHandler for SyncMailbox {
             .and_then(|v| v.as_str())
             .unwrap_or("manual")
             .to_string();
-        let mail = self
+        let router = self
             .mail
             .as_deref()
             .ok_or_else(|| AppError::internal("inbox handler requires WorkerContext"))?;
+        let workspace_id = tx
+            .workspace_id()
+            .ok_or_else(|| AppError::internal("inbox sync has no workspace transaction"))?;
+        let bound = router
+            .for_mailbox(workspace_id, mail_account_id)
+            .await
+            .map_err(provider_error)?;
+        let mail = bound.as_deref().unwrap_or(router);
         application::inbox::sync::sync_mailbox(tx, mail, ctx.job_id, mail_account_id, &reason)
             .await?;
         Ok(())
@@ -68,10 +77,32 @@ impl JobHandler for ProcessWebhook {
         payload: serde_json::Value,
     ) -> Result<(), AppError> {
         let event_id = payload_uuid(&payload, "webhook_event_id")?;
-        let mail = self
+        let router = self
             .mail
             .as_deref()
             .ok_or_else(|| AppError::internal("inbox handler requires WorkerContext"))?;
+        let Some(event) = inbox_repo::get_webhook_event(tx, event_id).await? else {
+            return application::inbox::sync::process_webhook(tx, router, ctx.job_id, event_id)
+                .await;
+        };
+        let Some(account) =
+            inbox_repo::mail_account_for_connection(tx, event.connection_id).await?
+        else {
+            return application::inbox::sync::process_webhook(tx, router, ctx.job_id, event_id)
+                .await;
+        };
+        if account.status != "active" {
+            inbox_repo::mark_webhook_event(tx, event_id, "failed").await?;
+            return Ok(());
+        }
+        let workspace_id = tx
+            .workspace_id()
+            .ok_or_else(|| AppError::internal("webhook job has no workspace transaction"))?;
+        let bound = router
+            .for_mailbox(workspace_id, account.id)
+            .await
+            .map_err(provider_error)?;
+        let mail = bound.as_deref().unwrap_or(router);
         application::inbox::sync::process_webhook(tx, mail, ctx.job_id, event_id).await
     }
 }
@@ -90,4 +121,20 @@ pub fn register_with_context(registry: &mut JobRegistry, context: &WorkerContext
     registry.register(ProcessWebhook {
         mail: Some(context.mail.clone()),
     });
+}
+
+fn provider_error(error: ProviderError) -> AppError {
+    match error {
+        ProviderError::NotConfigured | ProviderError::ReauthRequired => AppError::new(
+            contracts::ErrorCode::IntegrationReauthRequired,
+            "mailbox provider is not configured or requires reconnection",
+        ),
+        ProviderError::RateLimited {
+            retry_after_seconds,
+        } => AppError::new(contracts::ErrorCode::RateLimited, "Zoho Mail rate limited")
+            .with_retry_after(retry_after_seconds),
+        ProviderError::Unavailable(_) => {
+            AppError::dependency_unavailable("Zoho Mail is temporarily unavailable")
+        }
+    }
 }

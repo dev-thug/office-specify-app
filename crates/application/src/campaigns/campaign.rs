@@ -182,15 +182,15 @@ pub(crate) fn encode_page_cursor(
     .encode(hmac)
 }
 
-/// Validate the steps array (B.3.6 + DDL CHECKs): 1–3 steps, unique
-/// contiguous `step_order` starting at 1, delay_hours ≥ 0.
+/// Campaign authoring now supports a single immediate message. Keep the
+/// legacy table shape intact so older revisions remain readable, but reject
+/// any new follow-up step or configured delay at this API boundary.
 fn validate_steps(steps: &[CampaignStepInput], violations: &mut Vec<Violation>) {
-    if steps.is_empty() || steps.len() > 3 {
+    if steps.len() != 1 {
         violations.push(Violation {
             field: "steps".to_string(),
-            code: "must_contain_1_to_3_steps".to_string(),
+            code: "must_contain_exactly_one_immediate_step".to_string(),
         });
-        return;
     }
     let mut orders: Vec<i32> = steps.iter().map(|s| s.step_order).collect();
     orders.sort_unstable();
@@ -201,10 +201,10 @@ fn validate_steps(steps: &[CampaignStepInput], violations: &mut Vec<Violation>) 
         });
     }
     for s in steps {
-        if s.delay_hours < 0 {
+        if s.delay_hours != 0 {
             violations.push(Violation {
                 field: "steps[].delay_hours".to_string(),
-                code: "must_be_non_negative".to_string(),
+                code: "must_be_zero_for_immediate_send".to_string(),
             });
         }
     }

@@ -5,6 +5,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+tokio.workspace = true
 contracts.workspace = true
 domain.workspace = true
 infrastructure.workspace = true

@@ -23,7 +23,10 @@ use infrastructure::audit::{self, AuditEntry};
 use infrastructure::db::Db;
 use infrastructure::jobs::JobCtx;
 use infrastructure::outbox;
-use infrastructure::providers::{DeliveryProvider, MailProvider, SendRequest, SentLookup};
+use infrastructure::providers::{
+    DeliveryProvider, MailCapabilities, MailProvider, ProviderError, ProviderMessage, SendOutcome,
+    SendRequest, SentLookup,
+};
 use infrastructure::repo::compliance_core;
 use infrastructure::repo::sending::{self, OutboundRow};
 
@@ -43,6 +46,105 @@ pub const EV_OUTBOUND_UNKNOWN: &str = "outbound.unknown";
 pub struct Providers {
     pub mail: Arc<dyn MailProvider>,
     pub delivery: Arc<dyn DeliveryProvider>,
+}
+
+struct MailBindingUnavailable;
+
+#[async_trait::async_trait]
+impl MailProvider for MailBindingUnavailable {
+    fn capabilities(&self) -> MailCapabilities {
+        MailCapabilities {
+            supports_send: false,
+            supports_delta_sync: false,
+        }
+    }
+
+    async fn list_messages(
+        &self,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<(Vec<ProviderMessage>, Option<String>), ProviderError> {
+        Err(ProviderError::NotConfigured)
+    }
+
+    async fn get_message(
+        &self,
+        _provider_message_id: &str,
+    ) -> Result<ProviderMessage, ProviderError> {
+        Err(ProviderError::NotConfigured)
+    }
+
+    async fn send(&self, _request: SendRequest) -> Result<SendOutcome, ProviderError> {
+        Err(ProviderError::NotConfigured)
+    }
+
+    async fn lookup_sent(
+        &self,
+        _correlation_id: &str,
+    ) -> Result<Option<SentLookup>, ProviderError> {
+        Err(ProviderError::NotConfigured)
+    }
+}
+
+/// Resolve a Zoho Mail adapter from the immutable mailbox ID before Phase A
+/// records a send attempt. Missing/revoked mailboxes cannot reach the provider
+/// submission boundary.
+async fn providers_for_outbound(
+    db: &Db,
+    job: &JobCtx,
+    providers: &Providers,
+    outbound_id: Uuid,
+) -> Result<Providers, AppError> {
+    let binding = {
+        let mut tx = db.begin(job.workspace_id).await?;
+        let Some(outbound) = sending::get_outbound(&mut tx, outbound_id).await? else {
+            tx.commit().await?;
+            return Ok(providers.clone());
+        };
+        let candidate = if matches!(
+            outbound.status.as_str(),
+            "draft" | "accepted" | "failed" | "canceled" | "unknown" | "submitting"
+        ) {
+            None
+        } else {
+            sending::channel_state(&mut tx, outbound.delivery_channel_id)
+                .await?
+                .filter(|channel| channel.provider == "zoho_mail")
+                .map(|_| outbound.mail_account_id)
+        };
+        tx.commit().await?;
+        candidate
+    };
+    let Some(mail_account_id) = binding else {
+        return Ok(providers.clone());
+    };
+    let mut bound = providers.clone();
+    match providers
+        .mail
+        .for_mailbox(job.workspace_id, mail_account_id)
+        .await
+    {
+        Ok(Some(mailbox_provider)) => bound.mail = mailbox_provider,
+        Ok(None) => {}
+        Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => {
+            bound.mail = Arc::new(MailBindingUnavailable);
+        }
+        Err(ProviderError::RateLimited {
+            retry_after_seconds,
+        }) => {
+            return Err(AppError::new(
+                contracts::ErrorCode::RateLimited,
+                "mailbox provider rate limited before submission",
+            )
+            .with_retry_after(retry_after_seconds));
+        }
+        Err(ProviderError::Unavailable(_)) => {
+            return Err(AppError::dependency_unavailable(
+                "mailbox provider could not be resolved before submission",
+            ));
+        }
+    }
+    Ok(bound)
 }
 
 fn audit_system(
@@ -85,12 +187,13 @@ pub async fn run_dispatch(
     job: &JobCtx,
     outbound_id: Uuid,
 ) -> Result<(), AppError> {
+    let routed_providers = providers_for_outbound(db, job, providers, outbound_id).await?;
     // ---------------------------------------------------------------
     // tx1 — authorize + cross the durable submitting boundary.
     // ---------------------------------------------------------------
     let armed: Option<Armed> = {
         let mut tx = db.begin(job.workspace_id).await?;
-        let res = dispatch_phase_a(&mut tx, job, providers, outbound_id).await?;
+        let res = dispatch_phase_a(&mut tx, job, &routed_providers, outbound_id).await?;
         match res {
             PhaseA::Done => {
                 tx.commit().await?;
@@ -109,8 +212,8 @@ pub async fn run_dispatch(
     // ---------------------------------------------------------------
     let req = build_request(db, job, &armed).await?;
     let provider_result = match armed.channel_provider.as_str() {
-        "zoho_mail" => providers.mail.send(req).await,
-        _ => providers.delivery.send(req).await,
+        "zoho_mail" => routed_providers.mail.send(req).await,
+        _ => routed_providers.delivery.send(req).await,
     };
     // Once the durable submitting boundary has committed, a transport error
     // can no longer be retried safely. Ambiguous transport failures become
@@ -181,6 +284,29 @@ async fn dispatch_phase_a(
             return Ok(PhaseA::Done);
         }
         _ => {}
+    }
+
+    // Campaigns now contain one immediate message only. A queued legacy
+    // follow-up can outlive the campaign workflow worker or arrive from an
+    // old retry, so enforce the retirement at the last pre-provider boundary
+    // as well. This check runs before policy evaluation/attempt creation and
+    // cancels the row plus any queued dispatch job without touching its
+    // frozen content.
+    if let (Some(revision_id), Some(step_id)) = (o.revision_id, o.step_id) {
+        let step_order: Option<i32> = sqlx::query_scalar(
+            "SELECT step_order FROM campaign_steps
+              WHERE workspace_id = $1 AND revision_id = $2 AND id = $3",
+        )
+        .bind(tx.workspace_id())
+        .bind(revision_id)
+        .bind(step_id)
+        .fetch_optional(tx.conn())
+        .await
+        .map_err(infrastructure::error::map_sqlx)?;
+        if step_order.is_some_and(|order| order > 1) {
+            cancel(tx, job, &o, "CAMPAIGN_FOLLOW_UP_DISABLED").await?;
+            return Ok(PhaseA::Done);
+        }
     }
 
     // A.6.4: lock the recipient address BEFORE suppression/basis reads —
@@ -762,7 +888,16 @@ pub async fn run_reconcile(
     // Phase B — provider read (no tx open).
     let looked: Result<Option<SentLookup>, infrastructure::providers::ProviderError> =
         match provider.as_str() {
-            "zoho_mail" => providers.mail.lookup_sent(&o.id.to_string()).await,
+            "zoho_mail" => match providers
+                .mail
+                .for_mailbox(job.workspace_id, o.mail_account_id)
+                .await
+            {
+                Ok(Some(mailbox_provider)) => mailbox_provider.lookup_sent(&o.id.to_string()).await,
+                Ok(None) => providers.mail.lookup_sent(&o.id.to_string()).await,
+                Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => Ok(None),
+                Err(error) => Err(error),
+            },
             _ => providers.delivery.lookup_sent(&o.id.to_string()).await,
         };
 

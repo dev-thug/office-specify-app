@@ -53,3 +53,24 @@ These tests cover important framework behavior but do not replace an acceptance 
 - `crates/mcp/tests/transport.rs::transport_auth_origin_protocol_and_scoped_tools` covers MCP bearer authentication, Origin/protocol handling, and scoped tools. OAuth discovery remains intentionally unsupported under the approved spec deviation X5.
 - `crates/cli/tests/bootstrap.rs` checks that bootstrap fails before writing when its password source/destination is unsafe.
 - `apps/web/src/**/__tests__` contains Vitest coverage for API request shapes, error mapping, feature rules/state, sanitized message rendering, i18n namespaces, and status badges. Those tests verify client behavior; they do not prove the Rust authorization, transaction, or database invariants above.
+
+## Zoho integration verification — 2026-10-10
+
+Final local verification: Rust workspace **427 passed, zero skipped**; web **376 passed** across 46 files; Playwright **10 passed** against the latest local API/web build. Workspace build, strict Clippy, rustfmt, generated contracts, web type/lint/design checks and production build passed.
+
+Provider tests use synthetic loopback servers. They do not verify real Zoho
+credentials, account entitlements, sender authentication, native unsubscribe
+behavior, or delivery. Marketing send remains application-disabled.
+
+| Area | Verification evidence |
+|---|---|
+| Campaigns OAuth | Required client settings, exact authorization encoding, fixed US hosts, read-only consent, session/workspace/single-use state, encrypted tokens, pagination beyond 100 lists, and denied agent access. |
+| Zoho Mail | Account discovery, refresh preservation, signed callback configuration, Inbox folder/message binding, provider-ID replies, correspondence purpose restriction, and production/partial-configuration fail-closed construction. |
+| Remote templates | Workspace-key binding, human-admin authorization, metadata-only durable write journal, replay/conflict/unknown handling, ETag preconditions, independent database-session locks and ten concurrent writers without pool exhaustion. |
+| Template UI | Principal/workspace query isolation, cache reset across login/logout, stable mutation keys across transport failure, explicit unknown reconciliation, native inert preview, source preservation, explicit compatible conversion, and merge-variable mapping. |
+| Browser | Real local API login and template/version persistence; mocked cloud-template import uses the authenticated fixture workspace. Preview external requests are intercepted and must remain zero. |
+| SecretStore | Concurrent independent instances preserve all encrypted entries with atomic replacement and private file mode. |
+
+See [integration status](zoho-integration-status.md) for intentionally unwired
+SDK operations and [the setup runbook](../runbooks/zoho-campaigns.md) for live-account
+prerequisites. Provider SDK method availability is not an application feature.

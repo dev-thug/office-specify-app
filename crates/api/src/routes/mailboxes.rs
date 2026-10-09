@@ -4,6 +4,7 @@
 //! policy reviews, calendar connections (request/list).
 
 use crate::problem::ProblemError;
+use axum::extract::FromRequestParts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::IntoResponse;
 use chrono::{DateTime, Utc};
@@ -11,10 +12,11 @@ use contracts::mailboxes::{
     CalendarConnectionRequestRequest, CalendarConnectionResponse, ChannelReviewResponse,
     ConnectionRequestRequest, CreateChannelReviewRequest, CreateDeliveryChannelRequest,
     DeliveryChannelResponse, GrantListItem, GrantResponse, MailAccountResponse, OAuthStartResponse,
-    PatchDeliveryChannelRequest, PutGrantRequest, ZohoCallbackQuery,
+    PatchDeliveryChannelRequest, PutGrantRequest,
 };
 use contracts::{AppError, Ctx, Envelope, ErrorCode, Page, Problem};
 use infrastructure::cursor::Cursor;
+use serde::Deserialize;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use uuid::Uuid;
@@ -159,6 +161,19 @@ async fn get_mail_account(
 // OAuth connect / callback / reconnect (B.2 연동)
 // --------------------------------------------------------------------------
 
+#[derive(Debug, Deserialize)]
+struct ZohoCallbackQuery {
+    #[serde(default)]
+    code: Option<String>,
+    state: String,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    location: Option<String>,
+    #[serde(default, rename = "accounts-server")]
+    accounts_server: Option<String>,
+}
+
 #[utoipa::path(
     post, path = "/mail-accounts/connection-requests",
     request_body = ConnectionRequestRequest,
@@ -189,8 +204,8 @@ async fn request_connection(
     ))
 }
 
-/// Public browser callback — the signed `state` is the credential, not a
-/// session (§14.1). CSRF/session do not apply.
+/// Zoho browser callback. Real Mail OAuth additionally requires the same
+/// active administrator browser session that created the one-time state.
 #[utoipa::path(
     get, path = "/integrations/zoho/callback",
     params(
@@ -200,6 +215,7 @@ async fn request_connection(
     ),
     responses(
         (status = 200, description = "Connection activated (mail account or calendar connection)", body = serde_json::Value),
+        (status = 303, description = "Live Zoho Mail connection activated; return to mailbox settings"),
         (status = 400, description = "Invalid/expired state signature", body = Problem),
         (status = 404, description = "Connection request not found", body = Problem),
         (status = 409, description = "Connection disabled", body = Problem),
@@ -213,9 +229,31 @@ async fn zoho_callback(
         axum::extract::Query<ZohoCallbackQuery>,
         axum::extract::rejection::QueryRejection,
     >,
-) -> Result<axum::Json<Envelope<serde_json::Value>>, ProblemError> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProblemError> {
     let axum::extract::Query(q) =
         query.map_err(|_| AppError::validation("invalid callback parameters", vec![]))?;
+    if !state.config.zoho.fake_for_tests
+        && (q
+            .location
+            .as_deref()
+            .is_some_and(|location| !matches!(location, "us" | "com"))
+            || q.accounts_server
+                .as_deref()
+                .is_some_and(|host| host.trim_end_matches('/') != "https://accounts.zoho.com"))
+    {
+        return Err(AppError::validation(
+            "This Zoho Mail connection supports the US data center only",
+            vec![],
+        )
+        .into());
+    }
+    let auth = if state.config.zoho.fake_for_tests {
+        None
+    } else {
+        let (mut parts, _body) = request.into_parts();
+        Some(<AuthCtx as FromRequestParts<AppState>>::from_request_parts(&mut parts, &state).await?)
+    };
     let outcome = application::mailboxes::oauth::zoho_callback(
         &state.db,
         &state.config,
@@ -223,6 +261,7 @@ async fn zoho_callback(
         &q.state,
         q.code.as_deref(),
         q.error.as_deref(),
+        auth.as_ref().map(AuthCtx::ctx),
     )
     .await?;
     let data = match outcome {
@@ -233,7 +272,19 @@ async fn zoho_callback(
             serde_json::json!({"flow": "calendar", "connected": true, "connection": *conn})
         }
     };
-    Ok(axum::Json(Envelope::new(data, request_id)))
+    if !state.config.zoho.fake_for_tests {
+        let mail = application::mailboxes::oauth::mail_oauth_config(&state.config)?;
+        let mut target = reqwest::Url::parse(
+            mail.redirect_uri
+                .as_deref()
+                .ok_or_else(|| AppError::dependency_unavailable("Mail callback URI is missing"))?,
+        )
+        .map_err(|_| AppError::dependency_unavailable("Mail callback URI is invalid"))?;
+        target.set_path("/app/settings/mail-accounts");
+        target.set_query(Some("zoho_mail=connected"));
+        return Ok(axum::response::Redirect::to(target.as_str()).into_response());
+    }
+    Ok(axum::Json(Envelope::new(data, request_id)).into_response())
 }
 
 #[utoipa::path(

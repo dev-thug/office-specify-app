@@ -197,6 +197,26 @@ pub async fn get_mail_account(
     Ok(row.map(AccountGrantJoin::split))
 }
 
+/// Resolve an account for an internal mailbox-bound provider. Workspace RLS
+/// and an explicit workspace predicate are always applied; caller grants are
+/// checked by the application endpoint before binding.
+pub async fn get_mail_account_scoped(
+    tx: &mut Tx<'_>,
+    id: Uuid,
+) -> Result<Option<MailAccountRow>, AppError> {
+    sqlx::query_as::<_, MailAccountRow>(
+        "SELECT id, workspace_id, connection_id, provider, provider_account_id,
+                primary_address, name, status, last_synced_at, version, created_at
+           FROM mail_accounts
+          WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
 /// Upsert the account after a successful OAuth exchange: one
 /// `(connection, provider_account_id)` maps to one account (UNIQUE).
 pub async fn upsert_mail_account(
@@ -594,6 +614,212 @@ pub async fn get_connection(
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)
+}
+
+/// Lock a connection while loading or refreshing its mailbox token bundle.
+pub async fn get_connection_for_update(
+    tx: &mut Tx<'_>,
+    id: Uuid,
+) -> Result<Option<IntegrationConnectionRow>, AppError> {
+    sqlx::query_as::<_, IntegrationConnectionRow>(
+        "SELECT id, workspace_id, provider, provider_subject, region, secret_ref,
+                scopes, status, connected_by, last_checked_at, last_error_code,
+                version, created_at
+           FROM integration_connections
+          WHERE workspace_id = $1 AND id = $2
+          FOR UPDATE",
+    )
+    .bind(tx.workspace_id())
+    .bind(id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct OAuthRequestRow {
+    pub id: Uuid,
+    pub connection_id: Uuid,
+    pub principal_id: Uuid,
+    pub session_id: Uuid,
+    pub expires_at: DateTime<Utc>,
+    pub used_at: Option<DateTime<Utc>>,
+}
+
+/// Persist a hash of real Mail OAuth state, never the state value itself.
+pub async fn insert_oauth_request(
+    tx: &mut Tx<'_>,
+    connection_id: Uuid,
+    principal_id: Uuid,
+    session_id: Uuid,
+    state_hash: &[u8],
+    expires_at: DateTime<Utc>,
+) -> Result<Uuid, AppError> {
+    sqlx::query_scalar(
+        "INSERT INTO integration_oauth_requests
+            (workspace_id, connection_id, principal_id, session_id, state_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id",
+    )
+    .bind(tx.workspace_id())
+    .bind(connection_id)
+    .bind(principal_id)
+    .bind(session_id)
+    .bind(state_hash)
+    .bind(expires_at)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Atomically consume a state hash for its recorded human/session owner.
+pub async fn claim_oauth_request(
+    tx: &mut Tx<'_>,
+    state_hash: &[u8],
+    principal_id: Uuid,
+    session_id: Uuid,
+) -> Result<Option<OAuthRequestRow>, AppError> {
+    sqlx::query_as::<_, OAuthRequestRow>(
+        "UPDATE integration_oauth_requests
+            SET used_at = now()
+          WHERE workspace_id = $1 AND state_hash = $2 AND principal_id = $3
+            AND session_id = $4 AND used_at IS NULL AND expires_at > now()
+          RETURNING id, connection_id, principal_id, session_id, expires_at, used_at",
+    )
+    .bind(tx.workspace_id())
+    .bind(state_hash)
+    .bind(principal_id)
+    .bind(session_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Recheck the administrator and browser session while the OAuth callback is
+/// activating a connection, including the permission version captured at
+/// authorization start.
+pub async fn active_mail_oauth_owner(
+    tx: &mut Tx<'_>,
+    principal_id: Uuid,
+    session_id: Uuid,
+    permission_version: i64,
+) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1
+              FROM principals p
+              JOIN user_sessions s
+                ON s.workspace_id = p.workspace_id AND s.principal_id = p.id
+             WHERE p.workspace_id = $1 AND p.id = $2 AND p.kind = 'human'
+               AND p.role = 'admin' AND p.status = 'active'
+               AND p.permission_version = $4
+               AND s.id = $3 AND s.revoked_at IS NULL AND s.expires_at > now()
+             FOR SHARE OF p, s
+         )",
+    )
+    .bind(tx.workspace_id())
+    .bind(principal_id)
+    .bind(session_id)
+    .bind(permission_version)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Persist provider folder coordinates learned from a genuine message-list
+/// response. These IDs contain no user message data.
+pub async fn record_provider_message_locations(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    locations: &[(String, String)],
+) -> Result<(), AppError> {
+    for (message_id, folder_id) in locations {
+        if !valid_provider_id(message_id) || !valid_provider_id(folder_id) {
+            return Err(AppError::validation(
+                "invalid Zoho Mail provider location",
+                vec![],
+            ));
+        }
+        sqlx::query(
+            "INSERT INTO mail_provider_message_locations
+                (workspace_id, mail_account_id, provider_message_id, provider_folder_id)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (workspace_id, mail_account_id, provider_message_id)
+             DO UPDATE SET provider_folder_id = EXCLUDED.provider_folder_id,
+                           updated_at = now()",
+        )
+        .bind(tx.workspace_id())
+        .bind(mail_account_id)
+        .bind(message_id)
+        .bind(folder_id)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+    }
+    Ok(())
+}
+
+/// Find the folder previously observed for a real provider message ID.
+pub async fn provider_folder_id_for_message(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    provider_message_id: &str,
+) -> Result<Option<String>, AppError> {
+    if !valid_provider_id(provider_message_id) {
+        return Ok(None);
+    }
+    sqlx::query_scalar(
+        "SELECT provider_folder_id FROM mail_provider_message_locations
+          WHERE workspace_id = $1 AND mail_account_id = $2 AND provider_message_id = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(mail_account_id)
+    .bind(provider_message_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ProviderReplyTargetRow {
+    pub purpose: String,
+    pub has_reply_target: bool,
+    pub provider_message_id: Option<String>,
+}
+
+/// Resolve an Office outbound correlation UUID to the Zoho provider ID of its
+/// stored reply target. Both workspace and mailbox are part of the join. The
+/// boolean distinguishes a new message from a reply whose provider ID is not
+/// known yet, so callers never silently send the latter as a new email.
+pub async fn provider_reply_target(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    outbound_id: Uuid,
+) -> Result<Option<ProviderReplyTargetRow>, AppError> {
+    sqlx::query_as::<_, ProviderReplyTargetRow>(
+        "SELECT o.purpose,
+                o.reply_to_message_id IS NOT NULL AS has_reply_target,
+                m.provider_message_id
+           FROM outbound_messages o
+           LEFT JOIN email_messages m
+             ON m.workspace_id = o.workspace_id
+            AND m.mail_account_id = o.mail_account_id
+            AND m.id = o.reply_to_message_id
+            AND m.direction = 'inbound'
+            AND m.provider_message_id ~ '^[0-9]{1,64}$'
+          WHERE o.workspace_id = $1 AND o.id = $2 AND o.mail_account_id = $3
+          LIMIT 1",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound_id)
+    .bind(mail_account_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+fn valid_provider_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 64 && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// Successful exchange → `active` with the provider's subject + scopes.

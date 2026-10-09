@@ -11,8 +11,6 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftIcon,
   CheckIcon,
-  PlusIcon,
-  Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -81,7 +79,6 @@ import { useIdempotencyKey } from "./use-idempotency-key";
 export type BuilderMode = "create" | "revision" | "clone";
 
 const STEP_COUNT = 6;
-const MAX_STEPS = 3; // campaign_steps.step_order CHECK (1..3)
 
 /** ISO 요일(1=월…7=일) → 메시지 키 */
 const WEEKDAY_KEYS = [
@@ -99,7 +96,6 @@ interface StepDraft {
   key: string;
   templateId: string;
   versionId: string;
-  delayHours: string;
 }
 
 let stepSeq = 0;
@@ -107,7 +103,6 @@ const newStep = (): StepDraft => ({
   key: `s${++stepSeq}`,
   templateId: "",
   versionId: "",
-  delayHours: "0",
 });
 
 /** IANA 시간대 유효성 — Intl 이 모르는 값이면 거절한다. */
@@ -201,9 +196,19 @@ export function CampaignBuilder({
   // (React 권장 "adjusting state when props change" 패턴).
   const [seededFrom, setSeededFrom] = useState<unknown>(null);
   const src = source.data;
+  const sourceRevision = src?.revision ?? latestRevision(src?.revisions);
+  const sourceSteps = sourceRevision?.steps;
+  const sourceHasLegacyWorkflow = Boolean(
+    needsSource &&
+      sourceRevision &&
+      (!sourceSteps ||
+        sourceSteps.length !== 1 ||
+        sourceSteps[0]?.step_order !== 1 ||
+        sourceSteps[0]?.delay_hours !== 0)
+  );
   if (needsSource && src && seededFrom !== src) {
     setSeededFrom(src);
-    const rev = src.revision ?? latestRevision(src.revisions);
+    const rev = sourceRevision;
     setName(mode === "clone" ? `${src.name} ${t("cloneSuffix")}` : src.name);
     setObjective(src.objective ?? "");
     if (rev) {
@@ -221,14 +226,13 @@ export function CampaignBuilder({
       if (rules.window_end) setWindowEnd(String(rules.window_end).slice(0, 5));
       if (rules.internal_daily_cap != null) setDailyCap(String(rules.internal_daily_cap));
       if (rules.minimum_gap_seconds != null) setMinGap(String(rules.minimum_gap_seconds));
-      // steps 는 revision.steps — template_version_id·delay_hours 만 복사한다.
-      if (Array.isArray(rev.steps) && rev.steps.length > 0) {
+      // Do not silently truncate a legacy sequence into a different campaign.
+      if (!sourceHasLegacyWorkflow && Array.isArray(rev.steps) && rev.steps.length === 1) {
         setSteps(
           rev.steps.map((s) => ({
             key: `s${++stepSeq}`,
             templateId: "",
             versionId: s.template_version_id,
-            delayHours: String(s.delay_hours ?? 0),
           }))
         );
       }
@@ -353,13 +357,13 @@ export function CampaignBuilder({
           ? { launch_expires_at: localToIso(expiresAt) }
           : {}),
       }, meetingTypeId),
-      steps: steps.map(
-        (s, i): CampaignStepInput => ({
-          step_order: i + 1,
-          template_version_id: s.versionId,
-          delay_hours: Number.parseInt(s.delayHours, 10) || 0,
-        })
-      ),
+      steps: [
+        {
+          step_order: 1,
+          template_version_id: steps[0]?.versionId ?? "",
+          delay_hours: 0,
+        } satisfies CampaignStepInput,
+      ],
       stop_on_reply: stopOnReply,
       stop_on_booking: stopOnBooking,
     };
@@ -374,7 +378,7 @@ export function CampaignBuilder({
     } else if (n === 2) {
       if (audience.size === 0) errs.push(t("validationAudience"));
     } else if (n === 3) {
-      if (steps.length === 0 || steps.some((s) => !s.versionId))
+      if (steps.length !== 1 || !steps[0]?.versionId)
         errs.push(t("validationSteps"));
       if (bookingUrlBindingIsMissing)
         errs.push(t("validationMeetingTypeRequired"));
@@ -567,6 +571,36 @@ export function CampaignBuilder({
             <AlertDescription>{t("sourceMissing")}</AlertDescription>
           </Alert>
         )}
+      </div>
+    );
+  }
+  if (sourceHasLegacyWorkflow && source.data && sourceRevision) {
+    return (
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
+        <Link
+          href={mode === "revision" ? `/app/campaigns/${sourceCampaignId}` : "/app/campaigns"}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeftIcon className="size-4" aria-hidden />
+          {tList("title")}
+        </Link>
+        <PageHeader
+          title={mode === "revision" ? t("revisionFor", { name: source.data.name }) : title}
+          description={t("description")}
+        />
+        <Alert variant="warning">
+          <TriangleAlertIcon />
+          <AlertTitle>{t("legacyWorkflowTitle")}</AlertTitle>
+          <AlertDescription>
+            {t("legacyWorkflowDescription", { count: sourceSteps?.length ?? 0 })}
+          </AlertDescription>
+        </Alert>
+        <Link
+          href="/app/campaigns/new"
+          className="w-fit text-sm font-medium underline underline-offset-4"
+        >
+          {t("startNewCampaign")}
+        </Link>
       </div>
     );
   }
@@ -788,40 +822,22 @@ export function CampaignBuilder({
         />
       ) : null}
 
-      {/* ── 3. 시퀀스 ────────────────────────────────── */}
+      {/* ── 3. 단일 메시지 ──────────────────────────── */}
       {step === 3 ? (
         <section className="flex flex-col gap-4 rounded-2xl border border-border bg-card px-4 py-4">
           <div>
-            <h3 className="text-sm font-medium">{t("sequenceSteps")}</h3>
+            <h3 className="text-sm font-medium">{t("singleMessage")}</h3>
             <p className="mt-0.5 text-2xs text-muted-foreground">
-              {t("delayHint")}
+              {t("immediateMessageHint")}
             </p>
           </div>
-          {steps.map((s, i) => (
+          {steps.map((s) => (
             <div
               key={s.key}
               className="flex flex-col gap-3 rounded-lg border border-border px-3 py-3"
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium">
-                  {t("stepOrder", { order: i + 1 })}
-                </span>
-                {steps.length > 1 ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t("removeStep")}
-                    disabled={locked}
-                    onClick={() =>
-                      setSteps((ss) => ss.filter((x) => x.key !== s.key))
-                    }
-                  >
-                    <Trash2Icon aria-hidden />
-                  </Button>
-                ) : null}
-              </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_7rem]">
+              <span className="text-sm font-medium">{t("message")}</span>
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="grid gap-1.5">
                   <Label>{t("template")}</Label>
                   <Select
@@ -879,23 +895,6 @@ export function CampaignBuilder({
                       {shortHash(s.versionId, 18)}
                     </p>
                   ) : null}
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>{t("delayHours")}</Label>
-                  <Input
-                    value={s.delayHours}
-                    onChange={(e) =>
-                      setSteps((ss) =>
-                        ss.map((x) =>
-                          x.key === s.key
-                            ? { ...x, delayHours: e.target.value }
-                            : x
-                        )
-                      )
-                    }
-                    inputMode="numeric"
-                    disabled={locked}
-                  />
                 </div>
               </div>
               {s.versionId ? (
@@ -982,24 +981,6 @@ export function CampaignBuilder({
               </p>
             ) : null}
           </div>
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={locked || steps.length >= MAX_STEPS}
-              onClick={() => setSteps((ss) => [...ss, newStep()])}
-            >
-              <PlusIcon aria-hidden />
-              {t("addStep")}
-            </Button>
-            {steps.length >= MAX_STEPS ? (
-              <span className="text-2xs text-muted-foreground">
-                {t("stepsMax", { count: MAX_STEPS })}
-              </span>
-            ) : null}
-          </div>
-
           <fieldset className="grid gap-2">
             <legend className="text-sm font-medium">{t("stopConditions")}</legend>
             <label className="flex items-center gap-2 text-sm">
@@ -1154,7 +1135,7 @@ export function CampaignBuilder({
             <dt className="text-muted-foreground">{t("step2")}</dt>
             <dd>{tAudience("selectedCount", { count: audience.size })}</dd>
             <dt className="text-muted-foreground">{t("step3")}</dt>
-            <dd>{t("sequenceSteps")} × {steps.length}</dd>
+            <dd>{t("immediateSend")}</dd>
             <dt className="text-muted-foreground">{t("meetingType")}</dt>
             <dd>
               {selectedMeetingType?.name ??

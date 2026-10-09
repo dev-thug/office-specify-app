@@ -27,16 +27,21 @@ import { formatDateTime, shortHash } from "./format";
 import { RenderPreview } from "./render-preview";
 import { useEmailTemplate } from "./use-email-template";
 import { VersionEditor } from "./version-editor";
+import { useIsAdmin } from "@/features/settings/use-me";
+import { ZohoTemplateLibrary, type ZohoOfficeImportSeed } from "./zoho-template-library";
 
 export function TemplateDetail({ templateId }: { templateId: string }) {
   const t = useTranslations("templates.detail");
   const tCommon = useTranslations("common");
   const locale = useLocale();
+  const isAdmin = useIsAdmin();
   const template = useEmailTemplate(templateId);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(
     null
   );
   const [editorOpen, setEditorOpen] = useState(false);
+  const [zohoLibraryOpen, setZohoLibraryOpen] = useState(false);
+  const [editorSeed, setEditorSeed] = useState<ZohoOfficeImportSeed | null>(null);
 
   const versions = useCursorList<TemplateVersionSummary>({
     queryKey: ["templates", "versions", templateId],
@@ -100,15 +105,22 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
         title={template.data?.name ?? "…"}
         description={t("immutableNote")}
         actions={
-          <Button
-            type="button"
-            size="sm"
-            disabled={archived}
-            onClick={() => setEditorOpen(true)}
-          >
-            <PlusIcon aria-hidden />
-            {t("newVersion")}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {isAdmin ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => setZohoLibraryOpen(true)}>
+                {t("zohoTemplates")}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              disabled={archived}
+              onClick={() => { setEditorSeed(null); setEditorOpen(true); }}
+            >
+              <PlusIcon aria-hidden />
+              {t("newVersion")}
+            </Button>
+          </div>
         }
       />
 
@@ -201,8 +213,15 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
       <VersionEditor
         templateId={templateId}
         open={editorOpen}
-        onOpenChange={setEditorOpen}
-        onCreated={(id) => { setSelectedVersionId(id); void versions.refetch(); }}
+        onOpenChange={(open) => { setEditorOpen(open); if (!open) setEditorSeed(null); }}
+        initialSeed={editorSeed}
+        onCreated={(id) => { setSelectedVersionId(id); setEditorSeed(null); void versions.refetch(); }}
+      />
+      <ZohoTemplateLibrary
+        open={zohoLibraryOpen}
+        onOpenChange={setZohoLibraryOpen}
+        allowImport={!archived}
+        onImportSeed={(seed) => { setEditorSeed(seed); setEditorOpen(true); }}
       />
     </div>
   );

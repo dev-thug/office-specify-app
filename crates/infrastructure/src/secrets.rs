@@ -50,6 +50,33 @@ impl FileSecretStore {
         Aes256Gcm::new_from_slice(&self.key).expect("32-byte key")
     }
 
+    /// Lock a stable sibling file across independent API/worker processes.
+    async fn process_lock(&self) -> Result<std::fs::File, AppError> {
+        let path = self.path.with_extension("lock");
+        tokio::task::spawn_blocking(move || {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|_| {
+                    AppError::internal("secret lock directory could not be created")
+                })?;
+            }
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let file = options
+                .open(path)
+                .map_err(|_| AppError::internal("secret store lock could not be opened"))?;
+            file.lock()
+                .map_err(|_| AppError::internal("secret store lock could not be acquired"))?;
+            Ok(file)
+        })
+        .await
+        .map_err(|_| AppError::internal("secret store lock task failed"))?
+    }
+
     async fn load(&self) -> Result<StoreFile, AppError> {
         match tokio::fs::read(&self.path).await {
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -67,15 +94,26 @@ impl FileSecretStore {
         }
         let bytes = serde_json::to_vec(file)
             .map_err(|e| AppError::internal(format!("secret store encode: {e}")))?;
-        tokio::fs::write(&self.path, bytes)
-            .await
-            .map_err(|e| AppError::internal(format!("secret store write: {e}")))?;
-        // Best-effort 0600 on unix.
+        use tokio::io::AsyncWriteExt;
+        let temp = self
+            .path
+            .with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+        let mut options = tokio::fs::OpenOptions::new();
+        options.create_new(true).write(true);
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
-                .await;
+        options.mode(0o600);
+        let mut file = options
+            .open(&temp)
+            .await
+            .map_err(|_| AppError::internal("secret store temporary file could not be created"))?;
+        if file.write_all(&bytes).await.is_err() || file.sync_all().await.is_err() {
+            let _ = tokio::fs::remove_file(&temp).await;
+            return Err(AppError::internal("secret store write failed"));
+        }
+        drop(file);
+        if tokio::fs::rename(&temp, &self.path).await.is_err() {
+            let _ = tokio::fs::remove_file(&temp).await;
+            return Err(AppError::internal("secret store atomic replacement failed"));
         }
         Ok(())
     }
@@ -85,6 +123,7 @@ impl FileSecretStore {
 impl SecretStore for FileSecretStore {
     async fn put(&self, name: &str, plaintext: &str) -> Result<(), AppError> {
         let _g = self.lock.lock().await;
+        let _process_guard = self.process_lock().await?;
         let mut file = self.load().await?;
         let mut nonce = [0u8; 12];
         rand::rng().fill_bytes(&mut nonce);
@@ -104,6 +143,7 @@ impl SecretStore for FileSecretStore {
 
     async fn get(&self, name: &str) -> Result<Option<String>, AppError> {
         let _g = self.lock.lock().await;
+        let _process_guard = self.process_lock().await?;
         let file = self.load().await?;
         let Some(entry) = file.secrets.get(name) else {
             return Ok(None);
@@ -123,6 +163,7 @@ impl SecretStore for FileSecretStore {
 
     async fn delete(&self, name: &str) -> Result<(), AppError> {
         let _g = self.lock.lock().await;
+        let _process_guard = self.process_lock().await?;
         let mut file = self.load().await?;
         file.secrets.remove(name);
         self.save(&file).await

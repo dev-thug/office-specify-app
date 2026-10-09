@@ -90,7 +90,12 @@ pub fn zoho_accounts_base(region: &str) -> String {
 }
 
 /// OAuth scopes requested per connection flow.
-pub const ZOHO_MAIL_SCOPES: &[&str] = &["ZohoMail.messages.ALL", "ZohoMail.accounts.READ"];
+pub const ZOHO_MAIL_SCOPES: &[&str] = &[
+    "ZohoMail.messages.READ",
+    "ZohoMail.messages.CREATE",
+    "ZohoMail.accounts.READ",
+    "ZohoMail.folders.READ",
+];
 pub const ZOHO_CALENDAR_SCOPES: &[&str] = &["ZohoCalendar.calendar.ALL"];
 
 /// `delivery_channels.provider` values allowed for a purpose. Zoho Mail can
@@ -115,6 +120,19 @@ pub fn activation_policy_blocked(provider: &str, purpose: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zoho_mail_scopes_are_limited_to_used_mail_operations() {
+        assert_eq!(
+            ZOHO_MAIL_SCOPES,
+            &[
+                "ZohoMail.messages.READ",
+                "ZohoMail.messages.CREATE",
+                "ZohoMail.accounts.READ",
+                "ZohoMail.folders.READ",
+            ]
+        );
+    }
 
     #[test]
     fn grant_chain_matches_ddl_checks() {

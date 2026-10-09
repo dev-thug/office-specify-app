@@ -24,7 +24,10 @@ use infrastructure::db::Db;
 use infrastructure::jobs::{self, Job, JobCtx, JobHandler};
 use infrastructure::outbox::{self, OutboxRow};
 use infrastructure::providers::fake::{FakeDeliveryProvider, FakeMailProvider};
-use infrastructure::providers::{CalendarProvider, DeliveryProvider, MailProvider};
+use infrastructure::providers::{
+    CalEvent, CalOutcome, CalendarProvider, DeliveryCapabilities, DeliveryProvider, MailProvider,
+    ProviderError, SendOutcome, SendRequest, SentLookup,
+};
 use uuid::Uuid;
 
 /// Dependencies shared by provider-backed job handlers for one Runner.
@@ -39,23 +42,119 @@ pub struct WorkerContext {
 }
 
 impl WorkerContext {
-    /// Build the v1 fake-provider set from the configured script. Real
-    /// provider calls stay disabled by the current release contract.
+    /// Select explicit test/dev fakes or the fail-closed live Mail router.
+    /// The worker never fabricates a provider success in a real runtime.
     pub fn from_config(db: Db, config: &Config) -> Self {
-        let mail_fake = Arc::new(match config.fake_provider_script.as_deref() {
-            Some(path) => FakeMailProvider::from_script(path),
-            None => FakeMailProvider::new(),
+        let use_fake = config.zoho.fake_for_tests
+            || (config.app_env == infrastructure::config::AppEnv::Dev
+                && !application::mailboxes::oauth::mail_oauth_settings_present(config));
+        let mail_fake = use_fake.then(|| {
+            Arc::new(match config.fake_provider_script.as_deref() {
+                Some(path) => FakeMailProvider::from_script(path),
+                None => FakeMailProvider::new(),
+            })
         });
-        let delivery_fake = Arc::new(match config.fake_provider_script.as_deref() {
-            Some(path) => FakeDeliveryProvider::from_script(path),
-            None => FakeDeliveryProvider::new(),
+        let delivery_fake = use_fake.then(|| {
+            Arc::new(match config.fake_provider_script.as_deref() {
+                Some(path) => FakeDeliveryProvider::from_script(path),
+                None => FakeDeliveryProvider::new(),
+            })
         });
+        let mail: Arc<dyn MailProvider> = mail_fake
+            .as_ref()
+            .map(|provider| provider.clone() as Arc<dyn MailProvider>)
+            .unwrap_or_else(|| {
+                Arc::new(application::mailboxes::MailProviderRouter::new(
+                    db.clone(),
+                    Arc::new(config.clone()),
+                ))
+            });
+        let calendar: Arc<dyn CalendarProvider> = mail_fake
+            .as_ref()
+            .map(|provider| provider.clone() as Arc<dyn CalendarProvider>)
+            .unwrap_or_else(|| Arc::new(DisabledCalendarProvider));
+        let delivery: Arc<dyn DeliveryProvider> = delivery_fake
+            .as_ref()
+            .map(|provider| provider.clone() as Arc<dyn DeliveryProvider>)
+            .unwrap_or_else(|| Arc::new(DisabledDeliveryProvider));
         Self {
             db,
-            mail: mail_fake.clone(),
-            delivery: delivery_fake,
-            calendar: mail_fake,
+            mail,
+            delivery,
+            calendar,
         }
+    }
+}
+
+struct DisabledCalendarProvider;
+
+#[async_trait::async_trait]
+impl CalendarProvider for DisabledCalendarProvider {
+    async fn free_busy(
+        &self,
+        _host: &str,
+        _range_start: chrono::DateTime<chrono::Utc>,
+        _range_end: chrono::DateTime<chrono::Utc>,
+    ) -> CalOutcome<Vec<infrastructure::providers::BusyBlock>> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "Zoho Calendar is not configured".into(),
+        }
+    }
+
+    async fn create_event(
+        &self,
+        _host: &str,
+        _title: &str,
+        _start: chrono::DateTime<chrono::Utc>,
+        _end: chrono::DateTime<chrono::Utc>,
+        _attendee_email: &str,
+    ) -> CalOutcome<CalEvent> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "Zoho Calendar is not configured".into(),
+        }
+    }
+
+    async fn update_event(
+        &self,
+        _host: &str,
+        _provider_event_id: &str,
+        _title: &str,
+        _start: chrono::DateTime<chrono::Utc>,
+        _end: chrono::DateTime<chrono::Utc>,
+    ) -> CalOutcome<CalEvent> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "Zoho Calendar is not configured".into(),
+        }
+    }
+
+    async fn cancel_event(&self, _host: &str, _provider_event_id: &str) -> CalOutcome<()> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "Zoho Calendar is not configured".into(),
+        }
+    }
+}
+
+struct DisabledDeliveryProvider;
+
+#[async_trait::async_trait]
+impl DeliveryProvider for DisabledDeliveryProvider {
+    fn capabilities(&self) -> DeliveryCapabilities {
+        DeliveryCapabilities::default()
+    }
+
+    async fn send(&self, _request: SendRequest) -> Result<SendOutcome, ProviderError> {
+        Err(ProviderError::NotConfigured)
+    }
+
+    async fn lookup_sent(
+        &self,
+        _correlation_id: &str,
+    ) -> Result<Option<SentLookup>, ProviderError> {
+        Ok(None)
     }
 }
 
@@ -563,5 +662,42 @@ impl Runner {
                 tokio::time::sleep(self.poll_interval).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod runtime_provider_tests {
+    use super::*;
+    use infrastructure::{
+        config::{AppEnv, Config},
+        db::Db,
+    };
+
+    fn lazy_db() -> Db {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://test:test@127.0.0.1/outreach_test")
+            .unwrap();
+        Db::new(pool, None, None)
+    }
+
+    #[tokio::test]
+    async fn worker_uses_fake_only_for_explicit_fixture_or_unconfigured_dev() {
+        let explicit_fake = WorkerContext::from_config(lazy_db(), &Config::test());
+        assert!(explicit_fake.mail.capabilities().supports_send);
+
+        let mut test_without_fake = Config::test();
+        test_without_fake.zoho.fake_for_tests = false;
+        let fail_closed_test = WorkerContext::from_config(lazy_db(), &test_without_fake);
+        assert!(!fail_closed_test.mail.capabilities().supports_send);
+
+        let mut dev_without_mail_oauth = Config::test();
+        dev_without_mail_oauth.zoho.fake_for_tests = false;
+        dev_without_mail_oauth.app_env = AppEnv::Dev;
+        let development_fake = WorkerContext::from_config(lazy_db(), &dev_without_mail_oauth);
+        assert!(development_fake.mail.capabilities().supports_send);
+
+        dev_without_mail_oauth.zoho.mail_client_id = Some("1000.partial-mail-client".into());
+        let partial_dev = WorkerContext::from_config(lazy_db(), &dev_without_mail_oauth);
+        assert!(!partial_dev.mail.capabilities().supports_send);
     }
 }

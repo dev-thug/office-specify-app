@@ -11,11 +11,13 @@ pub mod crm;
 pub mod imports;
 pub mod inbox;
 pub mod mailboxes;
+pub mod marketing;
 pub mod operations;
 pub mod org;
 pub mod research;
 pub mod sending;
 pub mod templates;
+pub mod zoho_templates;
 
 use utoipa_axum::router::OpenApiRouter;
 
@@ -26,6 +28,8 @@ pub fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(org::router())
         .merge(mailboxes::router())
+        .merge(marketing::router())
+        .merge(zoho_templates::router())
         .merge(crm::router())
         .merge(research::router())
         .merge(imports::router())

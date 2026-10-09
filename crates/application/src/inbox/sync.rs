@@ -63,7 +63,7 @@ pub async fn sync_mailbox(
     let mut scanned = 0usize;
     let mut inserted = 0usize;
     let mut messages = Vec::new();
-    for _ in 0..MAX_PAGES {
+    for _ in 0..(MAX_PAGES as usize).min(mail.sync_page_budget().max(1)) {
         let (page, next) = mail
             .list_messages(cursor.clone(), PAGE_LIMIT)
             .await

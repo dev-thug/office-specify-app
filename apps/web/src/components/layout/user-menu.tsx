@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOutIcon, UserRoundIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
@@ -31,6 +31,7 @@ function initials(name: string | undefined): string {
 export function UserMenu() {
   const t = useTranslations("common");
   const router = useRouter();
+  const queryClient = useQueryClient();
   // 세션 정보 — API가 아직 없으면 조용히 플레이스홀더를 보인다.
   const { data } = useQuery({
     queryKey: ["me"],
@@ -42,7 +43,12 @@ export function UserMenu() {
 
   const logoutMutation = useMutation({
     mutationFn: logout,
+    onMutate: async () => {
+      await queryClient.cancelQueries();
+      queryClient.clear();
+    },
     onSettled: () => {
+      queryClient.clear();
       // 세션 쿠키는 HttpOnly — 서버가 지우므로 결과와 무관하게 로그인으로 보낸다.
       router.push("/login");
       router.refresh();

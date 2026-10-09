@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let state = api::AppState::with_fake_providers(db, config.clone(), rate_limiter);
+    let state = api::AppState::from_config(db, config.clone(), rate_limiter);
     let app = api::build_app(state);
 
     let listener = tokio::net::TcpListener::bind(config.api_addr).await?;

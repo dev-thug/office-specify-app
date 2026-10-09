@@ -1380,6 +1380,220 @@ async fn t13_expired_dispatch_lease_isolated_and_reconciled_without_resubmit() {
     assert_eq!(mail.send_calls(), 0);
 }
 
+#[tokio::test]
+async fn queued_legacy_campaign_follow_up_is_canceled_before_provider_send() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    enable_sending(&db, ws).await;
+
+    let (outbound_id, job_id) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let (sender_identity_id, channel_id) = sender_and_channel(
+            &mut tx,
+            world.mail_account_id,
+            world.connection_id,
+            "marketing",
+        )
+        .await;
+        let address_id = email_address(&mut tx, "legacy-follow-up").await;
+        valid_basis(&mut tx, address_id, world.admin.principal_id, "marketing").await;
+        let template_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO email_templates (workspace_id, name, created_by)
+             VALUES ($1, $2, $3) RETURNING id",
+        )
+        .bind(ws)
+        .bind(format!("legacy-step-{}", Uuid::new_v4()))
+        .bind(world.admin.principal_id)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        let template_version_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO template_versions
+                (workspace_id, template_id, version_no, subject, body_text,
+                 variable_schema, content_hash, created_by)
+             VALUES ($1, $2, 1, 'Follow-up', 'Body', '{}', decode(md5(random()::text), 'hex'), $3)
+             RETURNING id",
+        )
+        .bind(ws)
+        .bind(template_id)
+        .bind(world.admin.principal_id)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        let campaign_id = infrastructure::repo::campaigns::insert_campaign(
+            &mut tx,
+            world.mail_account_id,
+            "Legacy campaign",
+            None,
+            world.admin.principal_id,
+        )
+        .await
+        .unwrap();
+        let revision_id = infrastructure::repo::campaigns::insert_revision(
+            &mut tx,
+            campaign_id,
+            world.mail_account_id,
+            channel_id,
+            1,
+            "UTC",
+            &serde_json::json!({"weekdays":[1,2,3,4,5,6,7],"window_start":"00:00","window_end":"23:59"}),
+            true,
+            true,
+            world.admin.principal_id,
+        )
+        .await
+        .unwrap();
+        let _first_step_id = infrastructure::repo::campaigns::insert_step(
+            &mut tx,
+            revision_id,
+            template_version_id,
+            1,
+            0,
+        )
+        .await
+        .unwrap();
+        let follow_up_step_id = infrastructure::repo::campaigns::insert_step(
+            &mut tx,
+            revision_id,
+            template_version_id,
+            2,
+            24,
+        )
+        .await
+        .unwrap();
+        let launch_id = infrastructure::repo::campaigns::insert_launch(
+            &mut tx,
+            revision_id,
+            channel_id,
+            world.admin.principal_id,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+        let enrollment_id = infrastructure::repo::campaigns::insert_enrollment(
+            &mut tx,
+            launch_id,
+            revision_id,
+            address_id,
+            None,
+            "pending",
+            None,
+        )
+        .await
+        .unwrap();
+        infrastructure::repo::campaigns::freeze_revision(&mut tx, revision_id)
+            .await
+            .unwrap();
+        infrastructure::repo::campaigns::freeze_launch_row(&mut tx, launch_id, &[7_u8; 32])
+            .await
+            .unwrap();
+        for status in ["awaiting_approval", "approved", "running"] {
+            infrastructure::repo::campaigns::transition_launch(&mut tx, launch_id, status, None)
+                .await
+                .unwrap();
+        }
+        infrastructure::repo::campaigns::set_enrollment_state(
+            &mut tx,
+            enrollment_id,
+            "active",
+            Some(follow_up_step_id),
+            Some(chrono::Utc::now()),
+            None,
+        )
+        .await
+        .unwrap();
+        let basis_id = infrastructure::repo::campaigns::valid_marketing_basis(&mut tx, address_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let outbound_id = infrastructure::repo::campaigns::insert_step_outbound(
+            &mut tx,
+            world.mail_account_id,
+            channel_id,
+            sender_identity_id,
+            address_id,
+            Some(basis_id),
+            launch_id,
+            revision_id,
+            enrollment_id,
+            follow_up_step_id,
+            world.admin.principal_id,
+            "sender@example.test",
+            "legacy-follow-up@example.test",
+            "Follow-up",
+            "Follow-up body",
+            None,
+            &[9_u8; 32],
+        )
+        .await
+        .unwrap();
+        infrastructure::repo::campaigns::queue_outbound_at(
+            &mut tx,
+            outbound_id,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap();
+        let job_id = infrastructure::repo::campaigns::enqueue_dedup(
+            &mut tx,
+            DISPATCH_KIND,
+            serde_json::json!({"outbound_message_id": outbound_id}),
+            chrono::Utc::now(),
+            &infrastructure::repo::campaigns::dispatch_dedupe_key(outbound_id),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        (outbound_id, job_id)
+    };
+
+    let mail = Arc::new(StubMail::default());
+    run_dispatch(
+        &db,
+        &providers(mail.clone(), Arc::new(StubDelivery::default())),
+        &JobCtx {
+            job_id,
+            workspace_id: ws,
+            lease_token: Uuid::new_v4(),
+            attempt_count: 1,
+            lease_owner: "test-worker".into(),
+        },
+        outbound_id,
+    )
+    .await
+    .unwrap();
+
+    let (status, code) = outbound_status(&db, ws, outbound_id).await;
+    assert_eq!(status, "canceled");
+    assert_eq!(code.as_deref(), Some("CAMPAIGN_FOLLOW_UP_DISABLED"));
+    assert_eq!(
+        mail.send_calls(),
+        0,
+        "legacy follow-ups must not reach a provider"
+    );
+    let mut tx = db.begin(ws).await.unwrap();
+    let attempts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM send_attempts WHERE workspace_id=$1 AND outbound_message_id=$2",
+    )
+    .bind(ws)
+    .bind(outbound_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(ws)
+            .bind(job_id)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    assert_eq!(attempts, 0);
+    assert_eq!(state, "canceled");
+    tx.rollback().await.unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // T10 — requester / approver permissions revoked before dispatch
 // ---------------------------------------------------------------------------

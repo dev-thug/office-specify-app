@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -16,6 +17,7 @@ export function LoginForm() {
   const t = useTranslations("auth.login");
   const tAuth = useTranslations("auth");
   const router = useRouter();
+  const queryClient = useQueryClient();
   const params = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,6 +37,8 @@ export function LoginForm() {
     setPending(true);
     setError(null);
     try {
+      await queryClient.cancelQueries();
+      queryClient.clear();
       await login({ email, password }, { idempotencyKey: idemRef.current });
       router.push(safeNextPath(params.get("next")));
       router.refresh();

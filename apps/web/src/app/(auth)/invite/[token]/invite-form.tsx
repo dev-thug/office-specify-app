@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -18,6 +18,7 @@ export function InviteForm() {
   const tAuth = useTranslations("auth");
   const { token } = useParams<{ token: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
@@ -64,6 +65,8 @@ export function InviteForm() {
     setPending(true);
     setError(null);
     try {
+      await queryClient.cancelQueries();
+      queryClient.clear();
       await acceptInvitation(
         token,
         {

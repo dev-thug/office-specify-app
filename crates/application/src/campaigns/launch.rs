@@ -116,8 +116,10 @@ pub async fn create_launch(
         ));
     }
     let steps = repo::list_steps(tx, revision.id).await?;
-    if steps.is_empty() {
-        return Err(AppError::conflict("revision has no steps"));
+    if steps.len() != 1 || steps[0].step_order != 1 || steps[0].delay_hours != 0 {
+        return Err(AppError::conflict(
+            "this legacy revision contains follow-up automation and cannot be launched; its stored steps remain unchanged",
+        ));
     }
 
     let rules = domain::campaigns::ScheduleRules::from_json(&revision.schedule_rules)

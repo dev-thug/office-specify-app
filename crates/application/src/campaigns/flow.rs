@@ -234,9 +234,10 @@ pub async fn activate_launch(
     Ok(())
 }
 
-/// `campaigns.schedule_next_step` — after `outbound.accepted`. Advances the
-/// enrollment to the next step (delay relative to the accepted message's
-/// `accepted_at`, then window-clamped) or completes it.
+/// `campaigns.schedule_next_step` — after `outbound.accepted`. Campaign
+/// authoring no longer supports follow-up automation. Legacy enrollments
+/// finish their accepted message, cancel any queued follow-ups, and retain
+/// their original revision rows for audit/history.
 pub async fn schedule_next_step(
     tx: &mut Tx<'_>,
     actor: Uuid,
@@ -264,6 +265,45 @@ pub async fn schedule_next_step(
         .map(|s| s.step_order)
         .unwrap_or(0);
     let next_step = steps.iter().find(|s| s.step_order == current_order + 1);
+
+    if let Some(next) = next_step {
+        let reason = "follow_up_automation_disabled";
+        repo::set_enrollment_state(
+            tx,
+            enrollment_id,
+            d::enrollment_status::STOPPED,
+            e.current_step_id,
+            None,
+            Some(reason),
+        )
+        .await?;
+        cancel_pending_sends(tx, &[enrollment_id]).await?;
+
+        let counts = repo::enrollment_counts(tx, e.launch_id).await?;
+        if counts.pending == 0 && counts.active == 0 && launch.status == d::launch_status::RUNNING {
+            repo::transition_launch(tx, e.launch_id, d::launch_status::COMPLETED, None).await?;
+            if let Some(revision) = repo::get_revision(tx, e.revision_id).await? {
+                repo::sync_campaign_status(tx, revision.campaign_id).await?;
+            }
+        }
+        audit::record(
+            tx,
+            audited_system(
+                actor,
+                Some(job_id),
+                "campaign.enrollment_stopped",
+                "campaign_enrollment",
+                enrollment_id,
+                serde_json::json!({
+                    "launch_id": e.launch_id,
+                    "reason": reason,
+                    "follow_up_step_order": next.step_order,
+                }),
+            ),
+        )
+        .await?;
+        return Ok(());
+    }
 
     let Some(next) = next_step else {
         // Sequence finished.

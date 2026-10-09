@@ -52,6 +52,37 @@ export interface VariableRow {
   maxLength: string;
 }
 
+export interface VersionEditorSeed {
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+}
+
+interface VersionEditorProps {
+  templateId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (id: string) => void;
+  initialSeed?: VersionEditorSeed | null;
+}
+
+/** A new editor session starts blank, while an import seed initializes only that session. */
+export function VersionEditor(props: VersionEditorProps) {
+  let seedId = "empty";
+  if (props.initialSeed) {
+    let firstHash = 0x811c9dc5;
+    let secondHash = 0x9e3779b9;
+    const source = [props.initialSeed.subject, props.initialSeed.bodyText, props.initialSeed.bodyHtml ?? ""].join("\u0000");
+    for (let index = 0; index < source.length; index += 1) {
+      const code = source.charCodeAt(index);
+      firstHash = Math.imul(firstHash ^ code, 0x01000193);
+      secondHash = Math.imul(secondHash ^ code, 0x85ebca6b);
+    }
+    seedId = `${firstHash >>> 0}-${secondHash >>> 0}`;
+  }
+  return <VersionEditorForm key={seedId} {...props} />;
+}
+
 let rowSeq = 0;
 const newRow = (): VariableRow => ({
   key: `v${++rowSeq}`,
@@ -108,27 +139,42 @@ export function buildVariableSchema(
   };
 }
 
-export function VersionEditor({
+function rowsForSeed(seed: VersionEditorSeed): VariableRow[] {
+  const names = new Set<string>();
+  for (const text of [seed.subject, seed.bodyText, seed.bodyHtml ?? ""]) {
+    for (const match of text.matchAll(PLACEHOLDER)) {
+      if (match[1]) names.add(match[1]);
+    }
+  }
+  return [...names].map((name) => {
+    const preset = DEFAULT_EMAIL_VARIABLES.find((item) => item.name === name);
+    return {
+      ...newRow(),
+      name,
+      type: preset?.type ?? "string",
+      maxLength: preset?.maxLength ?? "",
+      required: true,
+    };
+  });
+}
+
+function VersionEditorForm({
   templateId,
   open,
   onOpenChange,
   onCreated,
-}: {
-  templateId: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreated: (id: string) => void;
-}) {
+  initialSeed,
+}: VersionEditorProps) {
   const t = useTranslations("templates.editor");
   const tCommon = useTranslations("common");
   const a = useTranslations("templates.authoring");
   const errorMessage = useApiErrorMessage("templates");
   const idem = useIdempotencyKey();
 
-  const [subject, setSubject] = useState("");
-  const [bodyText, setBodyText] = useState("");
-  const [bodyHtml, setBodyHtml] = useState("");
-  const [rows, setRows] = useState<VariableRow[]>([]);
+  const [subject, setSubject] = useState(initialSeed?.subject ?? "");
+  const [bodyText, setBodyText] = useState(initialSeed?.bodyText ?? "");
+  const [bodyHtml, setBodyHtml] = useState(initialSeed?.bodyHtml ?? "");
+  const [rows, setRows] = useState<VariableRow[]>(() => initialSeed ? rowsForSeed(initialSeed) : []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
@@ -136,7 +182,7 @@ export function VersionEditor({
   const subjectInput = useRef<HTMLInputElement>(null);
   const textInput = useRef<HTMLTextAreaElement>(null);
   const insertTarget = useRef<"subject" | "text" | "body">("body");
-  const [autoText, setAutoText] = useState(true);
+  const [autoText, setAutoText] = useState(!initialSeed);
   const [samples, setSamples] = useState<Record<string, string>>({
     "company.name": a("sampleCompany"), "contact.name": a("sampleContact"),
     "sender.display_name": a("sampleSender"),

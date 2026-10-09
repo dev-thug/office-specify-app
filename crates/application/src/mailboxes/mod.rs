@@ -10,6 +10,9 @@ pub mod calendar;
 pub mod channels;
 pub mod grants;
 pub mod oauth;
+pub mod real_provider;
+
+pub use real_provider::MailProviderRouter;
 
 pub use accounts::{get_mail_account, list_mail_accounts};
 pub use calendar::{list_calendar_connections, request_calendar_connection};
