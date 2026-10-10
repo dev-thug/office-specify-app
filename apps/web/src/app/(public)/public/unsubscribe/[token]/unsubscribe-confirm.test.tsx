@@ -99,7 +99,7 @@ describe("UnsubscribeConfirm", () => {
     expect(calls.map((c) => c.init?.method)).toContain("POST");
     expect(
       screen.getByText(
-        "Office saved your unsubscribe as a local block. The external email service will reflect this asynchronously; this page does not confirm that update."
+        "Office recorded your unsubscribe. This organization's marketing sends will exclude you."
       )
     ).toBeInTheDocument();
     expect(screen.queryByText("Unsubscribed from Example Corp marketing.")).toBeNull();

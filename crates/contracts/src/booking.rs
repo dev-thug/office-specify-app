@@ -225,6 +225,8 @@ pub struct BookingAttendanceRequest {
 pub struct ManageBookingResponse {
     pub id: Uuid,
     pub guest_name: String,
+    pub meeting_name: String,
+    pub host_display_name: String,
     pub guest_memo: Option<String>,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,

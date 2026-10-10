@@ -217,6 +217,15 @@ function VersionEditorForm({
       requestAnimationFrame(() => input.setSelectionRange(start + value.length, start + value.length));
     } else { canvas.current?.insertVariable(preset.name); }
   }
+  function insertBookingCta() {
+    const label = a("bookingCtaLabel");
+    registerPresets("{{meeting.booking_url}}");
+    canvas.current?.insertBookingCta(label);
+    if (!autoText) {
+      const plainText = label + " ({{meeting.booking_url}})";
+      setBodyText((current) => current ? current + "\n\n" + plainText : plainText);
+    }
+  }
   const sampleSubject = subject.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}/g, (token, name: string) => samples[name] ?? token);
   const sampleHtml = typeof document === "undefined" ? "" : renderSampleEmail(bodyHtml || "<p>" + escapeEmailText(bodyText).replaceAll("\n", "<br>") + "</p>", samples);
 
@@ -344,6 +353,23 @@ function VersionEditorForm({
                   <span className="min-w-0"><span className="block text-xs">{a(preset.label)}</span><code className="block break-all text-2xs font-normal text-muted-foreground">{preset.name}</code></span>
                 </Button>)}
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-auto justify-start gap-2 py-2 text-left"
+                onMouseDown={event => event.preventDefault()}
+                onClick={insertBookingCta}
+                aria-label={a("insertBookingCta")}
+              >
+                <PlusIcon className="size-3.5 shrink-0" aria-hidden />
+                <span className="min-w-0">
+                  <span className="block text-xs">{a("bookingCtaLabel")}</span>
+                  <code className="block break-all text-2xs font-normal text-muted-foreground">
+                    {'{{meeting.booking_url}}'}
+                  </code>
+                </span>
+              </Button>
+              <p className="text-2xs text-muted-foreground">{a("bookingCtaHint")}</p>
               <p className="text-2xs text-muted-foreground">{a("systemHint")}</p>
               <details className="border-t pt-3">
                 <summary className="cursor-pointer text-xs font-medium">{a("sampleValues")}</summary>

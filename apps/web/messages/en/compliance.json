@@ -181,7 +181,7 @@
     "footnote": "Processed immediately without sign-in. Pressing again gives the same result.",
     "checking": "Checking the link…",
     "doneTitle": "Unsubscribe processed",
-    "doneDescription": "Office saved your unsubscribe as a local block. The external email service will reflect this asynchronously; this page does not confirm that update.",
+    "doneDescription": "Office recorded your unsubscribe. This organization's marketing sends will exclude you.",
     "doneScope": "Applied scope: {scope}",
     "invalidTitle": "This link cannot be used",
     "invalidDescription": "The link is expired or invalid. Use the latest unsubscribe link from the email you received.",

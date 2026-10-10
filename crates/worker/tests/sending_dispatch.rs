@@ -611,15 +611,20 @@ async fn dispatch_accepted_path() {
 
 #[tokio::test]
 async fn marketing_list_unsubscribe_uses_bound_one_click_api_route() {
-    marketing_unsubscribe_headers(true).await;
+    marketing_unsubscribe_headers(true, "https://office.example.test").await;
 }
 
 #[tokio::test]
 async fn generic_marketing_does_not_advertise_disabled_one_click() {
-    marketing_unsubscribe_headers(false).await;
+    marketing_unsubscribe_headers(false, "https://office.example.test").await;
 }
 
-async fn marketing_unsubscribe_headers(smtp_bound: bool) {
+#[tokio::test]
+async fn local_http_marketing_keeps_frontend_link_without_advertising_rfc_one_click() {
+    marketing_unsubscribe_headers(true, "http://127.0.0.1:13000").await;
+}
+
+async fn marketing_unsubscribe_headers(smtp_bound: bool, public_origin: &str) {
     let Some((db, world)) = test_db().await else {
         return;
     };
@@ -661,6 +666,8 @@ async fn marketing_unsubscribe_headers(smtp_bound: bool) {
             .await
             .unwrap();
         }
+        sqlx::query("UPDATE workspaces SET settings=jsonb_set(settings, '{public_base_url}', to_jsonb($2::text)) WHERE id=$1")
+            .bind(ws).bind(public_origin).execute(tx.conn()).await.unwrap();
         let to = email_address(&mut tx, "one-click-header").await;
         valid_basis(&mut tx, to, world.admin.principal_id, "marketing").await;
         tx.commit().await.unwrap();
@@ -714,7 +721,7 @@ async fn marketing_unsubscribe_headers(smtp_bound: bool) {
             .nth(1)
             .expect("marketing freeze adds the visible confirmation link")
             .trim();
-        assert!(body_link.starts_with("http://localhost:3000/public/unsubscribe/"));
+        assert!(body_link.starts_with(&format!("{public_origin}/public/unsubscribe/")));
         let token = body_link.rsplit('/').next().unwrap().to_string();
         let origin = infrastructure::repo::sending::public_base_url(&mut tx)
             .await
@@ -775,7 +782,7 @@ async fn marketing_unsubscribe_headers(smtp_bound: bool) {
     .await;
     let sent = delivery.sends.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
-    if smtp_bound {
+    if smtp_bound && public_origin.starts_with("https://") {
         assert!(sent[0].headers.iter().any(|(name, value)| {
             name == "List-Unsubscribe"
                 && value

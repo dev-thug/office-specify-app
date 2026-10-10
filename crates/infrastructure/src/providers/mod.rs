@@ -6,8 +6,10 @@
 //! business row `unknown` and reconcile via `lookup_sent`; never auto-retry.
 
 pub mod fake;
+pub mod office_calendar;
 pub mod zoho;
 pub mod zoho_campaigns;
+pub use office_calendar::{CalendarProviderRouter, OfficeCalendarProvider};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -146,6 +148,9 @@ pub struct CalEvent {
 }
 
 /// Host calendar provider (source §6.3-C).
+// Scoped operations intentionally carry trusted workspace/booking/change IDs
+// separately from the proposed event fields.
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait CalendarProvider: Send + Sync {
     async fn free_busy(
@@ -154,6 +159,22 @@ pub trait CalendarProvider: Send + Sync {
         range_start: DateTime<Utc>,
         range_end: DateTime<Utc>,
     ) -> CalOutcome<Vec<BusyBlock>>;
+    /// Workspace-aware availability query. External adapters keep their
+    /// existing contract; Office's local adapter uses this scope to reject a
+    /// calendar id copied from another workspace and to ignore the booking's
+    /// own active hold while confirming or changing it.
+    async fn free_busy_scoped(
+        &self,
+        workspace_id: uuid::Uuid,
+        host: &str,
+        range_start: DateTime<Utc>,
+        range_end: DateTime<Utc>,
+        _exclude_booking_id: Option<uuid::Uuid>,
+        _exclude_change_id: Option<uuid::Uuid>,
+    ) -> CalOutcome<Vec<BusyBlock>> {
+        let _ = workspace_id;
+        self.free_busy(host, range_start, range_end).await
+    }
     async fn create_event(
         &self,
         host: &str,
@@ -162,6 +183,37 @@ pub trait CalendarProvider: Send + Sync {
         end: DateTime<Utc>,
         attendee_email: &str,
     ) -> CalOutcome<CalEvent>;
+    /// Create a calendar event for a specific Office booking. The default
+    /// keeps existing providers source-compatible; local storage overrides
+    /// it to make creation idempotent by booking UUID.
+    async fn create_booking_event(
+        &self,
+        host: &str,
+        _booking_id: uuid::Uuid,
+        title: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        attendee_email: &str,
+    ) -> CalOutcome<CalEvent> {
+        self.create_event(host, title, start, end, attendee_email)
+            .await
+    }
+    /// Workspace-aware variant used by booking flows. Existing provider
+    /// adapters receive the same booking-id method through the default.
+    async fn create_booking_event_scoped(
+        &self,
+        workspace_id: uuid::Uuid,
+        host: &str,
+        booking_id: uuid::Uuid,
+        title: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        attendee_email: &str,
+    ) -> CalOutcome<CalEvent> {
+        let _ = workspace_id;
+        self.create_booking_event(host, booking_id, title, start, end, attendee_email)
+            .await
+    }
     /// Reschedule/update an existing provider event (booking reschedule).
     async fn update_event(
         &self,
@@ -171,7 +223,94 @@ pub trait CalendarProvider: Send + Sync {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> CalOutcome<CalEvent>;
+    /// Workspace and booking binding for a reschedule. The fallback preserves
+    /// older provider implementations while local storage validates all IDs.
+    #[allow(clippy::too_many_arguments)]
+    async fn update_event_scoped(
+        &self,
+        workspace_id: uuid::Uuid,
+        host: &str,
+        _booking_id: uuid::Uuid,
+        _change_id: uuid::Uuid,
+        provider_event_id: &str,
+        title: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        _occupied_start: DateTime<Utc>,
+        _occupied_end: DateTime<Utc>,
+    ) -> CalOutcome<CalEvent> {
+        let _ = workspace_id;
+        self.update_event(host, provider_event_id, title, start, end)
+            .await
+    }
     async fn cancel_event(&self, host: &str, provider_event_id: &str) -> CalOutcome<()>;
+    /// Workspace and booking binding for cancellation; old adapters continue
+    /// to use their existing event-id implementation.
+    async fn cancel_event_scoped(
+        &self,
+        workspace_id: uuid::Uuid,
+        host: &str,
+        _booking_id: uuid::Uuid,
+        _change_id: uuid::Uuid,
+        provider_event_id: &str,
+    ) -> CalOutcome<()> {
+        let _ = workspace_id;
+        self.cancel_event(host, provider_event_id).await
+    }
+}
+
+/// Fail-closed fallback used when no legacy calendar adapter is configured.
+/// Local Office calendar ids are handled by `CalendarProviderRouter` first.
+pub struct DisabledCalendarProvider;
+
+#[async_trait]
+impl CalendarProvider for DisabledCalendarProvider {
+    async fn free_busy(
+        &self,
+        _host: &str,
+        _range_start: DateTime<Utc>,
+        _range_end: DateTime<Utc>,
+    ) -> CalOutcome<Vec<BusyBlock>> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "No external calendar adapter is configured".into(),
+        }
+    }
+
+    async fn create_event(
+        &self,
+        _host: &str,
+        _title: &str,
+        _start: DateTime<Utc>,
+        _end: DateTime<Utc>,
+        _attendee_email: &str,
+    ) -> CalOutcome<CalEvent> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "No external calendar adapter is configured".into(),
+        }
+    }
+
+    async fn update_event(
+        &self,
+        _host: &str,
+        _provider_event_id: &str,
+        _title: &str,
+        _start: DateTime<Utc>,
+        _end: DateTime<Utc>,
+    ) -> CalOutcome<CalEvent> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "No external calendar adapter is configured".into(),
+        }
+    }
+
+    async fn cancel_event(&self, _host: &str, _provider_event_id: &str) -> CalOutcome<()> {
+        CalOutcome::Failed {
+            code: "NOT_CONFIGURED".into(),
+            message: "No external calendar adapter is configured".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

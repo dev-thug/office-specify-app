@@ -25,4 +25,16 @@ describe("email authoring", () => {
     expect(DEFAULT_EMAIL_VARIABLES.filter(v => v.system).map(v => v.name)).toEqual(['meeting.booking_url', 'compliance.unsubscribe_url']);
     expect(DEFAULT_EMAIL_VARIABLES.every(v => !("default" in v))).toBe(true);
   });
+  it("preserves the approved presentation table attributes for the booking CTA", () => {
+    const html = '<table role="presentation" border="0" cellpadding="12" cellspacing="0"><tbody><tr><td bgcolor="#f3f4f6"><a href="{{meeting.booking_url}}"><strong>미팅 예약</strong></a></td></tr></tbody></table>';
+    expect(cleanEmailHtml(html)).toEqual({html, removed:false});
+    expect(emailHtmlToText(html)).toBe('미팅 예약 ({{meeting.booking_url}})');
+  });
+  it("strips table attributes outside the strict presentation whitelist", () => {
+    const raw = '<table role="grid" border="2" cellpadding="33" cellspacing="17" background="https://evil.test/pixel" onclick="bad()" style="color:red"><tbody><tr><td bgcolor="red" onmouseover="bad()" style="color:red"><a href="{{meeting.booking_url}}">Book</a></td></tr></tbody></table>';
+    expect(cleanEmailHtml(raw)).toEqual({
+      html:'<table><tbody><tr><td><a href="{{meeting.booking_url}}">Book</a></td></tr></tbody></table>',
+      removed:true,
+    });
+  });
 });

@@ -25,8 +25,8 @@ use infrastructure::jobs::{self, Job, JobCtx, JobHandler};
 use infrastructure::outbox::{self, OutboxRow};
 use infrastructure::providers::fake::{FakeDeliveryProvider, FakeMailProvider};
 use infrastructure::providers::{
-    CalEvent, CalOutcome, CalendarProvider, DeliveryCapabilities, DeliveryProvider, MailProvider,
-    ProviderError, SendOutcome, SendRequest, SentLookup,
+    CalendarProvider, CalendarProviderRouter, DeliveryCapabilities, DeliveryProvider,
+    DisabledCalendarProvider, MailProvider, ProviderError, SendOutcome, SendRequest, SentLookup,
 };
 use uuid::Uuid;
 
@@ -69,10 +69,12 @@ impl WorkerContext {
                     Arc::new(config.clone()),
                 ))
             });
-        let calendar: Arc<dyn CalendarProvider> = mail_fake
+        let calendar_fallback: Arc<dyn CalendarProvider> = mail_fake
             .as_ref()
             .map(|provider| provider.clone() as Arc<dyn CalendarProvider>)
             .unwrap_or_else(|| Arc::new(DisabledCalendarProvider));
+        let calendar: Arc<dyn CalendarProvider> =
+            Arc::new(CalendarProviderRouter::new(db.clone(), calendar_fallback));
         let delivery_fallback: Arc<dyn DeliveryProvider> = delivery_fake
             .as_ref()
             .map(|provider| provider.clone() as Arc<dyn DeliveryProvider>)
@@ -92,58 +94,6 @@ impl WorkerContext {
             mail,
             delivery,
             calendar,
-        }
-    }
-}
-
-struct DisabledCalendarProvider;
-
-#[async_trait::async_trait]
-impl CalendarProvider for DisabledCalendarProvider {
-    async fn free_busy(
-        &self,
-        _host: &str,
-        _range_start: chrono::DateTime<chrono::Utc>,
-        _range_end: chrono::DateTime<chrono::Utc>,
-    ) -> CalOutcome<Vec<infrastructure::providers::BusyBlock>> {
-        CalOutcome::Failed {
-            code: "NOT_CONFIGURED".into(),
-            message: "Zoho Calendar is not configured".into(),
-        }
-    }
-
-    async fn create_event(
-        &self,
-        _host: &str,
-        _title: &str,
-        _start: chrono::DateTime<chrono::Utc>,
-        _end: chrono::DateTime<chrono::Utc>,
-        _attendee_email: &str,
-    ) -> CalOutcome<CalEvent> {
-        CalOutcome::Failed {
-            code: "NOT_CONFIGURED".into(),
-            message: "Zoho Calendar is not configured".into(),
-        }
-    }
-
-    async fn update_event(
-        &self,
-        _host: &str,
-        _provider_event_id: &str,
-        _title: &str,
-        _start: chrono::DateTime<chrono::Utc>,
-        _end: chrono::DateTime<chrono::Utc>,
-    ) -> CalOutcome<CalEvent> {
-        CalOutcome::Failed {
-            code: "NOT_CONFIGURED".into(),
-            message: "Zoho Calendar is not configured".into(),
-        }
-    }
-
-    async fn cancel_event(&self, _host: &str, _provider_event_id: &str) -> CalOutcome<()> {
-        CalOutcome::Failed {
-            code: "NOT_CONFIGURED".into(),
-            message: "Zoho Calendar is not configured".into(),
         }
     }
 }

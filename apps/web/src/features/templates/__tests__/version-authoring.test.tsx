@@ -85,3 +85,36 @@ describe("version authoring", () => {
     expect(screen.getByLabelText("Body (text)")).toHaveValue("");
   });
 });
+
+
+describe("meeting booking CTA", () => {
+  it("adds the server booking link as a required URI variable once and keeps the Office unsubscribe variable", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({data:{template_version_id:"version-cta",version_no:1,content_hash:"hash"}}), {status:201,headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch", fetcher);
+    render(<NextIntlClientProvider locale="en" messages={{common, templates}}>
+      <VersionEditor templateId="template-1" open onOpenChange={vi.fn()} onCreated={vi.fn()}
+        initialSeed={{
+          subject:"Meeting invitation",
+          bodyText:"Manage your email preferences with {{compliance.unsubscribe_url}}",
+          bodyHtml:'<p><a href="{{compliance.unsubscribe_url}}">Unsubscribe</a></p>',
+        }} />
+    </NextIntlClientProvider>);
+    fireEvent.click(screen.getByRole("tab", {name:"HTML code"}));
+    const html = screen.getByRole("textbox", {name:"HTML code"});
+    fireEvent.focus(html);
+    fireEvent.click(screen.getByRole("button", {name:"Insert meeting booking button"}));
+    fireEvent.click(screen.getByRole("button", {name:"Insert meeting booking button"}));
+    fireEvent.click(screen.getByRole("button", {name:"Save version"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+
+    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(request.body_html.match(/href="{{meeting\.booking_url}}"/g)).toHaveLength(2);
+    expect(request.body_html).toContain('href="{{compliance.unsubscribe_url}}"');
+    expect(request.body_html).not.toMatch(/https?:\/\//);
+    expect(request.body_text).toContain("Book a meeting ({{meeting.booking_url}})");
+    expect(request.variable_schema.properties["meeting.booking_url"]).toMatchObject({
+      type:"string", format:"uri", maxLength:2048,
+    });
+    expect(request.variable_schema.required).toEqual(["compliance.unsubscribe_url", "meeting.booking_url"]);
+  });
+});

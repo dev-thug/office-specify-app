@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use infrastructure::config::Config;
 use infrastructure::db::{Db, ROLE_API};
+use infrastructure::providers::{
+    CalendarProvider, CalendarProviderRouter, DisabledCalendarProvider,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -25,10 +28,16 @@ async fn main() -> anyhow::Result<()> {
         db = db.with_default_workspace(Some(ws));
     }
 
-    let calendar = Arc::new(match &config.fake_provider_script {
-        Some(path) => infrastructure::providers::fake::FakeMailProvider::from_script(path),
-        None => infrastructure::providers::fake::FakeMailProvider::new(),
-    });
+    let calendar_fallback: Arc<dyn CalendarProvider> =
+        if config.zoho.fake_for_tests || config.fake_provider_script.is_some() {
+            Arc::new(match &config.fake_provider_script {
+                Some(path) => infrastructure::providers::fake::FakeMailProvider::from_script(path),
+                None => infrastructure::providers::fake::FakeMailProvider::new(),
+            })
+        } else {
+            Arc::new(DisabledCalendarProvider)
+        };
+    let calendar = Arc::new(CalendarProviderRouter::new(db.clone(), calendar_fallback));
     let state = mcp::server::McpState {
         calendar,
         db,

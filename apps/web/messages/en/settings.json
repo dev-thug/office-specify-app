@@ -222,9 +222,22 @@
   },
   "calendars": {
     "title": "Calendars",
-    "description": "Per-host calendar connections and sync state.",
+    "description": "Set up an Office internal booking calendar or connect Zoho Calendar.",
     "privacyNotice": "Private event details are never shown. Only connection metadata is visible.",
     "connect": "Connect calendar",
+    "officeTitle": "Office internal calendar",
+    "officeDescription": "Office stores booking reservations in this workspace and blocks overlapping reservations.",
+    "officeSyncNotice": "Bookings are not synchronized to an external calendar.",
+    "officeSetup": "Set up Office calendar",
+    "officeSettingUp": "Setting up Office calendar…",
+    "officeReady": "Office calendar ready",
+    "officeSetupSuccess": "Office internal calendar is ready for meeting types.",
+    "officeCalendar": "Office internal calendar",
+    "officeProvider": "Office internal calendar",
+    "zohoTitle": "Zoho Calendar",
+    "zohoDescription": "Connect a Zoho calendar through OAuth to check availability against an external calendar.",
+    "connectZoho": "Connect Zoho calendar",
+    "connectingZoho": "Connecting to Zoho…",
     "columns": {
       "host": "Host",
       "calendar": "Calendar",
@@ -236,7 +249,7 @@
     "busyYes": "Included",
     "busyNo": "Excluded",
     "emptyTitle": "No calendars connected",
-    "emptyDescription": "Connect a calendar to offer public booking slots."
+    "emptyDescription": "Set up the Office internal calendar or connect Zoho to offer public booking slots."
   },
   "security": {
     "title": "Security",

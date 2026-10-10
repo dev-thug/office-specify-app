@@ -388,6 +388,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/calendar-connections/local": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["connect_local_calendar"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaign-launches/{id}": {
         parameters: {
             query?: never;
@@ -4419,6 +4435,12 @@ export interface components {
          * @enum {string}
          */
         LifecycleStage: "prospect" | "engaged" | "qualified" | "customer" | "inactive";
+        /**
+         * @description `POST /calendar-connections/local` — the caller connects their own
+         *     Office-owned calendar. The body is deliberately empty; no tenant or
+         *     external credential input is accepted.
+         */
+        LocalCalendarConnectionRequest: Record<string, never>;
         LoginRequest: {
             email: string;
             password: string;
@@ -4453,8 +4475,10 @@ export interface components {
             guest_memo?: string | null;
             guest_name: string;
             guest_timezone: string;
+            host_display_name: string;
             /** Format: uuid */
             id: string;
+            meeting_name: string;
             message: string;
             /** Format: date-time */
             starts_at: string;
@@ -7077,6 +7101,96 @@ export interface operations {
             };
             /** @description Agent / non-admin naming another host */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    connect_local_calendar: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stable request key */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalCalendarConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Existing Office-owned calendar reused */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["CalendarConnectionResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Office-owned calendar created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["CalendarConnectionResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid Idempotency-Key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human browser session required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human host with booking.propose scope required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invalid request body */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

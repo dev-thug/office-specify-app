@@ -98,6 +98,13 @@ pub struct CalendarConnectionRequestRequest {
     pub host_principal_id: Option<Uuid>,
 }
 
+/// `POST /calendar-connections/local` — the caller connects their own
+/// Office-owned calendar. The body is deliberately empty; no tenant or
+/// external credential input is accepted.
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LocalCalendarConnectionRequest {}
+
 /// `GET /integrations/zoho/callback` query params (public, browser hit).
 #[derive(Debug, Deserialize)]
 pub struct ZohoCallbackQuery {

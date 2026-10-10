@@ -717,6 +717,11 @@ async fn one_click_unsubscribe_url(
         {
             let origin = sending::public_base_url(&mut tx).await?;
             tx.commit().await?;
+            // RFC 8058 requires HTTPS. Local development still uses the
+            // normal Office confirmation link in the message body.
+            if !origin.starts_with("https://") {
+                return Ok(None);
+            }
             return Ok(Some(format!(
                 "{}/public/v1/unsubscribe/{token}/one-click",
                 origin.trim_end_matches('/')

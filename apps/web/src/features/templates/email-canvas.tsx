@@ -7,9 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import styles from "./email-canvas.module.css";
-import { cleanEmailHtml, emailPreviewDocument, safeEmailLink } from "./email-authoring";
+import { cleanEmailHtml, emailPreviewDocument, escapeEmailText, safeEmailLink } from "./email-authoring";
 
-export interface EmailCanvasHandle { insertVariable: (name: string) => void }
+export interface EmailCanvasHandle {
+  insertVariable: (name: string) => void;
+  insertBookingCta: (label: string) => void;
+}
 
 export const EmailCanvas = forwardRef<EmailCanvasHandle, {
   html: string;
@@ -26,7 +29,7 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
   const editor = useRef<HTMLDivElement>(null);
   const code = useRef<HTMLTextAreaElement>(null);
   const selection = useRef<Range | null>(null);
-  const pendingInsert = useRef<string | null>(null);
+  const pendingInsert = useRef<{ command: "insertText" | "insertHTML"; value: string } | null>(null);
   const cleaned = typeof document === "undefined" ? {html: "", removed: false} : cleanEmailHtml(html);
 
   useEffect(() => {
@@ -73,11 +76,9 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
   }
   useEffect(() => {
     if (mode === "compose" && pendingInsert.current) {
-      const value = pendingInsert.current;
+      const pending = pendingInsert.current;
       pendingInsert.current = null;
-      restore();
-      document.execCommand("insertText", false, value);
-      changed();
+      command(pending.command, pending.value);
     }
   });
   useImperativeHandle(ref, () => ({
@@ -92,7 +93,24 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
       } else if (mode === "compose") {
         command("insertText", value);
       } else {
-        pendingInsert.current = value;
+        pendingInsert.current = { command: "insertText", value };
+        setMode("compose");
+      }
+    },
+    insertBookingCta(label) {
+      const value = '<table role="presentation" border="0" cellpadding="12" cellspacing="0"><tbody><tr><td bgcolor="#f3f4f6"><a href="{{meeting.booking_url}}"><strong>' + escapeEmailText(label) + "</strong></a></td></tr></tbody></table>";
+      if (mode === "html" && code.current) {
+        const element = code.current;
+        const start = element.selectionStart;
+        const end = element.selectionEnd;
+        onChange(html.slice(0, start) + value + html.slice(end));
+        element.focus();
+        const cursor = start + value.length;
+        requestAnimationFrame(() => element.setSelectionRange(cursor, cursor));
+      } else if (mode === "compose") {
+        command("insertHTML", value);
+      } else {
+        pendingInsert.current = { command: "insertHTML", value };
         setMode("compose");
       }
     },

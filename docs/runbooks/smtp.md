@@ -1,55 +1,167 @@
 # Office campaigns over SMTP
 
-Office stores templates and immutable versions, renders each recipient's HTML and
-plain text, and owns campaign approval, dispatch, booking links and unsubscribe
-records. An authenticated SMTP relay transports the resulting message. This path
-does not create or send a Zoho Campaigns campaign.
+Office owns the campaign, template version, recipient snapshot, preflight,
+approval, per-recipient rendering, unsubscribe record, and dispatch state. An
+authenticated SMTP relay transports each prepared message. This workflow is
+independent of Zoho Campaigns OAuth and does not create a Zoho Campaigns list or
+campaign. Zoho Mail inbox correspondence is also a separate integration.
 
-## Configure a connection
+SMTP credentials and sender fields have different jobs:
 
-In Settings → Mail accounts, create an SMTP connection for the Office mailbox
-whose permissions govern the campaign. Supply a TLS relay host, port, username,
-private password, From address and optional Reply-To. Confirm that the From
-address is authorized by the relay. Credentials are write-only and stored in the
-server's encrypted SecretStore. Never commit them or include them in support
-screenshots.
+- The SMTP **username and password** authenticate the connection to the relay.
+- **From** is the registered relay sender address or an alias that relay permits
+  the account to use. An Admin must attest to that authorization while creating
+  the connection. The login address does not automatically authorize a
+  different From address.
+- **Reply-To** is optional and controls where a recipient's reply is directed.
+  It is not the SMTP login and does not authorize the From address.
 
-For a US paid Zoho Mail account, the documented relay is `smtppro.zoho.com`, using
-implicit TLS on port 465 or STARTTLS on port 587. Use the server shown for the
-actual account and data center. With MFA, use a dedicated app password generated
-by the account owner. A subdomain From address must be registered as a Mail
-account/alias; verification in Zoho Campaigns alone does not establish that.
-See [Zoho SMTP settings](https://www.zoho.com/mail/help/zoho-smtp.html) and
-[Mail aliases](https://www.zoho.com/mail/help/adminconsole/user-settings.html#email-alias).
+## Configure the relay connection
 
-Connection verification tests TLS and authentication without sending a message.
-It does not prove alias authorization or inbox delivery. Validate both with an
-explicitly approved message to a controlled recipient. Disabling a connection
-prevents subsequent dispatches through it.
-Profiles are immutable. If you revoke or rotate the relay password, disable the
-old connection and create a replacement with the new app password.
+An SMTP profile attaches to an existing `mail_account_id`; its relay username
+and password do not create an Office mailbox. A newly bootstrapped workspace
+has no mail account, and this repository has no SMTP-only mail-account creation
+route. The current supported way to provision a new mailbox is Zoho Mail OAuth
+from **Settings → Mail accounts → Connect mailbox**. Configure
+`ZOHO_MAIL_CLIENT_ID`, `ZOHO_MAIL_CLIENT_SECRET`, and the exact callback URI
+(`ZOHO_MAIL_REDIRECT_URI`, or the configured public origin plus
+`/api/v1/integrations/zoho/callback`) before starting that connection. This
+creates an active Office mail-account record; the Admin who connected it gets
+an initial mailbox grant that includes `can_send`.
 
-## Public URLs and headers
+The Admin creating or verifying the SMTP profile must have `can_send` on the
+selected account. If a different Admin manages SMTP, an Admin can grant that
+permission with **Manage grants** on the mailbox. The mailbox and its grant are
+required even though actual campaign transport uses the independent SMTP
+credentials. This prerequisite is Zoho Mail OAuth for mailbox provisioning;
+Zoho Campaigns OAuth is not required for SMTP. If the workspace already has an
+active Office mail account and the acting Admin has `can_send`, use it without
+provisioning another one.
 
-Set the workspace public application origin to your deployed HTTPS domain before
-freezing a campaign. Recipients receive Office's signed unsubscribe and booking
-links. Opening an unsubscribe page does not change state; explicit confirmation
-records the Office suppression. The one-click endpoint accepts the corresponding
-unsubscribe POST. Keep these public routes reachable through your reverse proxy.
-No fixed deployment domain is required by this open-source application.
+Once that prerequisite is met, an Admin opens **Settings → Mail accounts**,
+adds an SMTP connection, and supplies the relay host, port, TLS mode, SMTP
+username and password, From name/address, and optional Reply-To. The password
+is write-only and stored encrypted in the server SecretStore. Do not commit it
+or include it in screenshots or support reports.
 
-Office constructs From, Reply-To, Subject, Message-ID, multipart bodies, its
-correlation header, and recipient-specific List-Unsubscribe headers. Profile
-custom headers cannot override the generated unsubscribe/correlation values or
-structural and server-trust headers. The current profile custom-header allowlist
-is `X-Auto-Response-Suppress` and `X-Importance`. SMTP relays and recipient servers can add or
-rewrite Return-Path, Received, DKIM, ARC and Authentication-Results. Compare the
-received raw message with the intended headers before claiming preservation.
-For [RFC 8058](https://www.rfc-editor.org/rfc/rfc8058.html) mailbox-provider one-click handling, check that the relay's valid
-DKIM signature covers both unsubscribe headers. Providing the endpoint and
-headers alone does not guarantee the recipient mailbox displays that action.
+Choose one of the supported TLS modes:
 
-An SMTP acceptance response means the relay accepted the message, not that the
-recipient received it. A lost final response is an unknown outcome and must not
-be automatically resent. SMTP has no reliable sent-message lookup for resolving
-that ambiguity; retain the unknown record for operator investigation.
+- `tls` for implicit TLS, commonly port 465.
+- `starttls` for STARTTLS, commonly port 587.
+
+Use the exact host and port listed by the relay for the account's region. For a
+US paid Zoho Mail relay, the documented host is `smtppro.zoho.com`; Zoho
+accounts using MFA generally need a dedicated app password. Confirm the From
+address is set up as the mailbox sender or authorized alias in the mail
+provider. A Campaigns-verified sender alone does not prove Mail relay alias
+authorization. See [Zoho SMTP settings](https://www.zoho.com/mail/help/zoho-smtp.html)
+and [Zoho Mail aliases](https://www.zoho.com/mail/help/adminconsole/user-settings.html#email-alias).
+
+When saving the profile, the Admin attests that the From address is a
+registered sender or authorized alias. This is an operator attestation, not a
+provider-side alias verification. The initial profile is pending. Select
+**Verify** in the SMTP profile list to check TLS and SMTP authentication. This
+check does not send a message and does not prove that the relay will accept the
+From alias or that a message will reach an inbox. A successful check activates
+the profile/channel; test actual delivery separately with an approved message
+to an inbox you control.
+
+If the provider rejects the username or password, confirm that you are using
+SMTP credentials for the relay, not Zoho Campaigns OAuth credentials. With MFA,
+check the provider's app-password requirement. If credentials have been
+revoked or rotated, disable the old profile and create a replacement with the
+new secret; profile values are immutable. Disabling a profile prevents new
+dispatches through that connection.
+
+Production must set a persistent `OUTREACH_SECRET_KEY` (64 hexadecimal
+characters) so Office can encrypt the SMTP password in its file SecretStore.
+Keep the key stable, protect it with the deployment secret manager, and include
+the encrypted `SECRETS_FILE` in the protected backup plan. Development's fixed
+fallback key is only for local testing.
+
+## Send an Office campaign
+
+1. Create or import the contacts in Office, and use the visual template canvas
+   or HTML source editor to author the email. Templates have a declared
+   variable schema and immutable versions; recipient preview substitutes sample
+   data without changing the stored template.
+2. Build an Office campaign using its SMTP delivery channel and one of the
+   immutable template versions. The SMTP connection is not a Zoho Campaigns
+   campaign.
+3. Run recipient preflight. Office checks current address status, communication
+   basis, suppression, channel policy, and the emergency stop. Marketing stays
+   blocked when required consent/provider policy evidence is missing.
+4. Freeze the launch, review the exact recipient/content manifest, and obtain
+   the required human approval and final confirmation. A successful approval
+   records permission to proceed; it does not itself mean the relay accepted a
+   message.
+5. Keep the Office worker running with the same database and environment as
+   the API while dispatch jobs are processed.
+
+Office does not send automatic follow-ups or drip steps. The current campaign
+route supports a one-step dispatch; scheduled follow-up automation is outside
+this workflow. SMTP delivery does not depend on a Zoho Campaigns connection,
+Campaigns do-not-track settings, or Campaigns suppression sync. Office still
+applies its own consent, suppression, approval, and emergency-stop rules.
+
+## Public origin and unsubscribe behavior
+
+Set `PUBLIC_BASE_URL` in the API and worker environments before creating
+recipient links or freezing a campaign. For current local testing, use
+`http://127.0.0.1:13000` and run the web app at that exact origin. The link
+opens an Office page and the web server proxies the public API path to Rust;
+no public tunnel is required. A loopback URL only works on the machine running
+Office. Do not send a local capability URL to an external recipient.
+
+For a future deployment, use `PUBLIC_BASE_URL=https://office.specify.app`,
+terminate TLS at the reverse proxy, and route the public link paths to the
+Next.js app and Rust API as described in the
+[local-development runbook](local-development.md). An existing non-empty
+`workspaces.settings.public_base_url` value overrides the environment. Update
+or clear an old override before freezing a campaign; changing the URL does not
+rewrite already frozen HTML or capability URLs.
+
+Each rendered Office campaign message includes a recipient-specific unsubscribe
+link to the Office frontend. Opening the page is read-only; confirming
+unsubscribe sends a request to the Rust API, records a workspace suppression
+against the address/contact in Office's CRM, and prevents later Office campaign
+sends to that address. The public one-click POST, when emitted by the channel,
+records the same Office suppression. This process works without Zoho Campaigns
+and does not depend on a Campaigns DNT setting. If a provider sync is separately
+configured, its status is tracked independently from the Office suppression
+record.
+
+Office emits the body unsubscribe link for a loopback HTTP origin, but omits
+[RFC 8058](https://www.rfc-editor.org/rfc/rfc8058.html)
+`List-Unsubscribe` and `List-Unsubscribe-Post` headers unless the
+configured origin is HTTPS. Gmail's native one-click control therefore is not
+expected for local HTTP testing. HTTPS makes those headers eligible; it does
+not guarantee Gmail will show the control. The SMTP relay must preserve both
+headers and use a valid DKIM signature that covers them. Inspect a received raw
+message in a controlled inbox to confirm the relay's actual headers and DKIM
+signature before relying on native one-click behavior. Office cannot make a
+mailbox provider display that UI if the relay's signature does not satisfy its
+requirements.
+
+Office constructs From, Reply-To, Subject, Message-ID, MIME parts,
+recipient-specific unsubscribe headers where allowed, and its correlation
+header. Custom SMTP headers are limited to `X-Auto-Response-Suppress` and
+`X-Importance`; they cannot replace unsubscribe, correlation, or structural
+headers. The relay and recipient server can add or rewrite Return-Path,
+Received, DKIM, ARC, and Authentication-Results.
+
+## Delivery evidence and recovery
+
+An SMTP `250` response means the relay accepted the submission; it does not
+prove inbox delivery or that the recipient read the message. If Office loses
+the final submission response, it keeps the message outcome `unknown`. Office
+never automatically resends an unknown send because the relay may already have
+accepted it. Use the [unknown-send reconciliation runbook](unknown-send-reconciliation.md)
+and investigate with the relay and a controlled mailbox. Do not create a
+replacement message until a human resolves the original outcome.
+
+The current Zoho SMTP API path does not establish RFC 8058 support on its own.
+Verify the received message's `List-Unsubscribe` headers and that Zoho DKIM
+signs them. A connection check validates transport and login only; it does not
+prove sender authorization, DKIM coverage, inbox placement, or Gmail's native
+one-click UI.

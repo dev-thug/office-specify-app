@@ -28,13 +28,14 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const idem = useRef(idempotencyKey());
+  const changeRefreshUntil = useRef(0);
   const booking = useQuery({
     queryKey: ["public-booking", manageToken, "manage"],
     queryFn: () => getManagedBooking(manageToken),
     retry: false,
     refetchInterval: (query) => {
       const status = query.state.data?.data.status;
-      return status === "held" || status === "confirming" || status === "canceling" ? 4000 : false;
+      return status === "held" || status === "confirming" || status === "canceling" || Date.now() < changeRefreshUntil.current ? 2000 : false;
     },
   });
   const data = booking.data?.data;
@@ -62,6 +63,9 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
     setError(null);
     try {
       await rescheduleManagedBooking(manageToken, { starts_at: utcStart, timezone, expected_version: data.version }, { idempotencyKey: idem.current });
+      // A reschedule leaves the booking confirmed while its change job runs.
+      // Briefly refresh so the displayed time catches up without a manual reload.
+      changeRefreshUntil.current = Date.now() + 30_000;
       idem.current = idempotencyKey();
       setNotice(t("rescheduleDone"));
       setRescheduleOpen(false);
@@ -118,7 +122,7 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
       <Field label={t("timezone")} value={zone} />
     </dl>
     <div className="flex flex-wrap gap-2">
-      {canReschedule ? <Button variant="outline" size="sm" onClick={openReschedule}>{t("change")}</Button> : null}
+      {canReschedule ? <Button variant="outline" size="sm" onClick={openReschedule}>{t("reschedule")}</Button> : null}
       {canCancel ? <Button variant="destructive" size="sm" onClick={() => { setError(null); setCancelOpen(true); }}>{t("cancel")}</Button> : null}
       <Button variant="ghost" size="sm" onClick={() => void booking.refetch()}>{t("refresh")}</Button>
     </div>

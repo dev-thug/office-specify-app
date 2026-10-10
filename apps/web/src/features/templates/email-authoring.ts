@@ -36,11 +36,33 @@ export function cleanEmailHtml(raw: string): { html: string; removed: boolean } 
     }
     const element = document.createElement(tag);
     for (const attribute of node.attributes) {
-      if (tag === "a" && attribute.name === "href" && safeEmailLink(attribute.value)) {
-        element.setAttribute("href", attribute.value.trim());
-      } else if (tag === "a" && attribute.name === "title") {
-        element.setAttribute("title", attribute.value);
-      } else { removed = true; }
+      const { name, value } = attribute;
+      if (tag === "a" && name === "href" && safeEmailLink(value)) {
+        element.setAttribute("href", value.trim());
+      } else if (tag === "a" && name === "title") {
+        element.setAttribute("title", value);
+      } else if (tag === "table" && name === "role" && value === "presentation") {
+        element.setAttribute("role", value);
+      } else if (
+        tag === "table" &&
+        (name === "border" || name === "cellpadding" || name === "cellspacing") &&
+        /^\d+$/.test(value)
+      ) {
+        const max = name === "border" ? 1 : name === "cellpadding" ? 32 : 16;
+        if (Number(value) >= 0 && Number(value) <= max) {
+          element.setAttribute(name, value);
+        } else {
+          removed = true;
+        }
+      } else if (
+        (tag === "td" || tag === "th") &&
+        name === "bgcolor" &&
+        /^#[0-9a-fA-F]{6}$/.test(value)
+      ) {
+        element.setAttribute("bgcolor", value);
+      } else {
+        removed = true;
+      }
     }
     node.childNodes.forEach(child => copy(child, element));
     into.appendChild(element);

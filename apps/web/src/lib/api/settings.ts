@@ -18,7 +18,8 @@
  * - `POST  /delivery-channels/{id}/reviews`               — 증빙·결론 → append-only review
  * - `PATCH /delivery-channels/{id}`                       — enabled·내부 한도 + If-Match
  * - `GET   /calendar-connections`                         — 연결 상태·host별 가시 범위
- * - `POST  /calendar-connections/connection-requests`     — 별도 Calendar OAuth 연결
+ * - `POST  /calendar-connections/connection-requests`     — Zoho Calendar OAuth 연결
+ * - `POST  /calendar-connections/local`                     — 워크스페이스 내부 일정 준비
  *
  * 부록 B에 없어 화면 구성상 가정한 경로 (계약 확정 시 이 파일만 수정):
  * - `GET /member-invitations`            — 발급한 초대 목록(수락/만료 상태 확인)
@@ -511,6 +512,16 @@ export function createCalendarConnectionRequest(
   return mutate<ConnectionRequestResult>(
     "/api/v1/calendar-connections/connection-requests",
     { method: "POST", json: input },
+    options
+  );
+}
+
+
+/** Ensures the workspace's Office-managed internal calendar exists. */
+export function createLocalCalendarConnection(options?: MutateOptions) {
+  return mutate<CalendarConnection>(
+    "/api/v1/calendar-connections/local",
+    { method: "POST", json: {} },
     options
   );
 }

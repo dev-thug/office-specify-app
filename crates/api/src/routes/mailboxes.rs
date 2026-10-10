@@ -11,8 +11,8 @@ use chrono::{DateTime, Utc};
 use contracts::mailboxes::{
     CalendarConnectionRequestRequest, CalendarConnectionResponse, ChannelReviewResponse,
     ConnectionRequestRequest, CreateChannelReviewRequest, CreateDeliveryChannelRequest,
-    DeliveryChannelResponse, GrantListItem, GrantResponse, MailAccountResponse, OAuthStartResponse,
-    PatchDeliveryChannelRequest, PutGrantRequest,
+    DeliveryChannelResponse, GrantListItem, GrantResponse, LocalCalendarConnectionRequest,
+    MailAccountResponse, OAuthStartResponse, PatchDeliveryChannelRequest, PutGrantRequest,
 };
 use contracts::{AppError, Ctx, Envelope, ErrorCode, Page, Problem};
 use infrastructure::cursor::Cursor;
@@ -22,7 +22,7 @@ use utoipa_axum::routes;
 use uuid::Uuid;
 
 use crate::extract::PageParams;
-use crate::extractors::{AuthCtx, IfMatch, Json, RequestIdHeader};
+use crate::extractors::{AuthCtx, IdempotencyKey, IfMatch, Json, RequestIdHeader};
 use crate::state::AppState;
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -39,6 +39,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(patch_delivery_channel))
         .routes(routes!(review_delivery_channel))
         .routes(routes!(request_calendar_connection))
+        .routes(routes!(connect_local_calendar))
         .routes(routes!(list_calendar_connections))
 }
 
@@ -596,4 +597,61 @@ async fn list_calendar_connections(
             has_more: res.has_more,
         },
     )))
+}
+
+#[utoipa::path(
+    post, path = "/calendar-connections/local",
+    request_body = LocalCalendarConnectionRequest,
+    params(("Idempotency-Key" = String, Header, description = "Stable request key")),
+    responses(
+        (status = 201, description = "Office-owned calendar created", body = CalendarConnectionResponse),
+        (status = 200, description = "Existing Office-owned calendar reused", body = CalendarConnectionResponse),
+        (status = 400, description = "Missing or invalid Idempotency-Key", body = Problem),
+        (status = 401, description = "Human browser session required", body = Problem),
+        (status = 403, description = "Human host with booking.propose scope required", body = Problem),
+        (status = 422, description = "Invalid request body", body = Problem),
+    )
+)]
+async fn connect_local_calendar(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthCtx,
+    IdempotencyKey(key): IdempotencyKey,
+    Json(request): Json<LocalCalendarConnectionRequest>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let request_id = ctx.request_id.clone();
+    let request_hash = infrastructure::crypto::sha256_bytes(
+        &serde_json::to_vec(&request)
+            .map_err(|e| AppError::internal(format!("local calendar request encode: {e}")))?,
+    );
+    let scope = infrastructure::idempotency::Scope {
+        workspace_id: ctx.workspace_id,
+        principal_or_capability: ctx.principal_id.to_string(),
+        endpoint: "POST /api/v1/calendar-connections/local".into(),
+        key,
+    };
+    let ctx_for_usecase = ctx.clone();
+    let outcome = infrastructure::idempotency::run(
+        &state.db,
+        &scope,
+        &request_hash,
+        move |mut tx| async move {
+            let (body, created) = application::mailboxes::calendar::connect_local_calendar_in_tx(
+                &mut tx,
+                &ctx_for_usecase,
+            )
+            .await?;
+            Ok((
+                tx,
+                infrastructure::idempotency::Stored {
+                    status: if created { 201 } else { 200 },
+                    body,
+                },
+            ))
+        },
+    )
+    .await?
+    .into_inner();
+    let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::OK);
+    Ok((status, axum::Json(Envelope::new(outcome.body, request_id))))
 }

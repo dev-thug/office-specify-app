@@ -906,10 +906,13 @@ async fn compute_slots(
         (rules, exceptions, holds)
     };
     let busy = match calendar
-        .free_busy(
+        .free_busy_scoped(
+            resolved.workspace_id,
             &resolved.link.provider_calendar_id,
             availability_range.0,
             availability_range.1,
+            None,
+            None,
         )
         .await
     {
@@ -1168,10 +1171,13 @@ async fn compute_meeting_slots(
         rows
     };
     let busy = match calendar
-        .free_busy(
+        .free_busy_scoped(
+            workspace_id,
             &link.provider_calendar_id,
             availability_range.0,
             availability_range.1,
+            None,
+            None,
         )
         .await
     {
@@ -1436,10 +1442,33 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         tx.rollback().await?;
         return Err(hidden_not_found());
     };
+    let public_details: Option<(String, String)> = sqlx::query_as(
+        "SELECT m.name, p.name
+           FROM bookings b
+           JOIN booking_links l
+             ON l.workspace_id = b.workspace_id AND l.id = b.booking_link_id
+           JOIN meeting_types m
+             ON m.workspace_id = l.workspace_id AND m.id = l.meeting_type_id
+            AND m.host_principal_id = b.host_principal_id
+           JOIN principals p
+             ON p.workspace_id = b.workspace_id AND p.id = b.host_principal_id
+          WHERE b.workspace_id = $1 AND b.id = $2 AND p.kind = 'human'",
+    )
+    .bind(location.workspace_id)
+    .bind(booking.id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(infrastructure::error::map_sqlx)?;
+    let Some((meeting_name, host_display_name)) = public_details else {
+        tx.rollback().await?;
+        return Err(hidden_not_found());
+    };
     tx.rollback().await?;
     Ok(ManageBookingResponse {
         id: booking.id,
         guest_name: booking.guest_name,
+        meeting_name,
+        host_display_name,
         guest_memo: booking.guest_memo,
         starts_at: booking.starts_at,
         ends_at: booking.ends_at,
@@ -1723,7 +1752,14 @@ async fn validate_reschedule_slot(
         id
     };
     let busy = match calendar
-        .free_busy(&cal_id, range.0 - before, range.1 + after)
+        .free_busy_scoped(
+            workspace_id,
+            &cal_id,
+            range.0 - before,
+            range.1 + after,
+            Some(booking_id),
+            None,
+        )
         .await
     {
         CalOutcome::Ok(v) => v,
@@ -2165,10 +2201,13 @@ pub async fn confirm_booking(
         return Ok(());
     };
     match calendar
-        .free_busy(
+        .free_busy_scoped(
+            workspace_id,
             &saga.provider_calendar_id,
             saga.occupied_start,
             saga.occupied_end,
+            Some(booking_id),
+            None,
         )
         .await
     {
@@ -2222,8 +2261,10 @@ pub async fn confirm_booking(
         }
     }
     let outcome = calendar
-        .create_event(
+        .create_booking_event_scoped(
+            workspace_id,
             &saga.provider_calendar_id,
+            booking_id,
             &saga.meeting_name,
             saga.starts_at,
             saga.ends_at,
@@ -2342,7 +2383,15 @@ pub async fn apply_booking_change(
         return Ok(());
     };
     if change.kind == "cancel" {
-        let result = calendar.cancel_event(provider_calendar_id, event_id).await;
+        let result = calendar
+            .cancel_event_scoped(
+                workspace_id,
+                provider_calendar_id,
+                booking_id,
+                change_id,
+                event_id,
+            )
+            .await;
         let mut tx = db.begin(workspace_id).await?;
         match result {
             CalOutcome::Ok(()) => {
@@ -2403,7 +2452,14 @@ pub async fn apply_booking_change(
         .new_occupied_end
         .ok_or_else(|| AppError::validation("reschedule hold missing", vec![]))?;
     let free = calendar
-        .free_busy(provider_calendar_id, occupied_start, occupied_end)
+        .free_busy_scoped(
+            workspace_id,
+            provider_calendar_id,
+            occupied_start,
+            occupied_end,
+            Some(booking_id),
+            Some(change_id),
+        )
         .await;
     let failure = match free {
         CalOutcome::Ok(blocks)
@@ -2438,12 +2494,17 @@ pub async fn apply_booking_change(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("UTC");
     let event = calendar
-        .update_event(
+        .update_event_scoped(
+            workspace_id,
             provider_calendar_id,
+            booking_id,
+            change_id,
             event_id,
             change.meeting_name.as_deref().unwrap_or("Meeting"),
             starts_at,
             ends_at,
+            occupied_start,
+            occupied_end,
         )
         .await;
     let mut tx = db.begin(workspace_id).await?;

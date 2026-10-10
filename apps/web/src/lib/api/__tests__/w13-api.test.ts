@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api/problem";
 import { getDashboardSummary } from "@/lib/api/dashboard";
 import { getJob, putEmergencyStop, requestJobRetry } from "@/lib/api/operations";
 import {
+  createLocalCalendarConnection,
   createMemberInvitation,
   patchDeliveryChannel,
   putMailAccountGrant,
@@ -137,6 +138,25 @@ describe("경로·헤더", () => {
       pending_work_policy: "reassign",
       reassign_to: "p2",
     });
+  });
+
+  it("POST /calendar-connections/local creates the Office internal calendar without a provider payload", async () => {
+    const calls = mockFetch(201, { data: {
+      id: "calendar-1",
+      provider: "office_calendar",
+      host_principal_id: "human-1",
+      connection_id: "connection-1",
+      provider_calendar_id: "office_calendar",
+      status: "active",
+      include_in_busy: true,
+      version: 1,
+      created_at: "2026-10-10T00:00:00Z",
+    } });
+    await createLocalCalendarConnection({ idempotencyKey: "local-calendar-1" });
+    expect(calls[0]!.url).toBe("/api/v1/calendar-connections/local");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(headersOf(calls[0]!).get("Idempotency-Key")).toBe("local-calendar-1");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({});
   });
 });
 

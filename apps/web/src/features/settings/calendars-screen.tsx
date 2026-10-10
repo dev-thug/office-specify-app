@@ -19,6 +19,7 @@ import { idempotencyKey } from "@/lib/api/client";
 import {
   authorizationUrl,
   createCalendarConnectionRequest,
+  createLocalCalendarConnection,
   useCalendarConnections,
   usePrincipals,
   type CalendarConnection,
@@ -39,6 +40,9 @@ export function CalendarsScreen() {
   const calendars = useCalendarConnections();
   const rows = calendars.data?.pages.flatMap((p) => p.data) ?? [];
   const page = calendars.data?.pages.at(-1)?.page;
+  const officeCalendarReady = rows.some(
+    (row) => row.provider === "office_calendar" && row.status === "active"
+  );
 
   const principals = usePrincipals();
   const names = useMemo(() => {
@@ -59,6 +63,20 @@ export function CalendarsScreen() {
     onError: (err) => toast.error(apiErrorText(tSettings, err)),
   });
 
+  const setupOfficeCalendar = useMutation({
+    mutationFn: () =>
+      createLocalCalendarConnection({ idempotencyKey: idempotencyKey() }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings", "calendar-connections"] }),
+        queryClient.invalidateQueries({ queryKey: ["meetings", "calendar-connections"] }),
+        queryClient.invalidateQueries({ queryKey: ["meetings", "types"] }),
+      ]);
+      toast.success(t("officeSetupSuccess"));
+    },
+    onError: (err) => toast.error(apiErrorText(tSettings, err)),
+  });
+
   const columns: ColumnDef<CalendarConnection>[] = [
     {
       key: "host",
@@ -72,12 +90,22 @@ export function CalendarsScreen() {
     {
       key: "calendar",
       header: t("columns.calendar"),
-      cell: (row) => <span className="font-mono text-xs">{row.provider_calendar_id}</span>,
+      cell: (row) => (
+        <span className="font-mono text-xs">
+          {row.provider === "office_calendar"
+            ? t("officeCalendar")
+            : row.provider_calendar_id}
+        </span>
+      ),
     },
     {
       key: "provider",
       header: t("columns.provider"),
-      cell: (row) => <span className="text-xs">{row.provider}</span>,
+      cell: (row) => (
+        <span className="text-xs">
+          {row.provider === "office_calendar" ? t("officeProvider") : row.provider}
+        </span>
+      ),
     },
     {
       key: "status",
@@ -107,19 +135,53 @@ export function CalendarsScreen() {
       <PageHeader
         title={t("title")}
         description={t("description")}
-        actions={
-          isAdmin ? (
+      />
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <section className="flex flex-col gap-3 rounded-xl border bg-card p-4">
+          <div>
+            <h2 className="text-sm font-semibold">{t("officeTitle")}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{t("officeDescription")}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{t("officeSyncNotice")}</p>
+          </div>
+          {isAdmin ? (
             <Button
               type="button"
               size="sm"
+              className="self-start"
+              disabled={setupOfficeCalendar.isPending || officeCalendarReady}
+              onClick={() => setupOfficeCalendar.mutate()}
+            >
+              {setupOfficeCalendar.isPending
+                ? t("officeSettingUp")
+                : officeCalendarReady
+                  ? t("officeReady")
+                  : t("officeSetup")}
+            </Button>
+          ) : officeCalendarReady ? (
+            <Badge variant="info-subtle" className="self-start">{t("officeReady")}</Badge>
+          ) : null}
+        </section>
+
+        <section className="flex flex-col gap-3 rounded-xl border bg-card p-4">
+          <div>
+            <h2 className="text-sm font-semibold">{t("zohoTitle")}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{t("zohoDescription")}</p>
+          </div>
+          {isAdmin ? (
+            <Button
+              type="button"
+              size="sm"
+              className="self-start"
               disabled={connect.isPending}
               onClick={() => connect.mutate()}
             >
-              {t("connect")}
+              {connect.isPending ? t("connectingZoho") : t("connectZoho")}
             </Button>
-          ) : undefined
-        }
-      />
+          ) : null}
+        </section>
+      </div>
+
       <p className="text-2xs text-muted-foreground">{t("privacyNotice")}</p>
 
       <DataTable

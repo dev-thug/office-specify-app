@@ -1,72 +1,171 @@
 # Office
 
-Office is a Rust workspace for the API, background worker, MCP server, and operator CLI, with a Next.js web app in `apps/web/`. Its approved implementation decisions and the binding product design are recorded in [the implementation spec](docs/superpowers/specs/2026-10-09-outreach-os-design.md) and [the source design](docs/design/source/outreach-os-design-v1.0.md).
+Office is an open-source, self-hosted workspace for contacts, companies, email
+templates and campaigns, meeting bookings, approvals, and operational controls.
+The backend is a Rust workspace; the web interface is a Next.js app in
+[`apps/web`](apps/web/).
 
-For a local setup, see [Local development](docs/runbooks/local-development.md). Operator procedures are in [Unknown send reconciliation](docs/runbooks/unknown-send-reconciliation.md) and [Database restore](docs/runbooks/restore.md). The current test evidence and uncovered requirements are listed in [the T01–T36 matrix](docs/design/test-matrix.md).
+## Start here
 
-Explicit test fixtures and unconfigured development use fake providers. Configured US Zoho Mail and Campaigns connections have real HTTP adapters, but live-account delivery has not been verified. Live-provider acceptance, legal, security, and backup/restore release checks remain required. The native Campaigns bulk path is separate from the disabled generic marketing adapter.
+- [Local development](docs/runbooks/local-development.md) — prerequisites,
+  database setup, migrations, first admin, and service startup.
+- [SMTP setup](docs/runbooks/smtp.md) — configure Office-owned campaigns to send
+  through an authenticated SMTP relay.
+- [Local booking setup](docs/runbooks/local-booking.md) — set up the internal
+  calendar, availability, meeting types, and private booking links.
+- [Zoho Campaigns setup](docs/runbooks/zoho-campaigns.md) — optional native
+  Campaigns connection, separate from SMTP.
+- [Unknown-send reconciliation](docs/runbooks/unknown-send-reconciliation.md)
+  and [database restore](docs/runbooks/restore.md) — operator recovery guides.
+- [Source design](docs/design/source/outreach-os-design-v1.0.md),
+  [API and MCP contracts](docs/design/integration-contracts.md), and the
+  [acceptance matrix](docs/design/test-matrix.md) — implementation constraints
+  and evidence.
 
-The approved spec names these closed gates: L01 (legal basis; marketing stays blocked), P01 (provider permission; each channel requires current review evidence), Z01 (Zoho account/plan/region; live-account verification remains required), Z02 (webhook verification; polling-only or blocked), C01 (calendar authorization; real booking confirmation stays disabled), E01 (sender authentication and RFC headers; one-click stays disabled), A01 (OIDC/MCP client compatibility; OAuth discovery is unsupported), O01 (backup/restore; production launch stays on hold), and S01 (security/privacy review; production launch stays on hold). See §20 of the [source design](docs/design/source/outreach-os-design-v1.0.md) for the evidence required to close each gate.
+## Features
 
-## Implementation and verification
+| Area | What Office provides |
+| --- | --- |
+| CRM | Contact and company records, search, notes, activity, and CSV imports. |
+| Email content | A visual editor and HTML source editor, variable schema, recipient preview, and immutable template versions. |
+| Office campaigns | Contact selection, consent and suppression checks, preflight, human approval, and one-step dispatch through a configured channel. SMTP campaigns are composed and recorded by Office; SMTP setup requires an active Office mail account. |
+| Zoho Campaigns | An optional, independent route that exports an approved launch to Zoho Campaigns. It is not needed for SMTP delivery. |
+| Inbox | Mailbox-bound Zoho Mail correspondence, kept separate from campaign transport. |
+| Meetings | Internal meeting types, host availability, booking links, and persisted booking, reschedule, and cancellation records. The local calendar does not use OAuth. |
+| Access and operations | Admin, Manager, Member, Agent, and System principals; mailbox grants; approvals; emergency stop; job and delivery status; audit records; and recovery runbooks. |
+| MCP | A Streamable HTTP endpoint with workspace-scoped service credentials and policy-checked tools for CRM research, proposals, drafts, bookings, and campaign workflows. Agents cannot directly submit arbitrary email or decide approvals. |
 
-The approved G1–G6 fake-provider scope is implemented across the Rust services,
-operator CLI, MCP tools, and connected web screens. This includes organization and
-mailbox permissions, CRM/research/imports, campaigns and approvals, manual mail
-composition and replies, booking, compliance, agent runs, and operational queues.
-The generated contract contains 128 OpenAPI paths and 22 MCP tools.
+Office keeps an explicit separation between preparing an action and carrying it
+out. Agent-created email stays a draft for human approval. Marketing sends are
+blocked unless current communication-basis evidence and sender/provider policy
+checks pass. Suppressed addresses are skipped. A send with an uncertain provider
+outcome remains `unknown` and is never resubmitted automatically. Office does
+not run automatic email follow-ups or drip sequences.
 
-Verification on 2026-10-09 used isolated synthetic PostgreSQL databases. The full
-Rust workspace suite passed 348 tests with zero skips. The web
-suite passed 358 tests; Playwright passed all 9 browser scenarios, including
-20 connected internal screens, persisted CRM data, exact-message confirmation,
-queued draft recovery, template version persistence and variable rendering,
-anonymous access denial, and light/dark screenshots.
-Workspace builds, Clippy with warnings denied, rustfmt, Rust documentation tests,
-web type/lint/design checks, and the Next.js production build passed. The CLI
-terminal test confirmed password echo suppression and terminal restoration.
-See the acceptance matrix for requirement-level evidence and remaining external
-release gates; successful fake-provider tests do not close those gates.
+## Quick local start
 
-Independent implementation work used `gpt-6-luna` with `max` reasoning. The agent
-interface did not expose a separate execution-mode setting.
+Install the versions listed in [Local development](docs/runbooks/local-development.md):
+Rust 1.99.0, Node.js 22 or newer, pnpm 11.24.0, PostgreSQL 17.11, and optionally
+Redis 8. The repository does not include a database or Redis launcher.
 
-## Template authoring
+Clone the project and enter its directory first:
 
-Template versions can be written in a rendered email canvas or as HTML source.
-Recipient preview substitutes sample values without storing them in the template.
-The variable palette registers supported placeholders automatically; booking and
-unsubscribe URLs are generated by the server. The plain-text fallback follows
-HTML until edited separately. The current basic-mail policy supports text
-formatting, paragraphs, lists and links; arbitrary CSS and images are rejected.
+```sh
+git clone https://github.com/dev-thug/office-specify-app.git
+cd office-specify-app
+```
 
-## Zoho integration
+Create two separate local databases, copy the environment template, and edit
+`DATABASE_URL` for your local PostgreSQL role. The example already points at
+the `office_dev` database created below:
 
-Office owns its templates, visual/HTML editor, variables and immutable versions.
-The [authenticated SMTP route](docs/runbooks/smtp.md) keeps campaign rendering,
-approvals, recipient dispatch and unsubscribe links in Office while an SMTP
-relay transports each message. It uses a separate write-only SMTP connection;
-Zoho Campaigns OAuth credentials are not SMTP credentials.
+```sh
+createdb office_dev
+createdb office_test
+cp .env.example .env
+```
 
-The native **Campaigns Free** route exports an approved Office launch as one
-provider list and one campaign. Zoho imports Office's signed public HTTPS HTML
-URL and performs the bulk send; no paid Zoho template API is required.
+If you are not running Redis locally, set `REDIS_URL=` in `.env` before
+starting the API.
 
-The flow includes resumable contact staging, explicit-consent and suppression
-checks, provider field/topic metadata, recipient-bound booking values, human
-approval and final confirmation, durable unknown-write handling, and background
-opt-out/report synchronization. Immediate single-step campaigns are supported;
-marketing automation, delayed steps and scheduling are excluded. Provider
-acceptance is separate from delivery/read evidence.
+Load `.env` and apply migrations. The Rust executables read process environment
+variables; they do not load `.env` themselves. Keep `APP_ENV=development`
+explicitly set and create the initial Admin with a password read from stdin:
 
-Configure the US OAuth client and a public HTTPS origin using the
-[setup runbook](docs/runbooks/zoho-campaigns.md). Live-account credentials,
-permissions, sender verification, merge rendering, footer behavior and quota
-acceptance remain operator checks. Mock tests do not prove real delivery.
-Zoho Mail correspondence is a separate adapter. The optional prepaid Email API
-backend remains separate and is not used by the Office template or Free sending
-workflow. See [implementation status](docs/design/zoho-integration-status.md) and
-[the API capability matrix](docs/design/zoho-api-capability-matrix.md).
+```sh
+set -a
+source .env
+set +a
+cargo run -p cli -- migrate
+cargo run -p cli -- bootstrap \
+  --workspace-name "Office Dev" \
+  --admin-email admin@example.test \
+  --admin-password-stdin
+```
+
+Start the API, worker, and web app in separate terminals, loading `.env` in each.
+The web server proxies API requests to `API_ORIGIN` (default
+`http://127.0.0.1:8080`) and listens at the local test origin
+`http://127.0.0.1:13000`:
+
+```sh
+set -a; source .env; set +a; cargo run -p api
+```
+
+```sh
+set -a; source .env; set +a; cargo run -p worker
+```
+
+```sh
+pnpm install --frozen-lockfile
+set -a; source .env; set +a
+API_ORIGIN=http://127.0.0.1:8080 pnpm --dir apps/web dev --hostname 127.0.0.1 --port 13000
+```
+
+Open [http://127.0.0.1:13000](http://127.0.0.1:13000) and sign in with the
+bootstrap account. The optional MCP endpoint listens at
+`http://127.0.0.1:8081/mcp`:
+
+```sh
+set -a; source .env; set +a; cargo run -p mcp
+```
+
+These are local-only addresses. A booking or unsubscribe URL using loopback can
+only be opened on the machine running Office. Local work does not need a public
+tunnel. For a future deployment, set `PUBLIC_BASE_URL=https://office.specify.app`
+in the API and worker environments, route that HTTPS origin through a reverse
+proxy to the Next.js web app, and route its `/api/v1`, `/public/v1`, and
+`/webhooks/v1` paths to the Rust API. Set the Next.js `API_ORIGIN` to the
+deployment's private API origin. See the [local-development runbook](docs/runbooks/local-development.md)
+for the workspace URL override and optional OAuth callback setup.
+
+## Configuration and deployment
+
+`API_ADDR` controls where the Rust API listens. `API_ORIGIN` controls where the
+Next.js server sends proxied API requests; keep them aligned. `PUBLIC_BASE_URL`
+is the browser-visible Office origin used when generating recipient booking and
+unsubscribe links. An existing `workspaces.settings.public_base_url` value
+overrides the environment value for that workspace. Clear or update old
+workspace overrides when changing domains so newly generated links use the
+intended origin. Previously issued capability links retain their original
+origin; recreate affected links or content after a domain change.
+
+`APP_ENV` accepts `development`, `test`, or `production`; when unset, services
+use production behavior. Production requires Redis, a persistent HMAC key of
+at least 32 bytes, an AES-256 SecretStore key, and an HTTPS public origin where
+recipient links must work. Supply private values through the deployment's
+secret manager. Keep the HMAC and encryption keys stable and backed up alongside
+the encrypted SecretStore. See the [SMTP runbook](docs/runbooks/smtp.md) and
+[database restore runbook](docs/runbooks/restore.md) before operating a
+deployment.
+
+The app and internal local calendar can run without OAuth. A fresh workspace
+has no Office mail account, though, and the current supported way to provision
+one is **Settings → Mail accounts → Connect mailbox** through Zoho Mail OAuth.
+An SMTP login does not create this Office account. The connecting Admin gets an
+initial mailbox grant; another Admin setting up SMTP needs `can_send` on the
+selected account, granted through **Manage grants**. SMTP uses its own relay
+credentials after that mailbox prerequisite is met. This Zoho Mail OAuth flow
+is separate from Zoho Campaigns OAuth, which SMTP does not require. Configure
+the exact Zoho callback URL and server-side client credentials for whichever
+OAuth connection you enable. None of the local app, local calendar, or SMTP
+setup requires a public tunnel. The native Zoho Campaigns bulk route does
+require an externally reachable HTTPS origin for Zoho to fetch Office's frozen
+HTML. Do not treat mock or local SMTP acceptance as proof of inbox delivery,
+sender authentication, or live Zoho behavior.
+
+## Current boundaries
+
+Office is designed to fail closed around outbound effects. Campaign webhook
+verification and external calendar sync remain release gates; configured OAuth
+does not by itself verify a live account, sender identity, delivery, or booking
+behavior.
+The internal calendar stores Office booking data and does not create external
+calendar invitations. Marketing policy, provider permission, sender
+authentication, OAuth-client compatibility, and backup/restore release checks
+must be reviewed before production use. See the [source design's release
+gates](docs/design/source/outreach-os-design-v1.0.md) for the required
+evidence.
 
 ## License
 
