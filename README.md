@@ -24,6 +24,12 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 
 ## Features
 
+New to Office? Open **Usage guide** in the top bar for the setup-to-send flow
+and instructions for every menu. Hover or focus the question-mark icon beside
+a menu or the current screen name for a short explanation; click it (or press
+Enter) for when to use the feature and numbered steps. On touch screens, tap
+the same icon. Escape closes the instructions and returns focus to the button.
+
 | Area | What Office provides |
 | --- | --- |
 | CRM | Contact and company records, search, notes, activity, and CSV imports. |

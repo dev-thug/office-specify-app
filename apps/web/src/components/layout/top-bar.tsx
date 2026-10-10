@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 import { Logo } from "@/components/layout/logo";
+import { FeatureHelp, UsageGuide } from "@/components/layout/feature-help";
 import { SidebarNavContent } from "@/components/layout/app-sidebar";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { UserMenu } from "@/components/layout/user-menu";
@@ -74,8 +75,10 @@ export function TopBar({ onOpenCommandPalette }: TopBarProps) {
         <div className="min-w-0 text-ui font-medium text-muted-foreground">
           {current ? t(`nav.${current.key}`) : ""}
         </div>
+        {current ? <FeatureHelp featureKey={current.key} /> : null}
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        <UsageGuide />
         <ThemeToggle />
         <UserMenu />
       </div>

@@ -26,5 +26,221 @@
     "meetings": "Meetings",
     "automation": "Automation",
     "admin": "Administration"
+  },
+  "help": {
+    "label": "Help with {feature}",
+    "guide": "Usage guide",
+    "guideDescription": "Start with setup, then prepare email and manage replies and meetings.",
+    "when": "When to use it",
+    "steps": "How to use it",
+    "more": "Click for step-by-step instructions.",
+    "open": "Open {feature}",
+    "allFeatures": "Feature instructions",
+    "start": "Getting started",
+    "workflow": [
+      {
+        "title": "1. Prepare connections",
+        "body": "Connect a mailbox and configure SMTP. For meetings, prepare a calendar, meeting type, and host availability.",
+        "key": "settingsMailAccounts"
+      },
+      {
+        "title": "2. Prepare contacts and content",
+        "body": "Add companies and contacts, check consent and suppressions, and create a template with personalization, booking, and unsubscribe variables.",
+        "key": "templates"
+      },
+      {
+        "title": "3. Review and send",
+        "body": "Choose recipients, a channel, and a template. Freeze the campaign, obtain required approval, and execute it.",
+        "key": "campaigns"
+      },
+      {
+        "title": "4. Check outcomes",
+        "body": "Check job results in Operations, replies in Inbox, bookings in Meetings, and unsubscribes in Suppressions.",
+        "key": "operations"
+      }
+    ],
+    "features": {
+      "dashboard": {
+        "summary": "The starting point for reviewing work, email activity, approvals, and meeting status in Office.",
+        "when": "Use it to decide what needs attention today.",
+        "steps": [
+          "Review the status cards for sending, approvals, and meetings.",
+          "Open the relevant feature for an item that needs attention.",
+          "Check its details and recorded outcome before moving on."
+        ]
+      },
+      "companies": {
+        "summary": "Keep company records together with their contacts, internal owners, notes, and activity.",
+        "when": "Use it to manage relationships at the company level.",
+        "steps": [
+          "Create a company and enter its basic details.",
+          "Link its contacts and assign an internal owner.",
+          "Add notes and activity as the relationship develops."
+        ]
+      },
+      "contacts": {
+        "summary": "Manage the people you communicate with, including their email, company, owner, and history.",
+        "when": "Use it to prepare recipients or find an existing customer.",
+        "steps": [
+          "Add a contact directly or through an import.",
+          "Verify the email, company, and internal owner.",
+          "Check consent and suppression status before choosing marketing recipients."
+        ]
+      },
+      "inbox": {
+        "summary": "Read conversations from connected mailboxes, assign an owner, and prepare reply drafts.",
+        "when": "Use it when a customer replies or needs follow-up support.",
+        "steps": [
+          "Connect a mailbox in Mail accounts first.",
+          "Open a conversation and assign the responsible person.",
+          "Prepare a draft and review the required approval and sending status."
+        ]
+      },
+      "templates": {
+        "summary": "Save reusable email subjects, content, and personalization variables. Saving a template does not send email.",
+        "when": "Use it to reuse a message layout with different recipients.",
+        "steps": [
+          "Create a template and open a new version.",
+          "Write in the email canvas or toggle to HTML; insert name, booking, and unsubscribe variables.",
+          "Preview and save, then select that version in a campaign or draft."
+        ]
+      },
+      "campaigns": {
+        "summary": "Prepare a sending job that combines selected contacts, email content, and a delivery channel for review and execution.",
+        "when": "Use it to send one prepared message to a selected group.",
+        "steps": [
+          "Prepare a mailbox and channel, then enter a campaign name and objective.",
+          "Choose recipients, a template version, variables, and a meeting type when required.",
+          "Check timing and limits, freeze the reviewed content, and request approval.",
+          "Run the approved job when requirements are met and inspect results. SMTP acceptance does not prove inbox delivery."
+        ]
+      },
+      "approvals": {
+        "summary": "Review a proposed action and its recipients before approving or rejecting execution.",
+        "when": "Use it for human review between preparation and execution.",
+        "steps": [
+          "Open the request and inspect the sender, recipients, content, and frozen evidence.",
+          "An eligible reviewer records a reason and approves or rejects it.",
+          "The requester checks the result and proceeds with available actions. Requests requiring a separate reviewer cannot be self-approved."
+        ]
+      },
+      "meetings": {
+        "summary": "Review booked meetings, change or cancel their time, and record attendance outcomes.",
+        "when": "Use it to manage bookings from your email booking button.",
+        "steps": [
+          "Set up a calendar, meeting type, and host availability first.",
+          "Issue a booking link or insert the booking button into a template.",
+          "Review bookings and manage changes, cancellations, and attendance."
+        ]
+      },
+      "meetingTypes": {
+        "summary": "Define the name, length, buffers, and booking window of a meeting such as a consultation or introduction.",
+        "when": "Use it to create the meeting choices offered in links and emails.",
+        "steps": [
+          "Prepare the signed-in host’s calendar in Settings.",
+          "Create a meeting type with a name, duration, and booking conditions.",
+          "Set host availability, then choose an active type in booking links or campaigns."
+        ]
+      },
+      "agents": {
+        "summary": "Review AI agents and their runs, and manage work requests within their allowed capabilities.",
+        "when": "Use it to inspect agent-prepared research, drafts, and results.",
+        "steps": [
+          "Check the agent status and allowed capabilities.",
+          "Request work and follow its progress in the run details.",
+          "Review the output. An agent cannot replace a required human sending approval."
+        ]
+      },
+      "imports": {
+        "summary": "Add contact or company data in bulk from files such as CSV and review the processing result.",
+        "when": "Use it to bring an existing list into Office.",
+        "steps": [
+          "Prepare column names and required values such as email addresses.",
+          "Select a file, check column mapping and preview, then request the import.",
+          "Review processing status and errors. Importing a record does not establish marketing consent."
+        ]
+      },
+      "compliance": {
+        "summary": "Manage unsubscribe and suppression records for addresses that must be excluded from sending.",
+        "when": "Use it to check that an unsubscribe or sending exclusion is applied.",
+        "steps": [
+          "Search for an address and inspect its current suppression state.",
+          "Review requests received through the unsubscribe link and their recorded results.",
+          "For a required change, verify the evidence and use the available authorized review process."
+        ]
+      },
+      "complianceReviews": {
+        "summary": "Review the evidence and requests that establish a basis for contacting a person.",
+        "when": "Use it when consent or communication evidence needs review before marketing.",
+        "steps": [
+          "Find the contact and the evidence requiring review.",
+          "Open the request and inspect its evidence and reason.",
+          "Record an authorized review result and verify it in the sending preparation flow."
+        ]
+      },
+      "operations": {
+        "summary": "Inspect progress, failures, and results of background work such as imports, sending, and booking processing.",
+        "when": "Use it to investigate work that appears stalled or failed.",
+        "steps": [
+          "Find the job for the relevant time and status.",
+          "Inspect its details, errors, and external-effect information.",
+          "Use only retries offered by the screen and check the outcome. Do not manually resend an uncertain external operation."
+        ]
+      },
+      "operationsIntegrations": {
+        "summary": "Inspect delivery channels, calendar connections, their availability, and review records.",
+        "when": "Use it to check whether a configured connection is ready or needs repair.",
+        "steps": [
+          "Review connection status and any reauthentication requirement.",
+          "Check delivery purpose, review history, and channel availability.",
+          "Fix credentials or settings in the related setup screen, then check the status again."
+        ]
+      },
+      "settings": {
+        "summary": "Manage the people using Office and review their workspace roles and account status.",
+        "when": "Use it to manage team membership and workspace responsibilities.",
+        "steps": [
+          "Review each member’s name, role, and status.",
+          "An authorized administrator adjusts roles and account state as needed.",
+          "Review mailbox-specific access separately under Mail accounts."
+        ]
+      },
+      "settingsMailAccounts": {
+        "summary": "Configure Office mailbox connections, SMTP delivery, and mailbox-specific permissions.",
+        "when": "Use it to prepare the mailbox for replies and the path for sending.",
+        "steps": [
+          "In a fresh workspace, connect a mailbox to create an Office mail account first.",
+          "Configure the SMTP server, TLS, and login, and choose a supported sender address or alias.",
+          "Verify connectivity and compose/send grants, then choose the campaign delivery channel."
+        ]
+      },
+      "settingsCalendars": {
+        "summary": "Prepare an Office internal calendar or a supported external calendar for storing meeting bookings.",
+        "when": "Use it before creating meeting types and booking links.",
+        "steps": [
+          "Prepare the Office internal calendar or configure a supported external connection.",
+          "Confirm the current host has an active calendar.",
+          "Configure meeting types and availability. Internal bookings do not create external calendar invitations."
+        ]
+      },
+      "settingsPolicies": {
+        "summary": "Review and configure shared workspace conditions applied to sending and other actions.",
+        "when": "Use it to manage the team’s common limits and review conditions.",
+        "steps": [
+          "Read the currently applied settings and their explanations.",
+          "An authorized administrator updates the required values and saves.",
+          "Check that the campaign review reflects the new conditions and limits."
+        ]
+      },
+      "settingsSecurity": {
+        "summary": "Inspect account sessions and manage access that is no longer needed.",
+        "when": "Use it to review your current login and other sessions.",
+        "steps": [
+          "Check the current session and other sessions’ sign-in times.",
+          "Identify unused or unrecognized sessions.",
+          "Use the available session termination action and verify the resulting state."
+        ]
+      }
+    }
   }
 }

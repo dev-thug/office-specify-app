@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Logo } from "@/components/layout/logo";
+import { FeatureHelp } from "@/components/layout/feature-help";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { NAV_SECTIONS } from "@/lib/nav";
@@ -61,12 +62,13 @@ export function SidebarNavContent({
               <div className="flex flex-col gap-0.5">
                 {section.items.map((item) => (
                   <div key={item.key}>
+                    <div className="flex items-center gap-0.5">
                     <Link
                       href={item.href}
                       onClick={onNavigate}
                       aria-current={isActive(pathname, item.href) ? "page" : undefined}
                       className={cn(
-                        "flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
+                        "flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
                         isActive(pathname, item.href)
                           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                           : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -75,14 +77,16 @@ export function SidebarNavContent({
                       <item.icon className="size-4 shrink-0" />
                       <span className="truncate">{t(`nav.${item.key}`)}</span>
                     </Link>
+                    <FeatureHelp featureKey={item.key} />
+                    </div>
                     {item.children?.map((child) => (
+                      <div key={child.key} className="ml-4 flex items-center gap-0.5">
                       <Link
-                        key={child.key}
                         href={child.href}
                         onClick={onNavigate}
                         aria-current={isActive(pathname, child.href) ? "page" : undefined}
                         className={cn(
-                          "ml-4 flex h-9 w-[calc(100%-1rem)] items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
+                          "flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
                           isActive(pathname, child.href)
                             ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                             : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -91,6 +95,8 @@ export function SidebarNavContent({
                         <child.icon className="size-4 shrink-0" />
                         <span className="truncate">{t(`nav.${child.key}`)}</span>
                       </Link>
+                      <FeatureHelp featureKey={child.key} />
+                      </div>
                     ))}
                   </div>
                 ))}
