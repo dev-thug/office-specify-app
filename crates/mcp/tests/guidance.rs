@@ -1,6 +1,35 @@
 use serde_json::Value;
 
 #[test]
+fn discovery_tools_complete_the_research_prerequisites_without_approval_actions() {
+    let tools = mcp::all_tools();
+    for name in [
+        "crm_search_contacts",
+        "templates_list",
+        "templates_get",
+        "templates_list_versions",
+        "templates_get_version",
+        "templates_render_version",
+        "booking_list_meeting_types",
+        "booking_get_meeting_type",
+        "research_get_proposal",
+    ] {
+        assert!(
+            tools.iter().any(|tool| tool.name == name),
+            "missing discovery tool: {name}"
+        );
+    }
+    for forbidden in [
+        "research_accept_proposal",
+        "approvals_decide",
+        "mail_submit",
+        "mailbox_grant",
+    ] {
+        assert!(!tools.iter().any(|tool| tool.name == forbidden));
+    }
+}
+
+#[test]
 fn initialization_explains_company_research_storage_and_human_handoffs() {
     let response = mcp::jsonrpc::initialize_result();
     let instructions = response["instructions"].as_str().unwrap_or_default();

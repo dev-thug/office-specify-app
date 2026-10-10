@@ -186,6 +186,7 @@ pub fn all_tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
     v.extend(tools::campaigns::tools());
     v.extend(tools::compliance::tools());
     v.extend(tools::crm::tools_with_key(hmac_key));
+    v.extend(tools::discovery::tools_with_key(hmac_key));
     v.extend(tools::imports::tools());
     v.extend(tools::inbox::tools());
     v.extend(tools::mailboxes::tools());

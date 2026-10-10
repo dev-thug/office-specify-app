@@ -7,6 +7,7 @@ pub mod booking;
 pub mod campaigns;
 pub mod compliance;
 pub mod crm;
+pub mod discovery;
 pub mod imports;
 pub mod inbox;
 pub mod mailboxes;

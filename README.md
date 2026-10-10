@@ -26,7 +26,7 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 
 For agent integration, read the [MCP connection, company-research field mapping,
 and feature coverage guide](docs/runbooks/mcp-agent-guide.md). The server exposes
-22 tools for selected read, research, proposal, and draft workflows; it does
+31 tools for selected read, research, proposal, and draft workflows; it does
 **not** expose every UI/REST action. Its initialization instructions and input
 schemas explain record IDs, field destinations, examples, and human handoffs.
 

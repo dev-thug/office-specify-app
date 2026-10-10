@@ -27,6 +27,7 @@ axum.workspace = true
 http.workspace = true
 
 [dev-dependencies]
+api.workspace = true
 sqlx.workspace = true
 reqwest.workspace = true
 infrastructure = { workspace = true, features = ["testing"] }

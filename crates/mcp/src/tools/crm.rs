@@ -368,6 +368,8 @@ fn company_summary(company: CompanyResponse) -> CompanySummary {
         id: company.id,
         name: company.name,
         domain: company.domain,
+        website_url: company.website_url,
+        description: company.description,
         industry: company.industry,
         country_code: company.country_code,
         lifecycle_stage: company.lifecycle_stage.as_str().to_string(),
@@ -376,7 +378,7 @@ fn company_summary(company: CompanyResponse) -> CompanySummary {
     }
 }
 
-fn contact_summary(contact: ContactResponse) -> ContactToolOutput {
+pub(super) fn contact_summary(contact: ContactResponse) -> ContactToolOutput {
     ContactToolOutput {
         id: contact.id,
         company_id: contact.company_id,
@@ -567,6 +569,8 @@ struct CompanySummary {
     id: Uuid,
     name: String,
     domain: Option<String>,
+    website_url: Option<String>,
+    description: Option<String>,
     industry: Option<String>,
     country_code: Option<String>,
     lifecycle_stage: String,
@@ -575,7 +579,7 @@ struct CompanySummary {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-struct ContactToolOutput {
+pub(super) struct ContactToolOutput {
     id: Uuid,
     company_id: Option<Uuid>,
     name: String,

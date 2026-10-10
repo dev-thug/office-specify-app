@@ -73,6 +73,40 @@ pub struct MeetingTypeResponse {
     pub version: i64,
 }
 
+/// Agent-safe workspace inventory. Never contains calendar connection/provider IDs.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MeetingTypeDiscoveryResponse {
+    pub id: Uuid,
+    pub host_principal_id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub duration_minutes: i32,
+    pub buffer_before_minutes: i32,
+    pub buffer_after_minutes: i32,
+    pub minimum_notice_minutes: i32,
+    pub booking_horizon_days: i32,
+    pub status: String,
+    pub version: i64,
+}
+
+impl From<MeetingTypeResponse> for MeetingTypeDiscoveryResponse {
+    fn from(value: MeetingTypeResponse) -> Self {
+        Self {
+            id: value.id,
+            host_principal_id: value.host_principal_id,
+            name: value.name,
+            description: value.description,
+            duration_minutes: value.duration_minutes,
+            buffer_before_minutes: value.buffer_before_minutes,
+            buffer_after_minutes: value.buffer_after_minutes,
+            minimum_notice_minutes: value.minimum_notice_minutes,
+            booking_horizon_days: value.booking_horizon_days,
+            status: value.status,
+            version: value.version,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AvailabilityRuleRequest {

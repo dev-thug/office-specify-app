@@ -266,6 +266,31 @@ pub async fn list_meeting_types(db: &Db, ctx: &Ctx) -> Result<Vec<MeetingTypeRes
     Ok(rows.into_iter().map(meeting_response).collect())
 }
 
+/// A booking.read agent may discover safe type metadata in its workspace.
+/// This is deliberately separate from host management and slot/proposal ACLs:
+/// discovery grants neither calendar access nor authority to reserve a slot.
+pub async fn list_discoverable_meeting_types(
+    db: &Db,
+    ctx: &Ctx,
+) -> Result<Vec<MeetingTypeDiscoveryResponse>, AppError> {
+    require_scope(ctx, Scope::BookingRead)?;
+    if ctx.principal_kind != PrincipalKind::Agent {
+        return Ok(list_meeting_types(db, ctx)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect());
+    }
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let rows = repo::list_meeting_types(&mut tx, None).await?;
+    tx.rollback().await?;
+    Ok(rows
+        .into_iter()
+        .map(meeting_response)
+        .map(Into::into)
+        .collect())
+}
+
 pub async fn update_meeting_type(
     db: &Db,
     ctx: &Ctx,

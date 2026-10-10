@@ -25,7 +25,7 @@ pub struct PatchEmailTemplateRequest {
     pub archived: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct EmailTemplateResponse {
     pub template_id: Uuid,
     pub name: String,
@@ -36,7 +36,7 @@ pub struct EmailTemplateResponse {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct EmailTemplateListItem {
     pub template_id: Uuid,
     pub latest_version_no: Option<i64>,
@@ -66,7 +66,7 @@ pub struct CreateTemplateVersionResponse {
     pub content_hash: String,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct TemplateVersionResponse {
     pub template_version_id: Uuid,
     pub template_id: Uuid,
@@ -80,7 +80,7 @@ pub struct TemplateVersionResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct TemplateVersionListItem {
     pub template_version_id: Uuid,
     pub version_no: i64,
@@ -97,7 +97,7 @@ pub struct RenderTemplateVersionRequest {
     pub variables: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct RenderTemplateVersionResponse {
     pub subject: String,
     pub body_text: String,
