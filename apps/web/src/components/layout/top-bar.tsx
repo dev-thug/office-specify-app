@@ -19,7 +19,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { flattenNav } from "@/lib/nav";
+import { navItemForPath } from "@/lib/nav";
 
 interface TopBarProps {
   onOpenCommandPalette?: () => void;
@@ -30,9 +30,7 @@ export function TopBar({ onOpenCommandPalette }: TopBarProps) {
   const t = useTranslations();
   const pathname = usePathname();
   const [navOpen, setNavOpen] = useState(false);
-  const current = flattenNav()
-    .filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
-    .sort((a, b) => b.href.length - a.href.length)[0];
+  const current = navItemForPath(pathname);
 
   return (
     <header className="flex h-13 shrink-0 items-center justify-between gap-3 border-b border-app-border-subtle px-4">

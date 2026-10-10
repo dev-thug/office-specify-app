@@ -83,6 +83,7 @@
   },
   "actions": {
     "issueLink": "예약 링크 발급",
+    "manageTypes": "미팅 유형",
     "reschedule": "일정 변경",
     "cancel": "예약 취소",
     "recordAttendance": "참석 결과 기록",

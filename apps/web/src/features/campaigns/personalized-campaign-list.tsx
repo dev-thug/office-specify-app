@@ -49,6 +49,9 @@ export function PersonalizedCampaignList() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" size="sm">
+              <Link href="/app/approvals">{t("approvals")}</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
               <Link href="/app/campaigns/bulk">{t("bulkCampaigns")}</Link>
             </Button>
             <Button asChild size="sm">

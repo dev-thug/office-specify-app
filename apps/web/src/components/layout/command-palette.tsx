@@ -38,7 +38,7 @@ export function CommandPalette({
           {flattenNav().map((item) => (
             <CommandItem
               key={item.href}
-              value={`${t(`nav.${item.key}`)} ${item.href}`}
+              value={`${t(`nav.${item.key}`)} ${item.href} ${item.searchTerms?.join(" ") ?? ""}`}
               onSelect={() => {
                 router.push(item.href);
                 onOpenChange(false);

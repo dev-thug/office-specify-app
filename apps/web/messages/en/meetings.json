@@ -83,6 +83,7 @@
   },
   "actions": {
     "issueLink": "Issue booking link",
+    "manageTypes": "Meeting types",
     "reschedule": "Reschedule",
     "cancel": "Cancel booking",
     "recordAttendance": "Record outcome",

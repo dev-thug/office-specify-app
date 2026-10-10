@@ -11,6 +11,14 @@ import enCampaigns from "../../../../messages/en/campaigns.json";
 import enResearch from "../../../../messages/en/research.json";
 import enTemplates from "../../../../messages/en/templates.json";
 import enSending from "../../../../messages/en/sending.json";
+import enMeetings from "../../../../messages/en/meetings.json";
+import enStatus from "../../../../messages/en/status.json";
+import enNav from "../../../../messages/en/nav.json";
+import { SidebarNavContent } from "@/components/layout/app-sidebar";
+import { CommandPalette } from "@/components/layout/command-palette";
+import { TopBar } from "@/components/layout/top-bar";
+import { CompaniesScreen } from "@/features/companies/companies-screen";
+import { MeetingsPage } from "@/features/meetings/meetings-page";
 import CampaignsPage from "@/app/(internal)/app/campaigns/page";
 import { CampaignBuilder } from "@/features/campaigns/campaign-builder";
 import { PersonalizedCampaignCreate } from "@/features/campaigns/personalized-campaign-create";
@@ -28,6 +36,7 @@ import { formatDateTime } from "@/features/campaigns/format";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/app/contacts/contact-1",
 }));
 
 function mount(ui: ReactElement) {
@@ -38,7 +47,7 @@ function mount(ui: ReactElement) {
     <QueryClientProvider client={queryClient}>
       <NextIntlClientProvider
         locale="en"
-        messages={{ common: enCommon, campaigns: enCampaigns, companies: enCompanies, research: enResearch, templates: enTemplates, sending: enSending }}
+        messages={{ common: enCommon, nav: enNav, campaigns: enCampaigns, companies: enCompanies, research: enResearch, templates: enTemplates, sending: enSending }}
       >
         {ui}
       </NextIntlClientProvider>
@@ -48,6 +57,7 @@ function mount(ui: ReactElement) {
 
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
 });
 
 function campaignTarget(overrides: Partial<SalesCampaignTarget>): SalesCampaignTarget {
@@ -93,11 +103,144 @@ function salesCampaign(targets: SalesCampaignTarget[]): SalesCampaignResponse {
   };
 }
 
+interface BoardPointer {
+  handle: HTMLElement;
+  pointerId: number;
+  x: number;
+  y: number;
+}
+
+let restoreElementFromPoint: (() => void) | null = null;
+
+function mockElementFromPoint(resolve: (x: number, y: number) => Element | null) {
+  restoreElementFromPoint?.();
+  const original = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
+  Object.defineProperty(document, "elementFromPoint", {
+    configurable: true,
+    value: resolve,
+  });
+  restoreElementFromPoint = () => {
+    if (original) {
+      Object.defineProperty(document, "elementFromPoint", original);
+    } else {
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
+    restoreElementFromPoint = null;
+  };
+}
+
+function beginBoardPointer(
+  card: HTMLElement,
+  pointerId = 11,
+  x = 10,
+  y = 10
+): BoardPointer {
+  const handle = within(card).getByTitle(/drag|move/i);
+  fireEvent.pointerDown(handle, {
+    button: 0,
+    pointerId,
+    pointerType: "mouse",
+    clientX: x,
+    clientY: y,
+  });
+  return { handle, pointerId, x, y };
+}
+
+function moveBoardPointer(
+  pointer: BoardPointer,
+  x: number,
+  y: number,
+  pointerId = pointer.pointerId
+) {
+  fireEvent.pointerMove(pointer.handle, {
+    pointerId,
+    pointerType: "mouse",
+    clientX: x,
+    clientY: y,
+  });
+}
+
+function endBoardPointer(
+  pointer: BoardPointer,
+  x = pointer.x,
+  y = pointer.y,
+  pointerId = pointer.pointerId
+) {
+  fireEvent.pointerUp(pointer.handle, {
+    pointerId,
+    pointerType: "mouse",
+    clientX: x,
+    clientY: y,
+  });
+}
+
+function cancelBoardPointer(pointer: BoardPointer, pointerId = pointer.pointerId) {
+  fireEvent.pointerCancel(pointer.handle, {
+    pointerId,
+    pointerType: "mouse",
+    clientX: pointer.x,
+    clientY: pointer.y,
+  });
+}
+
+function finishBoardPointerOn(
+  pointer: BoardPointer,
+  moveLane: HTMLElement,
+  releaseLane = moveLane
+) {
+  let hit: Element | null = moveLane;
+  mockElementFromPoint(() => hit);
+  const x = pointer.x + 12;
+  moveBoardPointer(pointer, x, pointer.y);
+  hit = releaseLane;
+  endBoardPointer(pointer, x, pointer.y);
+}
+
 afterEach(() => {
+  restoreElementFromPoint?.();
   vi.unstubAllGlobals();
 });
 
 describe("personalized campaign routes", () => {
+  it("uses Contacts context in the top bar while the sidebar stays on Companies", () => {
+    mount(<TopBar />);
+
+    expect(screen.getByText("Contacts", { exact: true })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Help with Contacts" })
+    ).toBeInTheDocument();
+  });
+
+  it("finds MCP service credentials through the command palette", async () => {
+    mount(<CommandPalette open onOpenChange={() => undefined} />);
+
+    fireEvent.change(
+      screen.getByPlaceholderText(enCommon.commandPalette.placeholder),
+      { target: { value: "MCP" } }
+    );
+    expect(await screen.findByText("Members & agent access")).toBeInTheDocument();
+  });
+
+  it("renders seven primary sidebar links and highlights Companies for contact routes", () => {
+    mount(<SidebarNavContent />);
+
+    const links = within(screen.getByRole("navigation")).getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/app/dashboard",
+      "/app/companies",
+      "/app/campaigns",
+      "/app/inbox",
+      "/app/templates",
+      "/app/meetings",
+      "/app/settings",
+    ]);
+    const companiesLink = within(screen.getByRole("navigation")).getByRole("link", {
+      name: "Companies",
+    });
+    expect(companiesLink).not.toHaveAttribute("aria-current");
+    expect(companiesLink).toHaveClass("bg-sidebar-accent");
+  });
+
   it("uses delivery-oriented Korean labels for queued and provider-accepted columns", () => {
     expect(koCampaigns.personalized.board.columns.queued).toBe("발송 대기");
     expect(koCampaigns.personalized.board.columns.accepted).toBe("전송됨");
@@ -238,6 +381,56 @@ describe("personalized campaign routes", () => {
     expect(invalidSource.type).toBe(PersonalizedCampaignCreate);
   });
 
+  it("links related destinations from the Companies and Meetings headers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: [], page: { next_cursor: null, has_more: false } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      )
+    );
+
+    const client = () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+    const messages = {
+      common: enCommon,
+      companies: enCompanies,
+      meetings: enMeetings,
+      status: enStatus,
+    };
+
+    const companiesView = render(
+      <QueryClientProvider client={client()}>
+        <NextIntlClientProvider locale="en" messages={messages}>
+          <CompaniesScreen />
+        </NextIntlClientProvider>
+      </QueryClientProvider>
+    );
+    expect(await screen.findByRole("heading", { name: "Companies" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Contacts" })).toHaveAttribute(
+      "href",
+      "/app/contacts"
+    );
+    companiesView.unmount();
+
+    render(
+      <QueryClientProvider client={client()}>
+        <NextIntlClientProvider locale="en" messages={messages}>
+          <MeetingsPage />
+        </NextIntlClientProvider>
+      </QueryClientProvider>
+    );
+    expect(await screen.findByRole("heading", { name: "Meetings" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Meeting types" })).toHaveAttribute(
+      "href",
+      "/app/meeting-types"
+    );
+  });
+
   it("shows the personalized workflow and keeps bulk campaigns on a labeled path", async () => {
     vi.stubGlobal(
       "fetch",
@@ -260,6 +453,10 @@ describe("personalized campaign routes", () => {
     expect(screen.getByRole("link", { name: "Bulk campaigns" })).toHaveAttribute(
       "href",
       "/app/campaigns/bulk"
+    );
+    expect(screen.getByRole("link", { name: "Approvals" })).toHaveAttribute(
+      "href",
+      "/app/approvals"
     );
   });
 
@@ -863,6 +1060,151 @@ describe("personalized campaign routes", () => {
     });
   });
 
+  it("uses pointer ownership, cancellation, board guards, and the release lane", async () => {
+    const data = salesCampaign([
+      campaignTarget({
+        id: "northstar-target",
+        stage: "research",
+        workflow_stage: "research",
+        version: 2,
+      }),
+    ]);
+    const stageUpdates: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (
+          init?.method === "PATCH" &&
+          url.pathname.endsWith("/targets/northstar-target")
+        ) {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          stageUpdates.push(body);
+          data.targets[0]!.stage = "review";
+          data.targets[0]!.workflow_stage = "review";
+          data.targets[0]!.version += 1;
+          return new Response(JSON.stringify({ data: data.targets[0] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const response =
+          url.pathname === "/api/v1/sales-campaigns/campaign-1" ? data : [];
+        return new Response(JSON.stringify({ data: response }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      })
+    );
+    const page = await CampaignDetailPage({
+      params: Promise.resolve({ id: "campaign-1" }),
+    });
+    mount(page);
+
+    const card = await screen.findByRole("article", { name: "Northstar" });
+    const handle = within(card).getByTitle(/drag|move/i);
+    const setPointerCapture = vi.fn();
+    const hasPointerCapture = vi.fn(() => true);
+    const releasePointerCapture = vi.fn();
+    Object.defineProperties(handle, {
+      setPointerCapture: { configurable: true, value: setPointerCapture },
+      hasPointerCapture: { configurable: true, value: hasPointerCapture },
+      releasePointerCapture: { configurable: true, value: releasePointerCapture },
+    });
+    expect(card).toHaveAttribute("draggable", "false");
+    expect(handle).toHaveAttribute("draggable", "false");
+    expect(handle).toHaveClass("cursor-grab", "select-none", "touch-none");
+
+    const draftLane = screen.getByRole("region", { name: "Draft" });
+    const reviewLane = screen.getByRole("region", { name: "Review" });
+    const foreignLane = document.createElement("section");
+    foreignLane.dataset.salesCampaignId = "another-campaign";
+    foreignLane.dataset.salesCampaignStage = "draft";
+    let hitElement: Element | null = draftLane;
+    mockElementFromPoint(() => hitElement);
+
+    const rightClickPointer = { handle, pointerId: 10, x: 10, y: 10 };
+    fireEvent.pointerDown(handle, {
+      button: 2,
+      pointerId: rightClickPointer.pointerId,
+      clientX: rightClickPointer.x,
+      clientY: rightClickPointer.y,
+    });
+    hitElement = draftLane;
+    moveBoardPointer(rightClickPointer, 22, 10);
+    endBoardPointer(rightClickPointer, 22, 10);
+    expect(stageUpdates).toHaveLength(0);
+
+    // A small movement stays a click and never changes the server stage.
+    const clickPointer = beginBoardPointer(card, 11, 10, 10);
+    moveBoardPointer(clickPointer, 12, 10);
+    endBoardPointer(clickPointer, 12, 10);
+    expect(stageUpdates).toHaveLength(0);
+
+    // A visually similar lane from another campaign is outside this board.
+    const foreignPointer = beginBoardPointer(card, 12, 10, 10);
+    hitElement = foreignLane;
+    moveBoardPointer(foreignPointer, 22, 10);
+    endBoardPointer(foreignPointer, 22, 10);
+    expect(stageUpdates).toHaveLength(0);
+
+    // Ignore a second pointer and clear the owner when the original pointer cancels.
+    const canceledPointer = beginBoardPointer(card, 13, 10, 10);
+    const competingPointer = { handle, pointerId: 14, x: 10, y: 10 };
+    hitElement = draftLane;
+    fireEvent.pointerDown(handle, {
+      button: 0,
+      pointerId: competingPointer.pointerId,
+      clientX: competingPointer.x,
+      clientY: competingPointer.y,
+    });
+    moveBoardPointer(competingPointer, 22, 10);
+    endBoardPointer(competingPointer, 22, 10);
+    expect(stageUpdates).toHaveLength(0);
+    cancelBoardPointer(canceledPointer);
+    endBoardPointer(canceledPointer, 22, 10);
+    expect(stageUpdates).toHaveLength(0);
+
+    const lostCapturePointer = beginBoardPointer(card, 16, 10, 10);
+    fireEvent.lostPointerCapture(handle, {
+      pointerId: lostCapturePointer.pointerId,
+      clientX: 10,
+      clientY: 10,
+    });
+    endBoardPointer(lostCapturePointer, 22, 10);
+    expect(stageUpdates).toHaveLength(0);
+
+    // Drop uses the lane under pointerup, not the lane seen on the last move.
+    const pointer = beginBoardPointer(card, 15, 10, 10);
+    hitElement = draftLane;
+    moveBoardPointer(pointer, 22, 10);
+    expect(card).toHaveClass("opacity-50");
+    expect(draftLane).toHaveClass("ring-2");
+    hitElement = reviewLane;
+    endBoardPointer(pointer, 22, 10);
+    endBoardPointer(pointer, 22, 10);
+
+    await waitFor(() => expect(stageUpdates).toHaveLength(1));
+    expect(stageUpdates[0]).toEqual({
+      stage: "review",
+      expected_target_version: 2,
+    });
+    expect(setPointerCapture.mock.calls.map(([pointerId]) => pointerId)).toEqual([
+      11,
+      12,
+      13,
+      16,
+      15,
+    ]);
+    expect(releasePointerCapture.mock.calls.map(([pointerId]) => pointerId)).toEqual([
+      11,
+      12,
+      13,
+      16,
+      15,
+    ]);
+  });
+
   it("keeps the server stage after a rejected drag and refreshes the board", async () => {
     const data = salesCampaign([
       campaignTarget({
@@ -910,8 +1252,8 @@ describe("personalized campaign routes", () => {
     mount(page);
 
     const card = await screen.findByRole("article", { name: "Northstar" });
-    fireEvent.dragStart(card);
-    fireEvent.drop(screen.getByRole("region", { name: "Draft" }));
+    const pointer = beginBoardPointer(card);
+    finishBoardPointerOn(pointer, screen.getByRole("region", { name: "Draft" }));
 
     await waitFor(() => {
       expect(stageUpdates).toBe(1);
@@ -1491,8 +1833,8 @@ describe("personalized campaign routes", () => {
     expect(
       within(frozenCard).queryByRole("button", { name: "Move Northstar back to Draft" })
     ).toBeNull();
-    fireEvent.dragStart(frozenCard);
-    fireEvent.drop(screen.getByRole("region", { name: "Draft" }));
+    const pointer = beginBoardPointer(frozenCard);
+    finishBoardPointerOn(pointer, screen.getByRole("region", { name: "Draft" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(/A frozen review cannot move backward/)).toBeInTheDocument();
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
@@ -1573,8 +1915,8 @@ describe("personalized campaign routes", () => {
     mount(page);
 
     const card = await screen.findByRole("article", { name: "Northstar" });
-    fireEvent.dragStart(card);
-    fireEvent.drop(screen.getByRole("region", { name: "Queued" }));
+    const pointer = beginBoardPointer(card);
+    finishBoardPointerOn(pointer, screen.getByRole("region", { name: "Queued" }));
 
     expect(
       await screen.findByText(/independent human approval/i)
@@ -1657,10 +1999,10 @@ describe("personalized campaign routes", () => {
     mount(page);
 
     const card = await screen.findByRole("article", { name: "Northstar" });
-    fireEvent.dragStart(card);
-    fireEvent.drop(screen.getByRole("region", { name: "Queued" }));
-    fireEvent.dragStart(card);
-    fireEvent.drop(screen.getByRole("region", { name: "Queued" }));
+    const pointer = beginBoardPointer(card);
+    const queueLane = screen.getByRole("region", { name: "Queued" });
+    finishBoardPointerOn(pointer, queueLane);
+    endBoardPointer(pointer, pointer.x + 12, pointer.y);
 
     await waitFor(() => {
       expect(

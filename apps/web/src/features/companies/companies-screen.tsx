@@ -126,6 +126,9 @@ export function CompaniesScreen() {
         title={t("title")}
         description={t("description")}
         actions={<>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/app/contacts">{t("tabs.contacts")}</Link>
+          </Button>
           {human ? <Button variant="outline" size="sm" onClick={() => void exportCurrentFilter()} disabled={exporting || owner !== ALL || archivedOnly} title={owner !== ALL || archivedOnly ? t("list.exportFilterUnsupported") : undefined}>{exporting ? tc("loading") : t("list.exportCsv")}</Button> : null}
           {human ? <Button variant="outline" size="sm" onClick={openMerge}>{t("list.mergeRequest")}</Button> : null}
           {human ? <Button size="sm" onClick={() => setCreateOpen(true)}>{t("list.newCompany")}</Button> : null}

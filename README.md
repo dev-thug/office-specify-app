@@ -66,6 +66,16 @@ checks pass. Suppressed addresses are skipped. A send with an uncertain provider
 outcome remains `unknown` and is never resubmitted automatically. Office does
 not run automatic email follow-ups or drip sequences.
 
+### Finding your way around
+
+The sidebar has seven everyday destinations: Dashboard, Companies, Campaigns,
+Inbox, Templates, Meetings, and Settings. Open **Companies → Contacts** for the
+contact directory, **Campaigns → Approvals** for human review, and
+**Meetings → Meeting types** for booking configuration. Settings groups mail and
+calendar connections, agents/MCP, imports, workspace/security, and review and
+operations tools. Direct URLs and command search continue to reach these screens;
+their access checks and human approval requirements remain enforced.
+
 ### Personalized company outreach
 
 The primary campaign workflow groups company-specific drafts on a kanban board:
@@ -104,7 +114,7 @@ the generated text.
 ### Choosing a meeting type
 
 First configure an internal calendar under **Settings → Calendars**, then create
-a meeting type and host availability under **Meeting types**. Booking links,
+a meeting type and host availability under **Meetings → Meeting types**. Booking links,
 campaigns, and email drafts offer active meeting types. Creating or updating a
 type refreshes these selectors together; an empty selector provides a link to
 setup, and a failed request offers a retry. The creation form uses the signed-in

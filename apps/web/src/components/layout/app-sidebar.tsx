@@ -9,11 +9,10 @@ import { Logo } from "@/components/layout/logo";
 import { FeatureHelp } from "@/components/layout/feature-help";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { NAV_SECTIONS } from "@/lib/nav";
+import { isPrimaryNavActive, NAV_SECTIONS } from "@/lib/nav";
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === "/app/dashboard") return pathname === href;
-  return pathname === href || pathname.startsWith(`${href}/`);
+  return isPrimaryNavActive(pathname, href);
 }
 
 interface SidebarNavContentProps {
@@ -66,7 +65,7 @@ export function SidebarNavContent({
                     <Link
                       href={item.href}
                       onClick={onNavigate}
-                      aria-current={isActive(pathname, item.href) ? "page" : undefined}
+                      aria-current={pathname === item.href ? "page" : undefined}
                       className={cn(
                         "flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
                         isActive(pathname, item.href)
@@ -79,25 +78,6 @@ export function SidebarNavContent({
                     </Link>
                     <FeatureHelp featureKey={item.key} />
                     </div>
-                    {item.children?.map((child) => (
-                      <div key={child.key} className="ml-4 flex items-center gap-0.5">
-                      <Link
-                        href={child.href}
-                        onClick={onNavigate}
-                        aria-current={isActive(pathname, child.href) ? "page" : undefined}
-                        className={cn(
-                          "flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm leading-none transition-colors",
-                          isActive(pathname, child.href)
-                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                            : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                        )}
-                      >
-                        <child.icon className="size-4 shrink-0" />
-                        <span className="truncate">{t(`nav.${child.key}`)}</span>
-                      </Link>
-                      <FeatureHelp featureKey={child.key} />
-                      </div>
-                    ))}
                   </div>
                 ))}
               </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { CalendarPlusIcon } from "lucide-react";
 
@@ -224,14 +225,19 @@ export function MeetingsPage() {
         title={t("page.title")}
         description={t("page.description")}
         actions={
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setLinkOpen(true)}
-          >
-            <CalendarPlusIcon className="size-4" aria-hidden />
-            {t("actions.issueLink")}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/app/meeting-types">{t("actions.manageTypes")}</Link>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setLinkOpen(true)}
+            >
+              <CalendarPlusIcon className="size-4" aria-hidden />
+              {t("actions.issueLink")}
+            </Button>
+          </div>
         }
       />
 

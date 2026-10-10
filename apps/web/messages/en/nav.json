@@ -8,13 +8,14 @@
   "approvals": "Approvals",
   "meetings": "Meetings",
   "meetingTypes": "Meeting types",
-  "agents": "Agents",
+  "agents": "Agents & runs",
   "imports": "Imports",
   "compliance": "Compliance",
   "complianceReviews": "Basis reviews",
   "operations": "Operations",
   "operationsIntegrations": "Integrations",
   "settings": "Settings",
+  "settingsMembers": "Members & agent access",
   "settingsMailAccounts": "Mail accounts",
   "settingsCalendars": "Calendars",
   "settingsPolicies": "Policies",
@@ -143,12 +144,12 @@
         ]
       },
       "agents": {
-        "summary": "Review AI agents and their runs, and manage work requests within their allowed capabilities.",
-        "when": "Use it to inspect agent-prepared research, drafts, and results.",
+        "summary": "Review agent principals, research runs, and proposals, and follow work requests within their allowed capabilities.",
+        "when": "Use it to monitor agent research and proposals. Manage agent credentials under Members & agent access.",
         "steps": [
-          "Check the agent status and allowed capabilities.",
-          "Request work and follow its progress in the run details.",
-          "Review the output. An agent cannot replace a required human sending approval."
+          "Review registered agent principals and their status.",
+          "Inspect research proposals and run details.",
+          "Request permitted work and review results. Agents cannot replace a required human sending approval."
         ]
       },
       "imports": {
@@ -197,12 +198,21 @@
         ]
       },
       "settings": {
-        "summary": "Manage the people using Office and review their workspace roles and account status.",
-        "when": "Use it to manage team membership and workspace responsibilities.",
+        "summary": "Manage workspace members, connections, compliance rules, and operational tools from one place.",
+        "when": "Use it to set up Office and review the controls behind daily work.",
+        "steps": [
+          "Open Members to manage workspace roles and invitations.",
+          "Configure mailbox, SMTP, and calendar connections for email and meetings.",
+          "Review policies, security, compliance, imports, agents, and background operations as needed."
+        ]
+      },
+      "settingsMembers": {
+        "summary": "Manage workspace members, roles, agent principals, permissions, and MCP service credentials in one screen.",
+        "when": "Use it to maintain team access and manage MCP credentials for agents.",
         "steps": [
           "Review each member’s name, role, and status.",
           "An authorized administrator adjusts roles and account state as needed.",
-          "Review mailbox-specific access separately under Mail accounts."
+          "Manage agent principals and scopes, then issue or revoke MCP credentials. Review mailbox access under Mail accounts."
         ]
       },
       "settingsMailAccounts": {

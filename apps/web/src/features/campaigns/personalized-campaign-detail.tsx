@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, GripVertical, Plus } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -37,6 +37,17 @@ const BOARD_STAGES = [
   "accepted",
   "attention",
 ] as const;
+
+const POINTER_DRAG_THRESHOLD_PX = 7;
+
+interface ActiveBoardPointerDrag {
+  pointerId: number;
+  targetId: string;
+  startX: number;
+  startY: number;
+  activated: boolean;
+  captureTarget: HTMLElement;
+}
 
 type BoardStage = (typeof BOARD_STAGES)[number];
 
@@ -76,7 +87,9 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  const activePointerDragRef = useRef<ActiveBoardPointerDrag | null>(null);
+  const [draggingTargetId, setDraggingTargetId] = useState<string | null>(null);
+  const [pointerDropStage, setPointerDropStage] = useState<BoardStage | null>(null);
   const [batchTimes, setBatchTimes] = useState<Record<string, string>>({});
   const pendingTargetIdsRef = useRef(new Set<string>());
   const [pendingTargetIds, setPendingTargetIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -248,12 +261,121 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
     }
   }
 
-  function handleDrop(event: React.DragEvent, stage: BoardStage) {
+function boardStageAtPointer(clientX: number, clientY: number): BoardStage | null {
+    const element = document.elementFromPoint(clientX, clientY);
+    const lane = element?.closest(
+      "[data-sales-campaign-id][data-sales-campaign-stage]"
+    ) as HTMLElement | null;
+    if (!lane || lane.dataset.salesCampaignId !== campaignId) return null;
+    const stage = lane.dataset.salesCampaignStage ?? "";
+    if (
+      !isBoardStage(stage) ||
+      !(BOARD_STAGES.slice(0, 4) as readonly string[]).includes(stage)
+    ) {
+      return null;
+    }
+    return stage;
+  }
+
+  function clearPointerDrag(pointerId?: number) {
+    const active = activePointerDragRef.current;
+    if (!active || (pointerId !== undefined && pointerId !== active.pointerId)) return;
+
+    activePointerDragRef.current = null;
+    setDraggingTargetId(null);
+    setPointerDropStage(null);
+    try {
+      if (
+        typeof active.captureTarget.hasPointerCapture === "function" &&
+        active.captureTarget.hasPointerCapture(active.pointerId)
+      ) {
+        active.captureTarget.releasePointerCapture(active.pointerId);
+      }
+    } catch {
+      // Pointer capture may already have been released by the browser.
+    }
+  }
+
+  function handlePointerDown(
+    event: React.PointerEvent<HTMLElement>,
+    target: SalesCampaignTarget
+  ) {
+    const stage = isBoardStage(target.stage) ? target.stage : "attention";
+    if (
+      activePointerDragRef.current ||
+      event.button !== 0 ||
+      !(BOARD_STAGES.slice(0, 3) as readonly string[]).includes(stage) ||
+      pendingTargetIdsRef.current.has(target.id)
+    ) {
+      return;
+    }
+
     event.preventDefault();
-    const dragged = targets.find((target) => target.id === dragTargetId);
-    setDragTargetId(null);
-    if (!dragged || dragged.stage === stage || pendingTargetIdsRef.current.has(dragged.id)) return;
-    void moveTarget(dragged, stage);
+    const captureTarget = event.currentTarget;
+    activePointerDragRef.current = {
+      pointerId: event.pointerId,
+      targetId: target.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      activated: false,
+      captureTarget,
+    };
+    try {
+      if (typeof captureTarget.setPointerCapture === "function") {
+        captureTarget.setPointerCapture(event.pointerId);
+      }
+    } catch {
+      // Movement can still be handled while the pointer remains over the board.
+    }
+  }
+
+  function handlePointerMove(event: React.PointerEvent) {
+    const active = activePointerDragRef.current;
+    if (!active || event.pointerId !== active.pointerId) return;
+
+    event.preventDefault();
+    const deltaX = event.clientX - active.startX;
+    const deltaY = event.clientY - active.startY;
+    if (!active.activated) {
+      if (deltaX * deltaX + deltaY * deltaY < POINTER_DRAG_THRESHOLD_PX ** 2) return;
+      active.activated = true;
+      setDraggingTargetId(active.targetId);
+    }
+    setPointerDropStage(boardStageAtPointer(event.clientX, event.clientY));
+  }
+
+  function handlePointerUp(event: React.PointerEvent) {
+    const active = activePointerDragRef.current;
+    if (!active || event.pointerId !== active.pointerId) return;
+
+    const deltaX = event.clientX - active.startX;
+    const deltaY = event.clientY - active.startY;
+    if (
+      !active.activated &&
+      deltaX * deltaX + deltaY * deltaY >= POINTER_DRAG_THRESHOLD_PX ** 2
+    ) {
+      active.activated = true;
+      setDraggingTargetId(active.targetId);
+    }
+    const destination = active.activated
+      ? boardStageAtPointer(event.clientX, event.clientY)
+      : null;
+    clearPointerDrag(event.pointerId);
+    if (!destination) return;
+
+    const dragged = targets.find((target) => target.id === active.targetId);
+    if (
+      !dragged ||
+      dragged.stage === destination ||
+      pendingTargetIdsRef.current.has(dragged.id)
+    ) {
+      return;
+    }
+    void moveTarget(dragged, destination);
+  }
+
+  function handlePointerCancel(event: React.PointerEvent) {
+    clearPointerDrag(event.pointerId);
   }
 
   if (detail.isPending || (isLegacyNotFound && legacy.isPending)) {
@@ -348,6 +470,10 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
         role="region"
         aria-label={t("boardLabel")}
         tabIndex={0}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onLostPointerCapture={handlePointerCancel}
         className="min-w-0 max-w-full overflow-x-auto pb-2"
       >
         <div className="grid min-w-[1380px] grid-cols-6 gap-3">
@@ -362,9 +488,9 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
               key={stage}
               role="region"
               aria-label={stageLabel}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => handleDrop(event, stage)}
-              className="flex min-w-0 flex-col gap-2 rounded-2xl border border-border bg-app-panel-muted p-2"
+              data-sales-campaign-id={campaignId}
+              data-sales-campaign-stage={stage}
+              className={`flex min-w-0 flex-col gap-2 rounded-2xl border border-border bg-app-panel-muted p-2 ${pointerDropStage === stage ? "ring-2 ring-primary" : ""}`}
             >
               <div className="flex items-center justify-between gap-2 px-1 py-1">
                 <h2 className="text-sm font-semibold">{stageLabel}</h2>
@@ -377,14 +503,14 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
                     target={target}
                     busy={pendingTargetIds.has(target.id)}
                     stage={stage}
+                    isDragging={draggingTargetId === target.id}
                     batchAt={target.outbound?.not_before ?? batchTimes[target.id] ?? null}
                     onOpen={() => {
                       setQueueNotice(null);
                       setSelectedTargetId(target.id);
                     }}
                     onMove={(next) => void moveTarget(target, next)}
-                    onDragStart={() => setDragTargetId(target.id)}
-                    onDragEnd={() => setDragTargetId(null)}
+                    onPointerDown={(event) => handlePointerDown(event, target)}
                   />
                 ))}
                 {laneTargets.length === 0 ? (
@@ -445,8 +571,8 @@ function CampaignTargetCard({
   batchAt,
   onOpen,
   onMove,
-  onDragStart,
-  onDragEnd,
+  isDragging,
+  onPointerDown,
 }: {
   target: SalesCampaignTarget;
   busy: boolean;
@@ -454,8 +580,8 @@ function CampaignTargetCard({
   batchAt: string | null;
   onOpen: () => void;
   onMove: (stage: BoardStage) => void;
-  onDragStart: () => void;
-  onDragEnd: () => void;
+  isDragging: boolean;
+  onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
 }) {
   const t = useTranslations("campaigns.personalized.board");
   const common = useTranslations("common");
@@ -473,17 +599,16 @@ function CampaignTargetCard({
   return (
     <article
       aria-label={company}
-      draggable={isEditable && !busy}
+      draggable={false}
       aria-busy={busy}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      className="flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-card p-3"
+      className={`flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-card p-3 ${isDragging ? "opacity-50" : ""}`}
     >
+      <div className="flex min-w-0 items-start gap-1">
       <button
         type="button"
         onClick={onOpen}
         aria-label={t("openTarget", { company })}
-        className="min-w-0 text-left outline-none focus-visible:rounded-lg focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="min-w-0 flex-1 text-left outline-none focus-visible:rounded-lg focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <span className="block truncate text-sm font-semibold">{company}</span>
         <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
@@ -496,6 +621,18 @@ function CampaignTargetCard({
           </span>
         ) : null}
       </button>
+      {isEditable ? (
+        <span
+          draggable={false}
+          onPointerDown={onPointerDown}
+          aria-hidden="true"
+          title={t("dragTarget", { company })}
+          className="mt-0.5 flex size-7 shrink-0 cursor-grab select-none touch-none items-center justify-center rounded text-muted-foreground hover:bg-accent active:cursor-grabbing"
+        >
+          <GripVertical className="size-4" />
+        </span>
+      ) : null}
+      </div>
       {outboundStatus ? <StatusBadge status={outboundStatus} /> : null}
       {stage === "queued" ? (
         <p className="text-2xs text-muted-foreground">

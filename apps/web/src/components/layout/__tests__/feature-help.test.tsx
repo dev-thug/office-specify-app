@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { FeatureHelp, UsageGuide } from "../feature-help";
-import { flattenNav } from "@/lib/nav";
+import { SettingsHub } from "@/features/settings/settings-hub";
+import { flattenNav, NAV_SECTIONS, primaryNavItemForPath } from "@/lib/nav";
 import ko from "../../../../messages/ko/nav.json";
 import en from "../../../../messages/en/nav.json";
 
@@ -10,6 +11,101 @@ beforeEach(() => vi.stubGlobal("ResizeObserver", class { observe() {} unobserve(
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("feature usage guidance", () => {
+  it("keeps only seven primary destinations while preserving secondary routes for search and help", () => {
+    const primaryKeys = NAV_SECTIONS.flatMap((section) =>
+      section.items.map((item) => item.key)
+    );
+    expect(primaryKeys).toEqual([
+      "dashboard",
+      "companies",
+      "campaigns",
+      "inbox",
+      "templates",
+      "meetings",
+      "settings",
+    ]);
+
+    const allKeys = flattenNav().map((item) => item.key);
+    expect(allKeys).toEqual(expect.arrayContaining([
+      "contacts",
+      "approvals",
+      "meetingTypes",
+      "agents",
+      "imports",
+      "compliance",
+      "complianceReviews",
+      "operations",
+      "operationsIntegrations",
+      "settingsMembers",
+      "settingsMailAccounts",
+      "settingsCalendars",
+      "settingsPolicies",
+      "settingsSecurity",
+    ]));
+
+    const expectedPrimaryByPath = [
+      ["/app/contacts/contact-1", "companies"],
+      ["/app/approvals/approval-1", "campaigns"],
+      ["/app/meeting-types", "meetings"],
+      ["/app/agents/runs/run-1", "settings"],
+      ["/app/imports/import-1", "settings"],
+      ["/app/compliance/reviews", "settings"],
+      ["/app/operations/integrations", "settings"],
+      ["/app/settings/security", "settings"],
+    ] as const;
+    for (const [path, expectedKey] of expectedPrimaryByPath) {
+      expect(primaryNavItemForPath(path)?.key, path).toBe(expectedKey);
+    }
+  });
+  it("includes explicit MCP aliases on the Members route in the shared command-palette source", () => {
+    const memberRoute = flattenNav().find((item) => item.key === "settingsMembers");
+    expect(memberRoute?.searchTerms).toEqual(
+      expect.arrayContaining([
+        "MCP",
+        "API key",
+        "service credential",
+        "MCP 자격 증명",
+        "API 키",
+      ])
+    );
+  });
+
+  it("separates agent run discovery from MCP credential management", () => {
+    expect(en.agents).toBe("Agents & runs");
+    expect(en.settingsMembers).toBe("Members & agent access");
+    expect(en.help.features.agents.summary).not.toContain("MCP service credentials");
+    expect(en.help.features.settingsMembers.summary).toContain("MCP service credentials");
+    expect(ko.agents).toBe("에이전트·실행");
+    expect(ko.settingsMembers).toBe("멤버·에이전트 접근");
+    expect(ko.help.features.settingsMembers.summary).toContain("MCP 서비스 credential");
+  });
+
+  it("lists settings-only routes in the settings hub and keeps workflow shortcuts in their own sections", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={{ nav: en }}>
+        <SettingsHub />
+      </NextIntlClientProvider>
+    );
+    const links = screen.getAllByRole("link");
+    const hrefs = links.map((link) => link.getAttribute("href"));
+    expect(hrefs).toEqual(expect.arrayContaining([
+      "/app/settings/members",
+      "/app/settings/mail-accounts",
+      "/app/settings/calendars",
+      "/app/settings/policies",
+      "/app/settings/security",
+      "/app/agents",
+      "/app/imports",
+      "/app/compliance/suppressions",
+      "/app/compliance/reviews",
+      "/app/operations/jobs",
+      "/app/operations/integrations",
+    ]));
+    expect(hrefs).not.toContain("/app/contacts");
+    expect(hrefs).not.toContain("/app/approvals");
+    expect(hrefs).not.toContain("/app/meeting-types");
+  });
+
   it.each([['ko', ko], ['en', en]])("explains every navigation feature in %s", (_, messages) => {
     const entries = (messages as unknown as {help?: {features?: Record<string, {summary: string; when: string; steps: string[]}>}}).help?.features;
     for (const item of flattenNav()) {
