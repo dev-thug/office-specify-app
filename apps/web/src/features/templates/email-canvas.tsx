@@ -25,9 +25,10 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
   html: string;
   previewHtml: string;
   previewSubject: string;
+  previewButtonLabel?: string;
   onChange: (html: string) => void;
   onFocus: () => void;
-}>(function EmailCanvas({ html, previewHtml, previewSubject, onChange, onFocus }, ref) {
+}>(function EmailCanvas({ html, previewHtml, previewSubject, previewButtonLabel, onChange, onFocus }, ref) {
   const t = useTranslations("templates.authoring");
   const [mode, setMode] = useState<"compose" | "html">("compose");
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -138,7 +139,7 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
             aria-pressed={mode === "html"} onClick={() => setMode(current => current === "compose" ? "html" : "compose")}>
             {mode === "compose" ? t("editHtml") : t("backToCanvas")}
           </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewOpen(true)}>{t("preview")}</Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewOpen(true)}>{previewButtonLabel ?? t("preview")}</Button>
         </div>
         <span className="px-2 text-2xs text-muted-foreground">{t(mode === "html" ? "htmlSourceHint" : "canvasHint")}</span>
       </div>

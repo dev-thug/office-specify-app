@@ -72,6 +72,41 @@ fn inbox_and_approved_send_fields_explain_their_actual_context() {
 }
 
 #[test]
+fn personalized_groups_explain_reuse_target_identity_and_approval_bound_batches() {
+    let initialized = mcp::jsonrpc::initialize_result();
+    let instructions = initialized["instructions"].as_str().unwrap();
+    assert!(instructions.contains("sales_campaigns_create_message"));
+    assert!(
+        instructions
+            .to_ascii_lowercase()
+            .contains("moving a card is not approval")
+    );
+    assert!(instructions.contains("ten-minute batch"));
+    let tools = mcp::all_tools();
+    let queue = tools
+        .iter()
+        .find(|tool| tool.name == "sales_campaigns_queue")
+        .unwrap();
+    let group_description = queue.input_schema["properties"]["campaign_id"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(group_description.contains("not a legacy bulk campaign"));
+    assert!(
+        queue.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "expected_target_version")
+    );
+    assert!(queue.external_effect);
+    assert!(
+        !tools
+            .iter()
+            .any(|tool| tool.name == "sales_campaigns_approve")
+    );
+}
+
+#[test]
 fn every_discoverable_input_explains_its_meaning() {
     for tool in mcp::all_tools() {
         for (field, schema) in tool.input_schema["properties"]

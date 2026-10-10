@@ -28,6 +28,143 @@ function renderWorkflow(ui: ReactElement) {
   );
 }
 
+describe("DraftSendingWorkflow sales campaign guard", () => {
+  it("shows a campaign-board link and keeps direct send unavailable for linked drafts", async () => {
+    mockSendingApi({
+      draft: draft({
+        status: "frozen",
+        outbound_message_id: "outbound-1",
+        sales_campaign_id: "campaign-1",
+        sales_target_id: "target-1",
+      }),
+      outbound: outbound("draft"),
+    });
+    renderWorkflow(
+      <DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />
+    );
+
+    expect(
+      await screen.findByText("This draft is managed by a sales campaign.")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open campaign" })).toHaveAttribute(
+      "href",
+      "/app/campaigns/campaign-1"
+    );
+    expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check send policy" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Delivery channel" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Freeze exact message" })).toBeNull();
+  });
+
+  it("freezes a campaign draft only on the campaign's bound delivery channel", async () => {
+    const calls = mockSendingApi({ draft: draft({ purpose: "marketing" }) });
+    renderWorkflow(
+      <DraftSendingWorkflow
+        draftId="draft-1"
+        mailAccountId="mailbox-1"
+        salesCampaignId="campaign-1"
+        allowSubmit={false}
+        lockedDeliveryChannelId="channel-marketing"
+        campaignMeetingTypeId="meeting-1"
+      />
+    );
+
+    expect(
+      screen.queryByRole("combobox", { name: "Delivery channel" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("combobox", {
+        name: "Booking link meeting type (optional)",
+      })
+    ).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Freeze exact message" })
+    );
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(true)
+    );
+    const freezeCall = calls.find((call) => call.url.endsWith("/freeze"))!;
+    expect(JSON.parse(String(freezeCall.init.body))).toMatchObject({
+      delivery_channel_id: "channel-marketing",
+      meeting_type_id: "meeting-1",
+    });
+  });
+
+  it("sends generic linked drafts back to the campaign board instead of exposing freeze controls", async () => {
+    mockSendingApi({
+      draft: draft({
+        status: "draft",
+        sales_campaign_id: "campaign-1",
+        sales_target_id: "target-1",
+      }),
+    });
+    renderWorkflow(<DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />);
+
+    expect(
+      await screen.findByText("This draft is managed by a sales campaign.")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open campaign" })).toHaveAttribute(
+      "href",
+      "/app/campaigns/campaign-1"
+    );
+    expect(
+      screen.queryByRole("combobox", { name: "Delivery channel" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Freeze exact message" })
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Request approval" })
+    ).toBeNull();
+  });
+
+  it("allows a message-level meeting type when the campaign has no pinned type", async () => {
+    mockSendingApi({ draft: draft({ purpose: "marketing" }) });
+    renderWorkflow(
+      <DraftSendingWorkflow
+        draftId="draft-1"
+        mailAccountId="mailbox-1"
+        salesCampaignId="campaign-1"
+        allowSubmit={false}
+        lockedDeliveryChannelId="channel-marketing"
+        campaignMeetingTypeId={null}
+      />
+    );
+
+    expect(
+      screen.queryByRole("combobox", { name: "Delivery channel" })
+    ).toBeNull();
+    expect(
+      await screen.findByRole("combobox", {
+        name: "Booking link meeting type (optional)",
+      })
+    ).toBeInTheDocument();
+  });
+
+  it("blocks freeze and review while the campaign draft has unsaved edits", async () => {
+    const calls = mockSendingApi({ draft: draft() });
+    renderWorkflow(
+      <DraftSendingWorkflow
+        draftId="draft-1"
+        mailAccountId="mailbox-1"
+        salesCampaignId="campaign-1"
+        allowSubmit={false}
+        lockedDeliveryChannelId="channel-1"
+        campaignMeetingTypeId={null}
+        freezeBlocked
+      />
+    );
+
+    expect(
+      await screen.findByText("Save draft changes before freezing and requesting review.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Freeze exact message" })
+    ).toBeDisabled();
+    expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(false);
+  });
+});
+
 const draft = (overrides: Partial<MessageDraftResponse> = {}): MessageDraftResponse => ({
   draft_id: "draft-1",
   mail_account_id: "mailbox-1",

@@ -55,6 +55,8 @@ export interface ActivityFeedProps {
   ns: "companies" | "contacts";
   /** 탭별 행 필터 — 생략 시 전체. */
   filter?: (a: CompanyActivity) => boolean;
+  /** Include permission-filtered note body text carried by note activity summaries. */
+  includeNoteBody?: boolean;
   emptyTitle: string;
   emptyDescription?: string;
   queryKeySuffix: string;
@@ -64,6 +66,7 @@ export function ActivityFeed({
   path,
   ns,
   filter,
+  includeNoteBody = false,
   emptyTitle,
   emptyDescription,
   queryKeySuffix,
@@ -113,6 +116,10 @@ export function ActivityFeed({
           const Icon = GROUP_ICON[group];
           const label = activityLabel(a);
           const status = activityStatus(a);
+          const noteBody =
+            includeNoteBody && group === "note" && typeof a.summary?.body === "string"
+              ? a.summary.body
+              : "";
           return (
             <li
               key={a.id}
@@ -134,6 +141,11 @@ export function ActivityFeed({
                 {label ? (
                   <p className="mt-0.5 truncate text-ui text-muted-foreground">
                     {label}
+                  </p>
+                ) : null}
+                {noteBody ? (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                    {noteBody}
                   </p>
                 ) : null}
                 {a.actor_display_name ? (

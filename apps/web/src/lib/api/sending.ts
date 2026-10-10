@@ -49,6 +49,19 @@ export interface MessageDraftResponse extends MessageDraftListItem {
   body_text: string;
   body_html?: string | null;
   variables?: Record<string, unknown>;
+  sales_campaign_id?: string | null;
+  sales_target_id?: string | null;
+}
+
+
+export interface PatchMessageDraftInput {
+  subject?: string;
+  body_text?: string;
+  body_html?: string | null;
+  variables?: Record<string, unknown>;
+  to_email_address_id?: string;
+  expected_last_inbound_id?: string | null;
+  visibility?: "private" | "mailbox";
 }
 
 export interface FreezeMessageDraftInput {
@@ -205,6 +218,19 @@ export function createMessageDraft(
 export function getMessageDraft(id: string): Promise<ApiResult<MessageDraftResponse>> {
   return apiFetch<MessageDraftResponse>(
     `${MESSAGE_DRAFTS_PATH}/${encodeURIComponent(id)}`
+  );
+}
+
+
+export function patchMessageDraft(
+  id: string,
+  input: PatchMessageDraftInput,
+  options?: Pick<MutateOptions, "etag" | "idempotencyKey">
+): Promise<ApiResult<MessageDraftResponse>> {
+  return mutate<MessageDraftResponse>(
+    `${MESSAGE_DRAFTS_PATH}/${encodeURIComponent(id)}`,
+    { method: "PATCH", json: input },
+    options
   );
 }
 

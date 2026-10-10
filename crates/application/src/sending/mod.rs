@@ -9,7 +9,7 @@ pub mod policy;
 
 use chrono::{DateTime, Duration, Utc};
 use contracts::sending::*;
-use contracts::{AppError, Ctx, ErrorCode, PrincipalKind, Scope, Violation};
+use contracts::{AppError, AuthMethod, Ctx, ErrorCode, PrincipalKind, Scope, Violation};
 use uuid::Uuid;
 
 use infrastructure::audit::{self, AuditEntry};
@@ -46,6 +46,21 @@ fn hex_decode(s: &str) -> Option<[u8; 32]> {
         out[i] = (hi * 16 + lo) as u8;
     }
     Some(out)
+}
+
+fn ceil_ten_minute_boundary(at: DateTime<Utc>) -> DateTime<Utc> {
+    let lower = at.timestamp().div_euclid(600) * 600;
+    let exact_boundary = at.timestamp() == lower && at.timestamp_subsec_nanos() == 0;
+    let seconds = if exact_boundary { lower } else { lower + 600 };
+    DateTime::from_timestamp(seconds, 0).expect("rounded timestamp is in DateTime range")
+}
+
+fn campaign_not_before(now: DateTime<Utc>, requested: Option<DateTime<Utc>>) -> DateTime<Utc> {
+    let next_available = DateTime::from_timestamp((now.timestamp().div_euclid(600) + 1) * 600, 0)
+        .expect("next rounded timestamp is in DateTime range");
+    requested
+        .map(ceil_ten_minute_boundary)
+        .map_or(next_available, |requested| requested.max(next_available))
 }
 
 pub(crate) fn stable_internet_message_id(
@@ -92,6 +107,8 @@ fn violation(field: &str, code: &str) -> Violation {
 fn draft_response(r: DraftRow, outbound_message_id: Option<Uuid>) -> MessageDraftResponse {
     MessageDraftResponse {
         draft_id: r.id,
+        sales_campaign_id: None,
+        sales_target_id: None,
         outbound_message_id,
         mail_account_id: r.mail_account_id,
         owner_principal_id: r.owner_principal_id,
@@ -417,6 +434,7 @@ pub async fn create_draft_in_tx<'db>(
 
 pub async fn get_draft(db: &Db, ctx: &Ctx, id: Uuid) -> Result<MessageDraftResponse, AppError> {
     let mut tx = db.begin(ctx.workspace_id).await?;
+    let sales_binding = infrastructure::repo::sales_campaigns::draft_binding(&mut tx, id).await?;
     let Some(d) = repo::get_draft(&mut tx, id).await? else {
         return Err(AppError::not_found("message draft not found"));
     };
@@ -426,7 +444,12 @@ pub async fn get_draft(db: &Db, ctx: &Ctx, id: Uuid) -> Result<MessageDraftRespo
     }
     let outbound_message_id = repo::find_frozen_outbound_for_draft(&mut tx, id).await?;
     tx.commit().await?;
-    Ok(draft_response(d, outbound_message_id))
+    let mut response = draft_response(d, outbound_message_id);
+    if let Some(binding) = sales_binding {
+        response.sales_campaign_id = Some(binding.sales_campaign_id);
+        response.sales_target_id = Some(binding.target_id);
+    }
+    Ok(response)
 }
 
 pub async fn patch_draft(
@@ -473,6 +496,7 @@ pub async fn patch_draft(
     }
 
     let mut tx = db.begin(ctx.workspace_id).await?;
+    let sales_binding = infrastructure::repo::sales_campaigns::draft_binding(&mut tx, id).await?;
     let Some(d) = repo::get_draft_for_update(&mut tx, id).await? else {
         return Err(AppError::not_found("message draft not found"));
     };
@@ -481,6 +505,40 @@ pub async fn patch_draft(
             ErrorCode::MailboxAccessDenied,
             "no compose access to this draft",
         ));
+    }
+    if let Some(binding) = &sales_binding {
+        if !binding.is_current || !binding.recipient_available {
+            return Err(AppError::conflict(
+                "sales campaign draft is no longer current or its CRM recipient is unavailable",
+            ));
+        }
+        if binding.mail_account_id != d.mail_account_id
+            || binding.email_address_id != Some(d.to_email_address_id)
+            || d.visibility != "mailbox"
+        {
+            return Err(AppError::conflict(
+                "sales campaign draft no longer matches its visible CRM target",
+            ));
+        }
+        if req
+            .to_email_address_id
+            .is_some_and(|address_id| Some(address_id) != binding.email_address_id)
+        {
+            return Err(AppError::validation(
+                "to_email_address_id is fixed by the sales campaign target",
+                vec![violation("to_email_address_id", "MISMATCH")],
+            ));
+        }
+        if req
+            .visibility
+            .as_deref()
+            .is_some_and(|visibility| visibility != "mailbox")
+        {
+            return Err(AppError::validation(
+                "sales campaign drafts must remain mailbox-visible for human review",
+                vec![violation("visibility", "MISMATCH")],
+            ));
+        }
     }
     if d.status != "draft" {
         return Err(AppError::conflict(format!(
@@ -582,7 +640,12 @@ pub async fn patch_draft(
     )
     .await?;
     tx.commit().await?;
-    Ok(draft_response(row, None))
+    let mut response = draft_response(row, None);
+    if let Some(binding) = sales_binding {
+        response.sales_campaign_id = Some(binding.sales_campaign_id);
+        response.sales_target_id = Some(binding.target_id);
+    }
+    Ok(response)
 }
 
 // ===========================================================================
@@ -616,6 +679,7 @@ pub async fn freeze_draft_in_tx<'db>(
     expected_version: i64,
     req: &FreezeMessageDraftRequest,
 ) -> Result<(Tx<'db>, FreezeMessageDraftResponse), AppError> {
+    let sales_binding = infrastructure::repo::sales_campaigns::draft_binding(&mut tx, id).await?;
     let Some(d) = repo::get_draft_for_update(&mut tx, id).await? else {
         return Err(AppError::not_found("message draft not found"));
     };
@@ -639,6 +703,50 @@ pub async fn freeze_draft_in_tx<'db>(
             "this legacy agent draft has no bound source credential; recreate it before freezing",
         ));
     }
+
+    if let Some(binding) = &sales_binding {
+        if !binding.is_current || !binding.recipient_available {
+            return Err(AppError::conflict(
+                "sales campaign draft is no longer current or its CRM recipient is unavailable",
+            ));
+        }
+        if binding.mail_account_id != d.mail_account_id
+            || binding.email_address_id != Some(d.to_email_address_id)
+        {
+            return Err(AppError::conflict(
+                "sales campaign draft mailbox or recipient no longer matches its CRM target",
+            ));
+        }
+        if binding.delivery_channel_id != req.delivery_channel_id {
+            return Err(AppError::validation(
+                "delivery_channel_id does not match the campaign's bound SMTP sender",
+                vec![violation("delivery_channel_id", "MISMATCH")],
+            ));
+        }
+        if req
+            .sender_identity_id
+            .is_some_and(|sender| sender != binding.sender_identity_id)
+        {
+            return Err(AppError::validation(
+                "sender_identity_id does not match the campaign's bound SMTP sender",
+                vec![violation("sender_identity_id", "MISMATCH")],
+            ));
+        }
+        if binding.meeting_type_id.is_some()
+            && req
+                .meeting_type_id
+                .is_some_and(|requested| Some(requested) != binding.meeting_type_id)
+        {
+            return Err(AppError::validation(
+                "meeting_type_id is fixed by the sales campaign",
+                vec![violation("meeting_type_id", "MISMATCH")],
+            ));
+        }
+    }
+    let selected_meeting_type_id = sales_binding
+        .as_ref()
+        .and_then(|binding| binding.meeting_type_id)
+        .or(req.meeting_type_id);
     if d.status != "draft" {
         return Err(AppError::conflict(format!(
             "draft is '{}' — already frozen or discarded",
@@ -663,6 +771,13 @@ pub async fn freeze_draft_in_tx<'db>(
         return Err(AppError::validation(
             "delivery channel belongs to a different mail account",
             vec![violation("delivery_channel_id", "MISMATCH")],
+        ));
+    }
+    if let Some(binding) = &sales_binding
+        && chan.sender_identity_id != binding.sender_identity_id
+    {
+        return Err(AppError::conflict(
+            "sales campaign sender no longer matches its bound delivery channel",
         ));
     }
     // The outbound's purpose MUST equal the channel's purpose (fk_154).
@@ -769,16 +884,31 @@ pub async fn freeze_draft_in_tx<'db>(
 
         let booking_var = specs.iter().find(|s| s.name == "meeting.booking_url");
         let booking_required = booking_var.is_some_and(|s| s.required);
+        let render_subject = if sales_binding.is_some() {
+            d.subject.as_str()
+        } else {
+            v.subject.as_str()
+        };
+        let render_body_text = if sales_binding.is_some() {
+            d.body_text.as_str()
+        } else {
+            v.body_text.as_str()
+        };
+        let render_body_html = if sales_binding.is_some() {
+            d.body_html.as_deref()
+        } else {
+            v.body_html.as_deref()
+        };
         let booking_referenced = [
-            v.subject.as_str(),
-            v.body_text.as_str(),
-            v.body_html.as_deref().unwrap_or(""),
+            render_subject,
+            render_body_text,
+            render_body_html.unwrap_or(""),
         ]
         .iter()
         .any(|part| template_uses_variable(part, "meeting.booking_url"));
         let needs_booking_url = booking_var.is_some() && (booking_required || booking_referenced);
         if needs_booking_url {
-            let meeting_type_id = req.meeting_type_id.ok_or_else(|| {
+            let meeting_type_id = selected_meeting_type_id.ok_or_else(|| {
                 AppError::validation(
                     "meeting_type_id is required when the template uses meeting.booking_url",
                     vec![violation("meeting_type_id", "REQUIRED")],
@@ -794,7 +924,7 @@ pub async fn freeze_draft_in_tx<'db>(
             )
             .await?;
             system_vars.insert("meeting.booking_url".into(), booking_url);
-        } else if req.meeting_type_id.is_some() {
+        } else if selected_meeting_type_id.is_some() && sales_binding.is_none() {
             return Err(AppError::validation(
                 "meeting_type_id is only valid for templates that require or use meeting.booking_url",
                 vec![violation("meeting_type_id", "UNUSED")],
@@ -823,9 +953,9 @@ pub async fn freeze_draft_in_tx<'db>(
         };
         let r = domain::templates::render(
             &specs,
-            &v.subject,
-            &v.body_text,
-            v.body_html.as_deref(),
+            render_subject,
+            render_body_text,
+            render_body_html,
             &variables,
             &system_vars,
         )
@@ -844,8 +974,88 @@ pub async fn freeze_draft_in_tx<'db>(
             ),
         })?;
         (r.subject, r.body_text, r.body_html)
+    } else if sales_binding.is_some() {
+        // Personalized sales drafts without a template may still use the two
+        // server-owned public URL placeholders. All other placeholders remain
+        // closed unless the draft selects a template version with a schema.
+        let specs = domain::templates::parse_variable_schema(&serde_json::json!({
+            "type": "object",
+            "properties": {
+                "compliance.unsubscribe_url": {"type": "string", "format": "uri"},
+                "meeting.booking_url": {"type": "string", "format": "uri"}
+            },
+            "additionalProperties": false
+        }))
+        .map_err(|e| AppError::internal(format!("linked draft schema invalid: {e}")))?;
+        let booking_referenced = [
+            d.subject.as_str(),
+            d.body_text.as_str(),
+            d.body_html.as_deref().unwrap_or(""),
+        ]
+        .iter()
+        .any(|part| template_uses_variable(part, "meeting.booking_url"));
+        if booking_referenced {
+            let meeting_type_id = selected_meeting_type_id.ok_or_else(|| {
+                AppError::validation(
+                    "meeting_type_id is required when a sales draft uses meeting.booking_url",
+                    vec![violation("meeting_type_id", "REQUIRED")],
+                )
+                .with_status(422)
+            })?;
+            let booking_url = crate::booking::issue_bound_link_in_tx(
+                &mut tx,
+                ctx,
+                meeting_type_id,
+                d.to_email_address_id,
+                &ctx.request_id,
+            )
+            .await?;
+            system_vars.insert("meeting.booking_url".into(), booking_url);
+        }
+        let unsubscribe_referenced = [
+            d.subject.as_str(),
+            d.body_text.as_str(),
+            d.body_html.as_deref().unwrap_or(""),
+        ]
+        .iter()
+        .any(|part| template_uses_variable(part, "compliance.unsubscribe_url"));
+        if d.purpose == "marketing" || unsubscribe_referenced {
+            let token = crypto::generate_token();
+            let base = repo::public_base_url(&mut tx).await?;
+            let url = format!("{}/public/unsubscribe/{token}", base.trim_end_matches('/'));
+            system_vars.insert("compliance.unsubscribe_url".into(), url.clone());
+            unsubscribe_token = Some(token);
+            unsubscribe_url = Some(url);
+        }
+        let variables = match &d.variables {
+            serde_json::Value::Object(m) => m.clone(),
+            _ => serde_json::Map::new(),
+        };
+        let rendered = domain::templates::render(
+            &specs,
+            &d.subject,
+            &d.body_text,
+            d.body_html.as_deref(),
+            &variables,
+            &system_vars,
+        )
+        .map_err(|e| match e {
+            domain::templates::TemplateError::MissingRequired(name) => AppError::new(
+                ErrorCode::TemplateVariableMissing,
+                format!("required variable '{name}' has no value"),
+            )
+            .with_violations(vec![violation(
+                &format!("variables.{name}"),
+                "TEMPLATE_VARIABLE_MISSING",
+            )]),
+            other => AppError::validation(
+                other.to_string(),
+                vec![violation("variables", "TEMPLATE_RENDER")],
+            ),
+        })?;
+        (rendered.subject, rendered.body_text, rendered.body_html)
     } else {
-        if req.meeting_type_id.is_some() {
+        if selected_meeting_type_id.is_some() && sales_binding.is_none() {
             return Err(AppError::validation(
                 "meeting_type_id requires a template using meeting.booking_url",
                 vec![violation("meeting_type_id", "UNUSED")],
@@ -1264,6 +1474,33 @@ pub async fn submit_approved(
     .map(|o| o.into_inner())
 }
 
+/// Submit one frozen outbound snapshot after independent human approval at
+/// an explicit schedule instant. The caller owns the transaction and any
+/// surrounding idempotency scope. Service credentials keep the narrow
+/// approval-bound path; session humans use the existing mailbox send grant.
+/// Both paths retain the existing approval, source-credential, suppression,
+/// and dispatch checks for their caller type.
+pub async fn submit_scheduled_approved_in_tx(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    id: Uuid,
+    expected_payload_hash: &str,
+    not_before: DateTime<Utc>,
+) -> Result<SubmitOutboundResponse, AppError> {
+    let approved_submit = ctx.principal_kind == PrincipalKind::Agent
+        || matches!(&ctx.auth, AuthMethod::ServiceCredential { .. });
+    let stored = submit_tx(
+        tx,
+        ctx,
+        id,
+        expected_payload_hash,
+        Some(not_before),
+        approved_submit,
+    )
+    .await?;
+    Ok(stored.body)
+}
+
 async fn require_approved_submit_access(
     tx: &mut Tx<'_>,
     ctx: &Ctx,
@@ -1452,6 +1689,7 @@ async fn submit_tx(
     not_before: Option<DateTime<Utc>>,
     approved_submit: bool,
 ) -> Result<idem::Stored<SubmitOutboundResponse>, AppError> {
+    let sales_binding = infrastructure::repo::sales_campaigns::outbound_binding(tx, id).await?;
     let Some(o) = repo::get_outbound_for_update(tx, id).await? else {
         return Err(AppError::not_found("outbound message not found"));
     };
@@ -1460,6 +1698,24 @@ async fn submit_tx(
     } else {
         // can_send on the mailbox is the §5.3 normal-reply permission.
         authz::require_mailbox(tx, ctx, o.mail_account_id, authz::MailboxPerm::Send).await?;
+    }
+
+    if let Some(binding) = &sales_binding {
+        if !binding.is_current || !binding.recipient_available {
+            return Err(AppError::conflict(
+                "sales campaign outbound is no longer current or its CRM recipient is unavailable",
+            ));
+        }
+        if o.source_draft_id != Some(binding.source_draft_id)
+            || o.mail_account_id != binding.mail_account_id
+            || o.delivery_channel_id != binding.delivery_channel_id
+            || o.sender_identity_id != binding.sender_identity_id
+            || Some(o.to_email_address_id) != binding.email_address_id
+        {
+            return Err(AppError::conflict(
+                "sales campaign outbound no longer matches its bound target and sender",
+            ));
+        }
     }
 
     let requester = repo::principal_state(tx, o.requested_by).await?;
@@ -1599,7 +1855,17 @@ async fn submit_tx(
             .fetch_one(tx.conn())
             .await
             .map_err(infrastructure::error::map_sqlx)?;
-    repo::set_queued(tx, o.id, not_before, explicit_submission_at).await?;
+    let effective_not_before = if sales_binding.is_some() {
+        let scheduling_now: DateTime<Utc> =
+            sqlx::query_scalar("SELECT date_trunc('microseconds', clock_timestamp())")
+                .fetch_one(tx.conn())
+                .await
+                .map_err(infrastructure::error::map_sqlx)?;
+        Some(campaign_not_before(scheduling_now, not_before))
+    } else {
+        not_before
+    };
+    repo::set_queued(tx, o.id, effective_not_before, explicit_submission_at).await?;
     let job_id = infrastructure::jobs::enqueue(
         tx,
         dispatch::DISPATCH_KIND,
@@ -1608,7 +1874,7 @@ async fn submit_tx(
             "outbound_message_id": o.id,
             "explicit_submission_at": explicit_submission_at,
         }),
-        not_before.unwrap_or_else(Utc::now),
+        effective_not_before.unwrap_or_else(Utc::now),
         Some(&format!("dispatch:{}", o.id)),
     )
     .await?;
@@ -1789,4 +2055,37 @@ pub async fn cancel(
         status: "canceled".to_string(),
         version: response_version,
     })
+}
+
+#[cfg(test)]
+mod sales_campaign_schedule_tests {
+    use super::campaign_not_before;
+    use chrono::{DateTime, Utc};
+
+    fn at(seconds: i64, nanos: u32) -> DateTime<Utc> {
+        DateTime::from_timestamp(seconds, nanos).unwrap()
+    }
+
+    #[test]
+    fn linked_campaign_submissions_use_the_later_rounded_ten_minute_boundary() {
+        assert_eq!(campaign_not_before(at(601, 0), None).timestamp(), 1200);
+        assert_eq!(
+            campaign_not_before(at(601, 0), Some(at(1199, 0))).timestamp(),
+            1200
+        );
+        assert_eq!(
+            campaign_not_before(at(601, 0), Some(at(1201, 0))).timestamp(),
+            1800
+        );
+        assert_eq!(campaign_not_before(at(1200, 0), None).timestamp(), 1800);
+        assert_eq!(campaign_not_before(at(1200, 1), None).timestamp(), 1800);
+        assert_eq!(
+            campaign_not_before(at(601, 0), Some(at(1200, 0))).timestamp(),
+            1200
+        );
+        assert_eq!(
+            campaign_not_before(at(1200, 0), Some(at(1800, 0))).timestamp(),
+            1800
+        );
+    }
 }

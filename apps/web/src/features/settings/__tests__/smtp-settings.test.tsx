@@ -81,6 +81,62 @@ function mount(fetcher: typeof fetch) {
   return { queryClient, invalidate };
 }
 
+describe("sales campaign sender default", () => {
+  it("offers the default action only for active marketing profiles and saves that profile", async () => {
+    const activeMarketing = { ...profile, status: "active" };
+    const correspondence = {
+      ...profile,
+      id: "smtp-correspondence",
+      purpose: "correspondence",
+      status: "active",
+    };
+    const calls: Call[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      const request = init ?? {};
+      calls.push({ url, init: request });
+      if (url === "/api/v1/sales-campaigns/sender" && request.method === "PUT") {
+        return response({ sender: { smtp_profile_id: "smtp-1", ready: true } });
+      }
+      if (url === "/api/v1/sales-campaigns/sender") {
+        return response({ sender: null });
+      }
+      if (url === "/api/v1/smtp-connections") {
+        return response([activeMarketing, correspondence]);
+      }
+      return response([]);
+    });
+    mount(fetcher);
+
+    expect(
+      await screen.findByRole("button", { name: "Set as campaign sender" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Set as campaign sender" })
+    ).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Set as campaign sender" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.url === "/api/v1/sales-campaigns/sender" &&
+            call.init.method === "PUT"
+        )
+      ).toBe(true)
+    );
+
+    const update = calls.find(
+      (call) =>
+        call.url === "/api/v1/sales-campaigns/sender" &&
+        call.init.method === "PUT"
+    )!;
+    expect(JSON.parse(String(update.init.body))).toEqual({
+      smtp_profile_id: "smtp-1",
+    });
+  });
+});
+
 function fillRequiredFields(password = "super-secret-smtp-password") {
   fireEvent.change(screen.getByLabelText("Connection name"), {
     target: { value: "Newsletter SMTP" },

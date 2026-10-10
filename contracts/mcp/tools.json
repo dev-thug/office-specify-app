@@ -1737,6 +1737,1790 @@
       }
     },
     {
+      "description": "List personalized sales campaign groups visible in this workspace. Requires campaign.compose, mail.read, and the current mailbox read grant. Results include CRM target IDs; message content remains subject to current mailbox read access.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Opaque next_cursor from the previous list/search result. Reuse only on the same tool with the same caller, workspace, filters and page size; omit for the first page.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "description": "Bounded number of accessible personalized groups to return. Follow the schema maximum; this list does not grant access to other mailboxes.",
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "SalesCampaignListInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_list",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "definitions": {
+                  "SalesCampaignSummary": {
+                    "properties": {
+                      "created_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "delivery_channel_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "from_address": {
+                        "type": "string"
+                      },
+                      "from_name": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "mail_account_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "meeting_type_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "objective": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reply_to": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "sender_identity_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "sender_ready": {
+                        "type": "boolean"
+                      },
+                      "sender_status": {
+                        "type": "string"
+                      },
+                      "smtp_profile_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "version": {
+                        "format": "int64",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "created_at",
+                      "delivery_channel_id",
+                      "from_address",
+                      "from_name",
+                      "id",
+                      "mail_account_id",
+                      "name",
+                      "sender_identity_id",
+                      "sender_ready",
+                      "sender_status",
+                      "smtp_profile_id",
+                      "updated_at",
+                      "version"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "properties": {
+                  "campaigns": {
+                    "items": {
+                      "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignSummary"
+                    },
+                    "type": "array"
+                  },
+                  "has_more": {
+                    "type": "boolean"
+                  },
+                  "next_cursor": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "campaigns",
+                  "has_more"
+                ],
+                "title": "SalesCampaignListOutput",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "description": "Create a personalized sales group using the workspace's configured active marketing SMTP sender. Set or repair the sender in Mail accounts Settings. This creates no message and causes no send. Requires campaign.compose; no sender or mailbox selector is accepted here.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "idempotency_key": {
+            "description": "Stable operation-specific key of 16..128 characters. Retry identical arguments with the same key; use a new key for a different operation. This prevents duplicate database writes, not duplicate research subjects.",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[\\x20-\\x7e]{16,128}$",
+            "type": "string"
+          },
+          "meeting_type_id": {
+            "description": "Existing active meeting-type UUID from booking_list_meeting_types. Discovering an ID does not grant host access for slots or proposals. MCP does not create meeting types. For proposals choose a fresh slot for this same type.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "description": "Human-readable name for the new draft/campaign or contact object. This is display content, not a record ID, credential, or instruction to execute sending.",
+            "type": "string"
+          },
+          "objective": {
+            "description": "Optional human-readable purpose of the campaign preparation. It does not establish consent, grant permissions or authorize an external send.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "idempotency_key",
+          "name"
+        ],
+        "title": "SalesCampaignCreateInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_create",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "properties": {
+                  "created_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "delivery_channel_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "from_address": {
+                    "type": "string"
+                  },
+                  "from_name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "mail_account_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "meeting_type_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "objective": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reply_to": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sender_identity_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "sender_ready": {
+                    "type": "boolean"
+                  },
+                  "sender_status": {
+                    "type": "string"
+                  },
+                  "smtp_profile_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "updated_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "version": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "created_at",
+                  "delivery_channel_id",
+                  "from_address",
+                  "from_name",
+                  "id",
+                  "mail_account_id",
+                  "name",
+                  "sender_identity_id",
+                  "sender_ready",
+                  "sender_status",
+                  "smtp_profile_id",
+                  "updated_at",
+                  "version"
+                ],
+                "title": "SalesCampaignSummary",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "description": "Read one personalized sales group, its sender binding, current targets, safe workflow stages, and approval/outbound summaries. Requires campaign.compose, crm.read, mail.read, and the current mailbox read grant; draft content also follows mailbox ACLs.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "description": "Personalized sales group UUID returned by sales_campaigns_create/list/get. This is not a legacy bulk campaign ID, target ID or company ID; reuse the same group across company-specific messages.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id"
+        ],
+        "title": "SalesCampaignGetInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_get",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "definitions": {
+                  "SalesCampaignDraftSummary": {
+                    "properties": {
+                      "draft_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "format": "int64",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "draft_id",
+                      "status",
+                      "subject",
+                      "version"
+                    ],
+                    "type": "object"
+                  },
+                  "SalesCampaignOutboundSummary": {
+                    "properties": {
+                      "accepted_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approval_expires_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approval_status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approved_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "click_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "failure_code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "known_reply_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "last_reply_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "not_before": {
+                        "description": "Persisted ten-minute batch boundary. Kept on the card after reload.",
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "open_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "payload_hash": {
+                        "type": "string"
+                      },
+                      "provider_accepted": {
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "click_count",
+                      "known_reply_count",
+                      "open_count",
+                      "outbound_message_id",
+                      "payload_hash",
+                      "provider_accepted",
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "SalesCampaignSummary": {
+                    "properties": {
+                      "created_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "delivery_channel_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "from_address": {
+                        "type": "string"
+                      },
+                      "from_name": {
+                        "type": "string"
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "mail_account_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "meeting_type_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "objective": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reply_to": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "sender_identity_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "sender_ready": {
+                        "type": "boolean"
+                      },
+                      "sender_status": {
+                        "type": "string"
+                      },
+                      "smtp_profile_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "version": {
+                        "format": "int64",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "created_at",
+                      "delivery_channel_id",
+                      "from_address",
+                      "from_name",
+                      "id",
+                      "mail_account_id",
+                      "name",
+                      "sender_identity_id",
+                      "sender_ready",
+                      "sender_status",
+                      "smtp_profile_id",
+                      "updated_at",
+                      "version"
+                    ],
+                    "type": "object"
+                  },
+                  "SalesCampaignTargetResponse": {
+                    "properties": {
+                      "company_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "company_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "contact_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "contact_name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "created_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "current_draft": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignDraftSummary"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "email_address": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "email_address_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "outbound": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignOutboundSummary"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "stage": {
+                        "description": "Effective board column. Later delivery columns are server-derived.",
+                        "type": "string"
+                      },
+                      "updated_at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "version": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "workflow_stage": {
+                        "description": "Last editable workflow column, retained when a send is queued.",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "created_at",
+                      "id",
+                      "stage",
+                      "updated_at",
+                      "version",
+                      "workflow_stage"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "properties": {
+                  "campaign": {
+                    "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignSummary"
+                  },
+                  "targets": {
+                    "items": {
+                      "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignTargetResponse"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "campaign",
+                  "targets"
+                ],
+                "title": "SalesCampaignResponse",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "description": "Add one verified CRM recipient to a group. company_id, contact_id, and email_address_id must be UUIDs returned by this workspace's CRM tools, and the email must belong to that contact and company. Raw names and email strings are not accepted. Requires campaign.compose and crm.read.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "description": "Personalized sales group UUID returned by sales_campaigns_create/list/get. This is not a legacy bulk campaign ID, target ID or company ID; reuse the same group across company-specific messages.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "company_id": {
+            "description": "Real company UUID returned by crm_search_companies/crm_get_company. For evidence/note targets choose exactly one company, contact or proposal/thread target; this is not a company name.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "contact_id": {
+            "description": "Real contact UUID obtained from crm_search_contacts or crm_get_company's contacts section; pass it to crm_get_contact before proposing changes. Do not confuse it with email_address_id.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "email_address_id": {
+            "description": "Exact recipient UUID shown on that contact's CRM email record.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "description": "Stable operation-specific key of 16..128 characters. Retry identical arguments with the same key; use a new key for a different operation. This prevents duplicate database writes, not duplicate research subjects.",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[\\x20-\\x7e]{16,128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "company_id",
+          "contact_id",
+          "email_address_id",
+          "idempotency_key"
+        ],
+        "title": "SalesCampaignAddTargetInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_add_target",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "definitions": {
+                  "SalesCampaignDraftSummary": {
+                    "properties": {
+                      "draft_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "format": "int64",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "draft_id",
+                      "status",
+                      "subject",
+                      "version"
+                    ],
+                    "type": "object"
+                  },
+                  "SalesCampaignOutboundSummary": {
+                    "properties": {
+                      "accepted_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approval_expires_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approval_status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approved_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "click_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "failure_code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "known_reply_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "last_reply_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "not_before": {
+                        "description": "Persisted ten-minute batch boundary. Kept on the card after reload.",
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "open_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "payload_hash": {
+                        "type": "string"
+                      },
+                      "provider_accepted": {
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "click_count",
+                      "known_reply_count",
+                      "open_count",
+                      "outbound_message_id",
+                      "payload_hash",
+                      "provider_accepted",
+                      "status"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "properties": {
+                  "company_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "company_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "contact_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "contact_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "created_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "current_draft": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignDraftSummary"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email_address": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "email_address_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "outbound": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignOutboundSummary"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "stage": {
+                    "description": "Effective board column. Later delivery columns are server-derived.",
+                    "type": "string"
+                  },
+                  "updated_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "version": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "workflow_stage": {
+                    "description": "Last editable workflow column, retained when a send is queued.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "created_at",
+                  "id",
+                  "stage",
+                  "updated_at",
+                  "version",
+                  "workflow_stage"
+                ],
+                "title": "SalesCampaignTargetResponse",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "description": "Create a target-specific email draft with its own subject, plain text, optional HTML, template version, and variables. template_version_id must come from the template tools. The server creates public booking and unsubscribe links; never pass those server-owned values in variables. Set explicit_follow_up=true only to intentionally start a new review after a prior message was accepted. Creating a draft does not freeze, approve, or send it. Requires campaign.compose, crm.read, and mail.read scopes plus current mailbox read and compose grants.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "body_html": {
+            "description": "Optional email HTML matching body_text. Safe inline colors, padding, table widths and CTA borders are supported; font sizes must be 8..72px or 6..54pt. Scripts, style blocks, CSS URLs, hidden text and unsupported declarations are rejected. Use meeting.booking_url and compliance.unsubscribe_url placeholders; the server owns their final URLs.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body_text": {
+            "description": "Plain-text email alternative. Keep its meaning consistent with body_html and template variables; this is message content, not an execution instruction.",
+            "type": "string"
+          },
+          "campaign_id": {
+            "description": "Personalized sales group UUID returned by sales_campaigns_create/list/get. This is not a legacy bulk campaign ID, target ID or company ID; reuse the same group across company-specific messages.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "explicit_follow_up": {
+            "default": false,
+            "description": "Set true only to create a deliberate follow-up after a prior message was accepted by the provider; accepted targets otherwise stay read-only.",
+            "type": "boolean"
+          },
+          "idempotency_key": {
+            "description": "Stable operation-specific key of 16..128 characters. Retry identical arguments with the same key; use a new key for a different operation. This prevents duplicate database writes, not duplicate research subjects.",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[\\x20-\\x7e]{16,128}$",
+            "type": "string"
+          },
+          "subject": {
+            "description": "Email subject or template subject. Supported placeholders use {{name}} and must match variable_schema where applicable. Preparing/saving a subject does not send it.",
+            "type": "string"
+          },
+          "target_id": {
+            "description": "Verified company/contact/email target UUID from sales_campaigns_add_target or sales_campaigns_get. It must belong to campaign_id; do not substitute the company or draft UUID.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "template_version_id": {
+            "description": "Existing immutable template-version UUID from templates_list_versions; inspect it with templates_get_version. This is not template_id. Select the reviewed version and provide its non-system variables when applicable.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "variables": {
+            "additionalProperties": true,
+            "description": "Optional flat map of caller-owned template values keyed by exact dotted names, e.g. {contact.name: Example Person}. Do not supply meeting.booking_url or compliance.unsubscribe_url; these are server-injected.",
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "body_text",
+          "campaign_id",
+          "idempotency_key",
+          "subject",
+          "target_id"
+        ],
+        "title": "SalesCampaignCreateMessageInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_create_message",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "properties": {
+                  "approval_required": {
+                    "type": "boolean"
+                  },
+                  "body_html": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "body_text": {
+                    "type": "string"
+                  },
+                  "draft_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "mail_account_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "outbound_message_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "sales_campaign_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "sales_target_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "template_version_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "to_email_address_id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "version": {
+                    "format": "int64",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "approval_required",
+                  "body_text",
+                  "draft_id",
+                  "mail_account_id",
+                  "purpose",
+                  "status",
+                  "subject",
+                  "to_email_address_id",
+                  "version"
+                ],
+                "title": "SalesCampaignDraftOutput",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "description": "Move a target between the writable researched, draft, and review stages. Queued, accepted, and attention are derived from outbound and approval records and cannot be set here. Requires campaign.compose, crm.read, and mail.read scopes plus the current mailbox read grant.",
+      "externalEffect": false,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "definitions": {
+          "EditableSalesCampaignStage": {
+            "enum": [
+              "research",
+              "draft",
+              "review"
+            ],
+            "type": "string"
+          }
+        },
+        "properties": {
+          "campaign_id": {
+            "description": "Personalized sales group UUID returned by sales_campaigns_create/list/get. This is not a legacy bulk campaign ID, target ID or company ID; reuse the same group across company-specific messages.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_target_version": {
+            "description": "Current target version from sales_campaigns_get. Re-read after a change; stale versions must not queue a superseded draft.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "description": "Stable operation-specific key of 16..128 characters. Retry identical arguments with the same key; use a new key for a different operation. This prevents duplicate database writes, not duplicate research subjects.",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[\\x20-\\x7e]{16,128}$",
+            "type": "string"
+          },
+          "stage": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/EditableSalesCampaignStage"
+              }
+            ],
+            "description": "Editable preparation column: research, draft or review. Moving does not approve or send. Queued, accepted and attention are derived from actual outbound results and cannot be assigned."
+          },
+          "target_id": {
+            "description": "Verified company/contact/email target UUID from sales_campaigns_add_target or sales_campaigns_get. It must belong to campaign_id; do not substitute the company or draft UUID.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "expected_target_version",
+          "idempotency_key",
+          "stage",
+          "target_id"
+        ],
+        "title": "SalesCampaignMoveStageInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_move_stage",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "definitions": {
+                  "SalesCampaignDraftSummary": {
+                    "properties": {
+                      "draft_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "subject": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "format": "int64",
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "draft_id",
+                      "status",
+                      "subject",
+                      "version"
+                    ],
+                    "type": "object"
+                  },
+                  "SalesCampaignOutboundSummary": {
+                    "properties": {
+                      "accepted_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approval_expires_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approval_status": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "approved_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "click_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "failure_code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "known_reply_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "last_reply_at": {
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "not_before": {
+                        "description": "Persisted ten-minute batch boundary. Kept on the card after reload.",
+                        "format": "date-time",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "open_count": {
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "payload_hash": {
+                        "type": "string"
+                      },
+                      "provider_accepted": {
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "click_count",
+                      "known_reply_count",
+                      "open_count",
+                      "outbound_message_id",
+                      "payload_hash",
+                      "provider_accepted",
+                      "status"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "properties": {
+                  "company_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "company_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "contact_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "contact_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "created_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "current_draft": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignDraftSummary"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "email_address": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "email_address_id": {
+                    "format": "uuid",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "type": "string"
+                  },
+                  "outbound": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/anyOf/0/definitions/SalesCampaignOutboundSummary"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "stage": {
+                    "description": "Effective board column. Later delivery columns are server-derived.",
+                    "type": "string"
+                  },
+                  "updated_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "version": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "workflow_stage": {
+                    "description": "Last editable workflow column, retained when a send is queued.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "created_at",
+                  "id",
+                  "stage",
+                  "updated_at",
+                  "version",
+                  "workflow_stage"
+                ],
+                "title": "SalesCampaignTargetResponse",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "description": "Queue one current frozen outbound message only after an independent human approved the exact expected_payload_hash. Requires campaign.compose, mail.submit_approved, and the current mailbox send grant. The server stores one idempotent durable dispatch job at the next ten-minute UTC boundary; this tool does not approve or send mail immediately. Unknown sends are never retried automatically.",
+      "externalEffect": true,
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "campaign_id": {
+            "description": "Personalized sales group UUID returned by sales_campaigns_create/list/get. This is not a legacy bulk campaign ID, target ID or company ID; reuse the same group across company-specific messages.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "expected_payload_hash": {
+            "description": "Exact SHA-256 payload hash returned by freeze or mail_get_outbound and reviewed by a human. It binds the sender, recipient, rendered content and message context; never hash editable draft text as a substitute.",
+            "type": "string"
+          },
+          "expected_target_version": {
+            "description": "Current target version from sales_campaigns_get. Re-read after a change; stale versions must not queue a superseded draft.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "description": "Stable operation-specific key of 16..128 characters. Retry identical arguments with the same key; use a new key for a different operation. This prevents duplicate database writes, not duplicate research subjects.",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[\\x20-\\x7e]{16,128}$",
+            "type": "string"
+          },
+          "outbound_message_id": {
+            "description": "Immutable frozen outbound UUID returned by the human freeze workflow or supplied by the operator. This is not a draft ID or thread ID. Read it with mail_get_outbound and submit only its exact approved snapshot.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "target_id": {
+            "description": "Verified company/contact/email target UUID from sales_campaigns_add_target or sales_campaigns_get. It must belong to campaign_id; do not substitute the company or draft UUID.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "campaign_id",
+          "expected_payload_hash",
+          "expected_target_version",
+          "idempotency_key",
+          "outbound_message_id",
+          "target_id"
+        ],
+        "title": "SalesCampaignQueueInput",
+        "type": "object"
+      },
+      "name": "sales_campaigns_queue",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "definitions": {
+                  "SubmitOutboundResponse": {
+                    "description": "B.3.10 response: `{outbound_message_id, status, job_id, provider_accepted}` — accepted is `false` because provider acceptance is only confirmed asynchronously.",
+                    "properties": {
+                      "job_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "outbound_message_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "provider_accepted": {
+                        "description": "Always `false` at enqueue — set only after provider confirmation.",
+                        "type": "boolean"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "job_id",
+                      "outbound_message_id",
+                      "provider_accepted",
+                      "status"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "properties": {
+                  "batch_at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "submission": {
+                    "$ref": "#/properties/data/anyOf/0/definitions/SubmitOutboundResponse"
+                  }
+                },
+                "required": [
+                  "batch_at",
+                  "submission"
+                ],
+                "title": "QueueSalesCampaignTargetResponse",
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message",
+                  "retryable"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "data",
+          "error",
+          "request_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "description": "Find existing CRM companies by name/domain before proposing a new lead. Scope: crm.read. Returns company IDs and versions; reuse an ID in crm_get_company, and reuse next_cursor only with the same caller and filters. No writes.",
       "externalEffect": false,
       "inputSchema": {

@@ -4,6 +4,7 @@ import {
   createMessageDraft,
   freezeMessageDraft,
   listMessageDrafts,
+  patchMessageDraft,
   submitOutbound,
 } from "@/lib/api/sending";
 
@@ -21,6 +22,26 @@ function mockFetch(status = 200, body: unknown = { data: {} }, headers: Record<s
   );
   return calls;
 }
+
+describe("message draft editing", () => {
+  it("updates only editable draft content with the current version", async () => {
+    const calls = mockFetch(200, { data: { draft_id: "draft-1" } });
+    await patchMessageDraft(
+      "draft-1",
+      { subject: "Updated subject", body_text: "Updated body" },
+      { etag: 4, idempotencyKey: "draft-edit-key" }
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe("/api/v1/message-drafts/draft-1");
+    expect(calls[0]!.init.method).toBe("PATCH");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      subject: "Updated subject",
+      body_text: "Updated body",
+    });
+    expect(new Headers(calls[0]!.init.headers).get("If-Match")).toBe('"4"');
+  });
+});
 
 afterEach(() => vi.unstubAllGlobals());
 

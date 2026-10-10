@@ -184,6 +184,7 @@ pub fn all_tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
     v.extend(tools::approvals::tools());
     v.extend(tools::booking::tools());
     v.extend(tools::campaigns::tools());
+    v.extend(tools::sales_campaigns::tools_with_key(hmac_key));
     v.extend(tools::compliance::tools());
     v.extend(tools::crm::tools_with_key(hmac_key));
     v.extend(tools::discovery::tools_with_key(hmac_key));
@@ -220,6 +221,13 @@ mod tests {
             "crm_get_company",
             "crm_get_contact",
             "mail_get_thread",
+            "sales_campaigns_list",
+            "sales_campaigns_create",
+            "sales_campaigns_get",
+            "sales_campaigns_add_target",
+            "sales_campaigns_create_message",
+            "sales_campaigns_move_stage",
+            "sales_campaigns_queue",
             "mail_list_threads",
             "mail_search_messages",
             "mail_update_thread_status",
@@ -268,6 +276,11 @@ mod tests {
     fn mutating_tools_require_explicit_idempotency_keys() {
         let definitions = all_tools();
         for name in [
+            "sales_campaigns_create",
+            "sales_campaigns_add_target",
+            "sales_campaigns_create_message",
+            "sales_campaigns_move_stage",
+            "sales_campaigns_queue",
             "research_propose_leads",
             "research_add_evidence",
             "crm_propose_update",

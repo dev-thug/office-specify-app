@@ -57,7 +57,17 @@ export interface DraftSendingWorkflowProps {
   mailAccountId: string;
   /** Inbox review/reconnect gates must still apply to drafts created earlier. */
   sendBlocked?: boolean;
+  /** Prevents freezing a campaign draft while its editor has unsaved changes. */
+  freezeBlocked?: boolean;
   onChanged?: () => void | Promise<unknown>;
+  /** Campaign drafts must be queued through their board's batch boundary. */
+  allowSubmit?: boolean;
+  /** Shows the campaign board link for campaign-owned drafts. */
+  salesCampaignId?: string;
+  /** Pins freeze to the channel already bound to a campaign sender. */
+  lockedDeliveryChannelId?: string;
+  /** Pins booking links to the campaign's configured meeting type, including none. */
+  campaignMeetingTypeId?: string | null;
 }
 
 type PendingAction = "freeze" | "approval" | "submit" | "cancel" | "refresh" | null;
@@ -90,6 +100,11 @@ export function DraftSendingWorkflow({
   threadId,
   mailAccountId,
   sendBlocked = false,
+  freezeBlocked = false,
+  allowSubmit = true,
+  salesCampaignId,
+  lockedDeliveryChannelId,
+  campaignMeetingTypeId,
   onChanged,
 }: DraftSendingWorkflowProps) {
   const t = useTranslations("sending.workflow");
@@ -116,21 +131,25 @@ export function DraftSendingWorkflow({
 
   const [draftControls, setDraftControls] = useState<DraftControls>(() => ({
     draftId: selectedDraftId,
-    selectedChannelId: "",
-    meetingTypeId: "",
+    selectedChannelId: lockedDeliveryChannelId ?? "",
+    meetingTypeId: campaignMeetingTypeId ?? "",
     approvalReason: "",
     trackingRequested: false,
   }));
   if (draftControls.draftId !== selectedDraftId) {
     setDraftControls({
       draftId: selectedDraftId,
-      selectedChannelId: "",
-      meetingTypeId: "",
+      selectedChannelId: lockedDeliveryChannelId ?? "",
+      meetingTypeId: campaignMeetingTypeId ?? "",
       approvalReason: "",
       trackingRequested: false,
     });
   }
   const { selectedChannelId, meetingTypeId, approvalReason, trackingRequested } = draftControls;
+  const campaignMeetingTypeLocked = Boolean(campaignMeetingTypeId);
+  const effectiveMeetingTypeId = campaignMeetingTypeLocked
+    ? campaignMeetingTypeId ?? ""
+    : meetingTypeId;
   const setSelectedChannelId = (value: string) =>
     setDraftControls((current) => ({ ...current, selectedChannelId: value }));
   const setMeetingTypeId = (value: string) =>
@@ -219,9 +238,10 @@ export function DraftSendingWorkflow({
           channel.mail_account_id === mailAccountId &&
           channel.purpose === activeDraft?.purpose &&
           channel.enabled &&
-          channel.policy_status === "allowed"
+          channel.policy_status === "allowed" &&
+          (!lockedDeliveryChannelId || channel.id === lockedDeliveryChannelId)
       ),
-    [channelsQuery.data, mailAccountId, activeDraft?.purpose]
+    [channelsQuery.data, mailAccountId, activeDraft?.purpose, lockedDeliveryChannelId]
   );
 
   const meetingTypesQuery = useCursorList<MeetingType>({
@@ -297,14 +317,20 @@ export function DraftSendingWorkflow({
   );
   const approvalAllowsSubmit =
     !outbound?.approval_status || approvalIsValid;
-  const canSubmit = canSubmitOutbound(
-    outbound,
-    me?.kind,
-    preflight,
-    hasSendGrant
-  ) && !sendBlocked && approvalAllowsSubmit;
+  const linkedCampaignId =
+    salesCampaignId ?? activeDraft?.sales_campaign_id ?? null;
+  const genericLinkedCampaignDraft = Boolean(
+    activeDraft?.sales_campaign_id && !salesCampaignId
+  );
+  const canSubmit =
+    canSubmitOutbound(outbound, me?.kind, preflight, hasSendGrant) &&
+    !sendBlocked &&
+    approvalAllowsSubmit &&
+    allowSubmit &&
+    !linkedCampaignId;
   const canRequestApproval =
     !sendBlocked &&
+    !freezeBlocked &&
     hasComposeGrant &&
     canRequestOutboundApproval(outbound, me?.kind, preflight);
   const canCancel =
@@ -356,17 +382,18 @@ export function DraftSendingWorkflow({
       !activeDraft ||
       !draftMatchesContext ||
       sendBlocked ||
+      freezeBlocked ||
       activeDraft.status !== "draft" ||
       !selectedChannelId
     ) {
       return;
     }
-    const scope = `freeze:${activeDraft.draft_id}:${selectedChannelId}:${meetingTypeId}:${trackingRequested}`;
+    const scope = `freeze:${activeDraft.draft_id}:${selectedChannelId}:${effectiveMeetingTypeId}:${trackingRequested}`;
     const request: FreezeMessageDraftInput = {
       delivery_channel_id: selectedChannelId,
       tracking_requested: trackingRequested,
     };
-    if (meetingTypeId) request.meeting_type_id = meetingTypeId;
+    if (effectiveMeetingTypeId) request.meeting_type_id = effectiveMeetingTypeId;
 
     setPending("freeze");
     try {
@@ -511,6 +538,18 @@ export function DraftSendingWorkflow({
       aria-label={t("title")}
       className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-4"
     >
+      {linkedCampaignId ? (
+        <Alert>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+            <span>{t("campaignLinked")}</span>
+            <Button asChild size="xs" variant="link">
+              <Link href={`/app/campaigns/${encodeURIComponent(linkedCampaignId)}`}>
+                {t("openCampaign")}
+              </Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="min-w-0 flex-1 text-sm font-semibold">{t("title")}</h3>
         {outbound ? (
@@ -573,7 +612,7 @@ export function DraftSendingWorkflow({
         </Alert>
       ) : null}
 
-      {activeDraft && draftMatchesContext ? (
+      {activeDraft && draftMatchesContext && !genericLinkedCampaignDraft ? (
         <>
           {!outboundId ? (
             <div className="grid gap-1 rounded-2xl border border-border bg-app-panel-muted p-3 text-sm">
@@ -586,43 +625,67 @@ export function DraftSendingWorkflow({
           {!outboundId && activeDraft.status === "draft" ? (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="grid gap-1.5">
-                  <Label htmlFor={channelSelectId}>{t("channel")}</Label>
-                  <select
-                    id={channelSelectId}
-                    aria-label={t("channel")}
-                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                    value={selectedChannelId}
-                    onChange={(event) => setSelectedChannelId(event.target.value)}
-                    disabled={channelsQuery.isLoading || pending === "freeze"}
-                  >
-                    <option value="">{t("selectChannel")}</option>
-                    {channelRows.map((channel: DeliveryChannel) => (
-                      <option key={channel.id} value={channel.id}>
-                        {channel.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor={meetingTypeSelectId}>{t("meetingType")}</Label>
-                  <select
-                    id={meetingTypeSelectId}
-                    aria-label={t("meetingType")}
-                    className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                    value={meetingTypeId}
-                    onChange={(event) => setMeetingTypeId(event.target.value)}
-                    disabled={meetingTypesQuery.isLoading || meetingTypesQuery.isError || pending === "freeze"}
-                  >
-                    <option value="">{t("noMeetingType")}</option>
-                    {meetingTypes.map((meetingType: MeetingType) => (
-                      <option key={meetingType.id} value={meetingType.id}>
-                        {meetingType.name} · {t("meetingTypeDuration", { count: meetingType.duration_minutes })}
-                        {meetingTypeHostNames.get(meetingType.host_principal_id) ? ` · ${t("meetingTypeHost", { name: meetingTypeHostNames.get(meetingType.host_principal_id)! })}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {lockedDeliveryChannelId ? (
+                  <div className="grid gap-1.5">
+                    <Label>{t("channel")}</Label>
+                    <p className="flex min-h-9 items-center rounded-lg border border-border bg-app-panel-muted px-3 text-sm">
+                      {channelRows.find((channel) => channel.id === lockedDeliveryChannelId)?.name ??
+                        (channelsQuery.isLoading ? t("channelsLoading") : t("noChannel"))}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={channelSelectId}>{t("channel")}</Label>
+                    <select
+                      id={channelSelectId}
+                      aria-label={t("channel")}
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      value={selectedChannelId}
+                      onChange={(event) => setSelectedChannelId(event.target.value)}
+                      disabled={channelsQuery.isLoading || pending === "freeze"}
+                    >
+                      <option value="">{t("selectChannel")}</option>
+                      {channelRows.map((channel: DeliveryChannel) => (
+                        <option key={channel.id} value={channel.id}>
+                          {channel.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {campaignMeetingTypeLocked ? (
+                  <div className="grid gap-1.5">
+                    <Label>{t("meetingType")}</Label>
+                    <p className="flex min-h-9 items-center rounded-lg border border-border bg-app-panel-muted px-3 text-sm">
+                      {campaignMeetingTypeId
+                        ? meetingTypes.find((meetingType) => meetingType.id === campaignMeetingTypeId)?.name ??
+                          (meetingTypesQuery.isLoading
+                            ? t("meetingTypesLoading")
+                            : t("noActiveMeetingTypes"))
+                        : t("noMeetingType")}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor={meetingTypeSelectId}>{t("meetingType")}</Label>
+                    <select
+                      id={meetingTypeSelectId}
+                      aria-label={t("meetingType")}
+                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      value={meetingTypeId}
+                      onChange={(event) => setMeetingTypeId(event.target.value)}
+                      disabled={meetingTypesQuery.isLoading || meetingTypesQuery.isError || pending === "freeze"}
+                    >
+                      <option value="">{t("noMeetingType")}</option>
+                      {meetingTypes.map((meetingType: MeetingType) => (
+                        <option key={meetingType.id} value={meetingType.id}>
+                          {meetingType.name} · {t("meetingTypeDuration", { count: meetingType.duration_minutes })}
+                          {meetingTypeHostNames.get(meetingType.host_principal_id) ? ` · ${t("meetingTypeHost", { name: meetingTypeHostNames.get(meetingType.host_principal_id)! })}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {meetingTypesQuery.isLoading ? <p role="status" className="mt-1 text-xs text-muted-foreground">{t("meetingTypesLoading")}</p> : null}
                 {meetingTypesQuery.isError ? (
                   <div role="alert" className="mt-1 flex items-center gap-2 text-xs text-destructive">
@@ -673,11 +736,17 @@ export function DraftSendingWorkflow({
                   {t("loadMoreChannels")}
                 </Button>
               ) : null}
+              {freezeBlocked ? (
+                <Alert variant="warning">
+                  <AlertDescription>{t("campaignEditsUnsaved")}</AlertDescription>
+                </Alert>
+              ) : null}
               <Button
                 type="button"
                 size="sm"
                 className="self-start"
                 disabled={
+                  freezeBlocked ||
                   !selectedChannelId ||
                   channelRows.every((channel) => channel.id !== selectedChannelId) ||
                   sendBlocked ||
@@ -902,15 +971,17 @@ export function DraftSendingWorkflow({
 
           {outbound.status === "draft" ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={!canSubmit || pending !== null}
-                onClick={() => setConfirmSubmitOpen(true)}
-              >
-                <Send aria-hidden />
-                {pending === "submit" ? t("submitting") : t("submit")}
-              </Button>
+              {allowSubmit && !linkedCampaignId ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!canSubmit || pending !== null}
+                  onClick={() => setConfirmSubmitOpen(true)}
+                >
+                  <Send aria-hidden />
+                  {pending === "submit" ? t("submitting") : t("submit")}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"

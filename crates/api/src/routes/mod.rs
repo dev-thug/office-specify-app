@@ -15,6 +15,7 @@ pub mod mailboxes;
 pub mod operations;
 pub mod org;
 pub mod research;
+pub mod sales_campaigns;
 pub mod sending;
 pub mod smtp;
 pub mod smtp_inbox;
@@ -34,6 +35,7 @@ pub fn api_router() -> OpenApiRouter<AppState> {
         .merge(imports::router())
         .merge(templates::router())
         .merge(campaigns::router())
+        .merge(sales_campaigns::router())
         .merge(approvals::router())
         .merge(sending::router())
         .merge(smtp::router())

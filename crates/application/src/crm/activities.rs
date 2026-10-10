@@ -33,6 +33,10 @@ pub async fn list_company(
     });
     let after = util::decode_cursor(q.cursor.as_deref(), hmac_key, ctx, &filters)?;
     let mut tx = db.begin(ctx.workspace_id).await?;
+    // Retention erasure takes the exclusive workspace privacy gate before it
+    // deletes notes; holding the shared side here prevents a stale note body
+    // from appearing after that erasure commits.
+    infrastructure::repo::sales_campaigns::lock_workspace_privacy_shared(&mut tx).await?;
     crm::get_company(&mut tx, company_id)
         .await?
         .ok_or_else(|| AppError::not_found("company not found"))?;

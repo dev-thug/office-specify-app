@@ -29,6 +29,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
 import {
+  getSalesCampaignSender,
+  setDefaultSalesCampaignSender,
+} from "@/lib/api/sales-campaigns";
+import {
   createSmtpConnection,
   DELIVERY_CHANNELS_QUERY_KEY,
   getSmtpInboxStatus,
@@ -502,15 +506,22 @@ export function SmtpSettings({
   const isAdmin = useIsAdmin();
   const queryClient = useQueryClient();
   const connections = useSmtpConnections(isAdmin);
+  const campaignSenderQuery = useQuery({
+    queryKey: ["sales-campaigns", "sender"],
+    enabled: isAdmin,
+    queryFn: async () => (await getSalesCampaignSender()).data,
+    retry: false,
+  });
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<SmtpForm>(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [actionError, setActionError] = useState(false);
+  const [campaignSenderError, setCampaignSenderError] = useState(false);
   const [disableFor, setDisableFor] = useState<SmtpConnection | null>(null);
   const createKey = useRef(idempotencyKey());
   const actionKeys = useRef(new Map<string, string>());
 
-  function requestKey(action: "verify" | "disable", id: string) {
+  function requestKey(action: "verify" | "disable" | "campaign-sender", id: string) {
     const key = `${action}:${id}`;
     let value = actionKeys.current.get(key);
     if (!value) {
@@ -526,6 +537,9 @@ export function SmtpSettings({
     });
     void queryClient.invalidateQueries({
       queryKey: DELIVERY_CHANNELS_QUERY_KEY,
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["sales-campaigns", "sender"],
     });
   }
 
@@ -588,6 +602,24 @@ export function SmtpSettings({
       setActionError(true);
       if (isPermanentApiError(error)) {
         actionKeys.current.delete(`disable:${id}`);
+      }
+    },
+  });
+
+  const setCampaignSender = useMutation({
+    mutationFn: (id: string) =>
+      setDefaultSalesCampaignSender(id, {
+        idempotencyKey: requestKey("campaign-sender", id),
+      }),
+    onSuccess: (_result, id) => {
+      actionKeys.current.delete(`campaign-sender:${id}`);
+      setCampaignSenderError(false);
+      invalidateSettings();
+    },
+    onError: (error, id) => {
+      setCampaignSenderError(true);
+      if (isPermanentApiError(error)) {
+        actionKeys.current.delete(`campaign-sender:${id}`);
       }
     },
   });
@@ -665,6 +697,43 @@ export function SmtpSettings({
           </Button>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
+          <section className="flex flex-col gap-2 rounded-2xl border border-border bg-app-panel-muted px-4 py-3">
+            <div>
+              <h3 className="text-sm font-medium">{t("campaignSender.title")}</h3>
+              <p className="mt-1 text-2xs text-muted-foreground">
+                {t("campaignSender.description")}
+              </p>
+            </div>
+            {campaignSenderQuery.isPending ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                {t("loading")}
+              </p>
+            ) : campaignSenderQuery.isError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("campaignSender.loadFailed")}
+              </p>
+            ) : campaignSenderQuery.data?.sender?.ready ? (
+              <p className="text-sm font-medium">
+                {campaignSenderQuery.data.sender.profile_name} · {campaignSenderQuery.data.sender.from_name}
+                {" <"}{campaignSenderQuery.data.sender.from_address}{">"}
+              </p>
+            ) : campaignSenderQuery.data?.sender ? (
+              <p className="text-sm text-muted-foreground">
+                {t("campaignSender.unready", {
+                  name: campaignSenderQuery.data.sender.profile_name,
+                })}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t("campaignSender.unset")}
+              </p>
+            )}
+            {campaignSenderError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("campaignSender.saveFailed")}
+              </p>
+            ) : null}
+          </section>
           <p className="text-2xs text-muted-foreground">{t("checkNotice")}</p>
           {mailAccounts.length === 0 && !mailAccountsLoading ? (
             <p className="text-sm text-muted-foreground">
@@ -738,6 +807,29 @@ export function SmtpSettings({
                       >
                         {t("disable")}
                       </Button>
+                    ) : null}
+                    {connection.purpose === "marketing" && connection.status === "active" ? (
+                      campaignSenderQuery.data?.sender?.ready &&
+                      campaignSenderQuery.data.sender.smtp_profile_id === connection.id ? (
+                        <Badge variant="success-subtle">
+                          {t("campaignSender.current")}
+                        </Badge>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={setCampaignSender.isPending || campaignSenderQuery.isPending}
+                          onClick={() => {
+                            setCampaignSenderError(false);
+                            setCampaignSender.mutate(connection.id);
+                          }}
+                        >
+                          {setCampaignSender.isPending
+                            ? t("campaignSender.saving")
+                            : t("campaignSender.setDefault")}
+                        </Button>
+                      )
                     ) : null}
                   </div>
                   <SmtpInboxSyncPanel connection={connection} />

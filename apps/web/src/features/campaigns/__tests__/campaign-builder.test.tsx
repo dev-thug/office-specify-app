@@ -66,7 +66,7 @@ describe("CampaignBuilder legacy revisions", () => {
     expect(screen.getByText(/2 stored message step\(s\) and delays are preserved/)).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Create a new single-message campaign" })
-    ).toHaveAttribute("href", "/app/campaigns/new");
+    ).toHaveAttribute("href", "/app/campaigns/bulk/new");
     expect(screen.queryByRole("button", { name: "Create draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add step" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Delay (hours)")).not.toBeInTheDocument();

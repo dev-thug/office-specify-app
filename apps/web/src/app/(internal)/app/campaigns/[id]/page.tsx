@@ -1,4 +1,4 @@
-import { CampaignDetail } from "@/features/campaigns";
+import { PersonalizedCampaignDetail } from "@/features/campaigns/personalized-campaign-detail";
 
 export default async function CampaignDetailPage({
   params,
@@ -6,5 +6,5 @@ export default async function CampaignDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <CampaignDetail campaignId={id} />;
+  return <PersonalizedCampaignDetail campaignId={id} />;
 }

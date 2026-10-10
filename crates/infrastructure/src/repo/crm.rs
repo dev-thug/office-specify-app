@@ -1104,19 +1104,38 @@ pub async fn list_company_activities(
         .map(|(t, i)| (Some(t), Some(i)))
         .unwrap_or((None, None));
     sqlx::query_as::<_, ActivityRow>(
-        "SELECT id, workspace_id, company_id, contact_id, mail_account_id,
-                thread_id, booking_id, actor_principal_id, kind, source_event_id,
-                occurred_at, summary
-           FROM activities
-          WHERE workspace_id = $1
-            AND (company_id = $2 OR contact_id IN (
+        "SELECT a.id, a.workspace_id, a.company_id, a.contact_id, a.mail_account_id,
+                a.thread_id, a.booking_id, a.actor_principal_id, a.kind, a.source_event_id,
+                a.occurred_at,
+                CASE WHEN a.kind = 'note.created'
+                     THEN (a.summary - 'body') ||
+                          CASE WHEN current_note.id IS NOT NULL
+                               THEN jsonb_build_object('body', current_note.body)
+                               ELSE '{}'::jsonb END
+                     ELSE a.summary END AS summary
+           FROM activities a
+           LEFT JOIN notes current_note
+             ON current_note.workspace_id = a.workspace_id
+            AND current_note.id = a.source_event_id
+            AND current_note.id::text = a.summary->>'note_id'
+            AND a.kind = 'note.created'
+            AND a.mail_account_id IS NULL
+            AND current_note.mail_account_id IS NULL
+            AND current_note.mail_account_id IS NOT DISTINCT FROM a.mail_account_id
+            AND current_note.company_id IS NOT DISTINCT FROM a.company_id
+            AND current_note.contact_id IS NOT DISTINCT FROM a.contact_id
+            AND current_note.thread_id IS NOT DISTINCT FROM a.thread_id
+            AND (current_note.company_id = $2 OR current_note.contact_id IN (
                 SELECT id FROM contacts WHERE workspace_id = $1 AND company_id = $2))
-            AND (mail_account_id IS NULL OR EXISTS (
+          WHERE a.workspace_id = $1
+            AND (a.company_id = $2 OR a.contact_id IN (
+                SELECT id FROM contacts WHERE workspace_id = $1 AND company_id = $2))
+            AND (a.mail_account_id IS NULL OR EXISTS (
                 SELECT 1 FROM mail_account_grants g
-                 WHERE g.workspace_id = $1 AND g.mail_account_id = activities.mail_account_id
+                 WHERE g.workspace_id = $1 AND g.mail_account_id = a.mail_account_id
                    AND g.principal_id = $3 AND g.can_read))
-            AND ($4::timestamptz IS NULL OR (occurred_at, id) < ($4, $5))
-          ORDER BY occurred_at DESC, id DESC
+            AND ($4::timestamptz IS NULL OR (a.occurred_at, a.id) < ($4, $5))
+          ORDER BY a.occurred_at DESC, a.id DESC
           LIMIT $6",
     )
     .bind(tx.workspace_id())
@@ -1131,7 +1150,7 @@ pub async fn list_company_activities(
 }
 
 // ----------------------------------------------- projector resolution (§5.6
-// ids only — summaries never carry subject/body)
+// summaries store ids; company-activity reads hydrate current CRM note bodies)
 
 /// First contact (deterministic order) linked to an address + its company.
 pub async fn contact_refs_for_address(

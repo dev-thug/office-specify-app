@@ -87,6 +87,32 @@ pub async fn erase_contact(
 
     let mut tx = db.begin(request.workspace_id).await?;
     begin_retention_operation(&mut tx).await?;
+    // Serialize CRM-bound sales targets with erasure before touching either
+    // contact/email rows or campaign/target rows. All campaign binding paths
+    // take the shared form of this workspace gate first.
+    crate::repo::sales_campaigns::lock_workspace_privacy_exclusive(&mut tx).await?;
+
+    let sales_target_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM sales_campaign_targets
+          WHERE workspace_id = $1 AND contact_id = $2 ORDER BY id",
+    )
+    .bind(request.workspace_id)
+    .bind(request.contact_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let sales_draft_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT td.draft_id FROM sales_campaign_target_drafts td
+           JOIN sales_campaign_targets t
+             ON t.workspace_id = td.workspace_id AND t.sales_campaign_id = td.sales_campaign_id
+            AND t.id = td.target_id
+          WHERE td.workspace_id = $1 AND t.contact_id = $2 ORDER BY td.draft_id",
+    )
+    .bind(request.workspace_id)
+    .bind(request.contact_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
 
     let contact: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM contacts
@@ -145,6 +171,15 @@ pub async fn erase_contact(
           WHERE o.workspace_id = $1
             AND (o.thread_id = ANY($2)
                  OR o.to_email_address_id = ANY($3)
+                 OR EXISTS (
+                    SELECT 1 FROM sales_campaign_target_drafts td
+                    JOIN sales_campaign_targets st
+                      ON st.workspace_id = td.workspace_id
+                     AND st.sales_campaign_id = td.sales_campaign_id
+                     AND st.id = td.target_id
+                    WHERE td.workspace_id = o.workspace_id
+                      AND td.draft_id = o.source_draft_id
+                      AND st.contact_id = $4)
                  OR o.enrollment_id IN (
                     SELECT e.id FROM campaign_enrollments e
                      WHERE e.workspace_id = $1 AND e.contact_id = $4))
@@ -328,6 +363,7 @@ pub async fn erase_contact(
           WHERE o.workspace_id = $1
             AND (o.thread_id = ANY($2)
                  OR o.to_email_address_id = ANY($3)
+                 OR o.source_draft_id = ANY($5)
                  OR EXISTS (
                     SELECT 1 FROM campaign_enrollments e
                      WHERE e.workspace_id = o.workspace_id
@@ -339,7 +375,40 @@ pub async fn erase_contact(
     .bind(&thread_ids)
     .bind(&exclusive_email_ids)
     .bind(request.contact_id)
+    .bind(&sales_draft_ids)
     .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+
+    // Idempotent mutation bodies can carry recipient addresses and editable
+    // message content. Remove only sales mutations tied to this contact's
+    // target/drafts/outbounds, with a broad email match only for exclusively
+    // owned addresses so another contact's shared-address work remains.
+    let sales_target_ids_text: Vec<String> = sales_target_ids.iter().map(Uuid::to_string).collect();
+    let sales_draft_ids_text: Vec<String> = sales_draft_ids.iter().map(Uuid::to_string).collect();
+    let outbound_ids_text: Vec<String> = outbound_ids.iter().map(Uuid::to_string).collect();
+    let exclusive_email_ids_text: Vec<String> =
+        exclusive_email_ids.iter().map(Uuid::to_string).collect();
+    sqlx::query(
+        "DELETE FROM idempotency_records
+          WHERE workspace_id = $1
+            AND state = 'completed'
+            AND (endpoint LIKE 'POST /sales-campaigns/%'
+                 OR endpoint LIKE 'PATCH /sales-campaigns/%'
+                 OR endpoint LIKE 'MCP tools/call sales_campaigns_%')
+            AND (response_body #>> '{id}' = ANY($2)
+                 OR response_body #>> '{sales_target_id}' = ANY($2)
+                 OR response_body #>> '{draft_id}' = ANY($3)
+                 OR response_body #>> '{outbound_message_id}' = ANY($4)
+                 OR response_body #>> '{submission,outbound_message_id}' = ANY($4)
+                 OR response_body #>> '{to_email_address_id}' = ANY($5))",
+    )
+    .bind(request.workspace_id)
+    .bind(&sales_target_ids_text)
+    .bind(&sales_draft_ids_text)
+    .bind(&outbound_ids_text)
+    .bind(&exclusive_email_ids_text)
+    .execute(tx.conn())
     .await
     .map_err(map_sqlx)?;
 
@@ -347,6 +416,29 @@ pub async fn erase_contact(
     // outbounds are scrubbed. Cascading deletes remove their aggregate
     // request buckets, so old email URLs can neither redirect nor count.
     if !outbound_ids.is_empty() {
+        sqlx::query(
+            "UPDATE outbound_messages
+                SET status = 'canceled', failure_code = 'PRIVACY_ERASURE',
+                    not_before = NULL, version = version + 1
+              WHERE workspace_id = $1 AND id = ANY($2)
+                AND status IN ('queued','claimed')",
+        )
+        .bind(request.workspace_id)
+        .bind(&outbound_ids)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+        sqlx::query(
+            "UPDATE jobs SET state = 'canceled', finished_at = now()
+              WHERE workspace_id = $1 AND kind = 'sending.dispatch_outbound'
+                AND payload->>'outbound_message_id' = ANY($2)
+                AND state IN ('queued','retry_wait')",
+        )
+        .bind(request.workspace_id)
+        .bind(&outbound_ids_text)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
         sqlx::query(
             "DELETE FROM outbound_engagement_capabilities
               WHERE workspace_id = $1 AND outbound_message_id = ANY($2)",
@@ -923,18 +1015,37 @@ pub async fn erase_contact(
         .map_err(map_sqlx)?;
     }
 
-    if !thread_ids.is_empty() || !exclusive_email_ids.is_empty() {
+    if !thread_ids.is_empty() || !exclusive_email_ids.is_empty() || !sales_draft_ids.is_empty() {
         sqlx::query(
             "UPDATE message_drafts
                 SET subject = '[erased]', body_text = '', body_html = NULL,
                     variables = '{}'::jsonb, status = 'discarded',
                     version = version + 1, updated_at = now()
               WHERE workspace_id = $1
-                AND (thread_id = ANY($2) OR to_email_address_id = ANY($3))",
+                AND (thread_id = ANY($2) OR to_email_address_id = ANY($3)
+                     OR id = ANY($4))",
         )
         .bind(request.workspace_id)
         .bind(&thread_ids)
         .bind(&exclusive_email_ids)
+        .bind(&sales_draft_ids)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+    }
+
+    // The target has two composite contact_email foreign keys that share
+    // columns. Clear the personal pointers directly so overlapping
+    // ON DELETE SET NULL actions cannot leave the address pointer populated.
+    if !sales_target_ids.is_empty() {
+        sqlx::query(
+            "UPDATE sales_campaign_targets
+                SET contact_id = NULL, contact_email_id = NULL, email_address_id = NULL,
+                    version = version + 1, updated_at = now()
+              WHERE workspace_id = $1 AND id = ANY($2)",
+        )
+        .bind(request.workspace_id)
+        .bind(&sales_target_ids)
         .execute(tx.conn())
         .await
         .map_err(map_sqlx)?;

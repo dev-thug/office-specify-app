@@ -1,19 +1,26 @@
-import { CampaignBuilder, type BuilderMode } from "@/features/campaigns";
+import {
+  CampaignBuilder,
+  type BuilderMode,
+} from "@/features/campaigns/campaign-builder";
+import { PersonalizedCampaignCreate } from "@/features/campaigns/personalized-campaign-create";
 
-/**
- * §7.5 캠페인 6단계 작성 화면.
- * ?source=<id>&mode=revision|clone — 기존 캠페인의 새 revision 또는 복제.
- */
 export default async function NewCampaignPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const sp = await searchParams;
-  const source = typeof sp.source === "string" ? sp.source : undefined;
+  const params = await searchParams;
+  const source = typeof params.source === "string" && params.source.trim()
+    ? params.source
+    : undefined;
   const mode: BuilderMode =
-    source && (sp.mode === "revision" || sp.mode === "clone")
-      ? sp.mode
+    source && (params.mode === "revision" || params.mode === "clone")
+      ? params.mode
       : "create";
-  return <CampaignBuilder mode={mode} sourceCampaignId={source} />;
+
+  return mode === "create" ? (
+    <PersonalizedCampaignCreate />
+  ) : (
+    <CampaignBuilder mode={mode} sourceCampaignId={source} />
+  );
 }

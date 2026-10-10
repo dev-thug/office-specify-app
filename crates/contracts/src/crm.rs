@@ -499,8 +499,9 @@ pub struct TaskResponse {
 // -------------------------------------------------------------- activities
 
 /// One `activities` timeline row (B.2 `/companies/{id}/activities`).
-/// `summary` carries non-sensitive labels only — mail-derived rows never
-/// expose subject/body here (§5.6, integration-contracts §activities).
+/// `summary` carries non-sensitive labels, plus the current `body` for a
+/// matching CRM note activity. Mail-derived rows never expose subject/body
+/// here (§5.6, integration-contracts §activities).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ActivityResponse {
     pub id: Uuid,

@@ -76,6 +76,7 @@
     "title": "Research evidence",
     "description": "Review source, observation time, and review status of AI-completed fields. Unsourced claims are unverified.",
     "pendingOnly": "Pending only",
+    "reviewFilter": "Evidence review filter",
     "all": "All"
   }
 }

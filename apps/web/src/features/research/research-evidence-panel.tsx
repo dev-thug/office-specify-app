@@ -42,11 +42,17 @@ import { EvidenceList } from "./evidence-list";
  * AI 가 보완한 필드의 출처·관측 시각·검토 상태를 보여주고 사람의
  * verified/rejected 판단을 기록한다. 이 판단은 발송 근거를 만들지 않는다.
  */
-export function ResearchEvidencePanel({ companyId }: { companyId: string }) {
+export function ResearchEvidencePanel({
+  companyId,
+  initialReviewStatus = "pending",
+}: {
+  companyId: string;
+  initialReviewStatus?: "pending" | "all";
+}) {
   const t = useTranslations("research.panel");
   const tEvidence = useTranslations("research.evidence");
   const tTable = useTranslations("common.table");
-  const [pendingOnly, setPendingOnly] = useState(true);
+  const [pendingOnly, setPendingOnly] = useState(initialReviewStatus === "pending");
   const [reviewTarget, setReviewTarget] = useState<{
     evidence: ResearchEvidence;
     verdict: EvidenceReviewVerdict;
@@ -74,7 +80,7 @@ export function ResearchEvidencePanel({ companyId }: { companyId: string }) {
           value={pendingOnly ? "pending" : "all"}
           onValueChange={(v) => setPendingOnly(v === "pending")}
         >
-          <SelectTrigger size="sm" aria-label={t("pendingOnly")} className="w-36">
+          <SelectTrigger size="sm" aria-label={t("reviewFilter")} className="w-36">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

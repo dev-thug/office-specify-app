@@ -1,5 +1,5 @@
-import { CampaignList } from "@/features/campaigns";
+import { PersonalizedCampaignList } from "@/features/campaigns/personalized-campaign-list";
 
 export default function CampaignsPage() {
-  return <CampaignList />;
+  return <PersonalizedCampaignList />;
 }

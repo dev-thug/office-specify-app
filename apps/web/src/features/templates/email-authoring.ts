@@ -15,6 +15,283 @@ export function safeEmailLink(value: string): boolean {
   return /^(https?:\/\/|mailto:)/i.test(href) || /^\{\{\s*(meeting\.booking_url|compliance\.unsubscribe_url)\s*\}\}$/.test(href);
 }
 
+const EMAIL_STYLE_PROPERTIES = new Set([
+  "color",
+  "background-color",
+  "font-size",
+  "font-weight",
+  "font-family",
+  "text-align",
+  "line-height",
+  "padding",
+  "margin",
+  "border",
+  "border-radius",
+  "width",
+  "max-width",
+  "text-decoration",
+  "display",
+  "border-collapse",
+  "border-spacing",
+  "vertical-align",
+  "table-layout",
+]);
+const EMAIL_FONT_FAMILIES = new Set([
+  "arial", "apple sd gothic neo", "courier new", "georgia", "helvetica", "lato",
+  "malgun gothic", "monospace", "noto sans", "noto sans kr", "open sans",
+  "roboto", "sans-serif", "serif", "segoe ui", "system-ui", "tahoma",
+  "times new roman", "trebuchet ms", "verdana",
+]);
+const EMAIL_COLOR_NAMES = new Set([
+  "aqua", "black", "blue", "brown", "fuchsia", "gray", "green", "lime",
+  "maroon", "navy", "olive", "orange", "purple", "rebeccapurple", "red",
+  "silver", "teal", "transparent", "white", "yellow",
+]);
+
+/** Port of the backend email CSS subset; unknown or ambiguous declarations are removed. */
+function sanitizeEmailInlineStyle(style: string): string | null {
+  if (style.trim().length === 0) return "";
+  if (
+    /[^\x00-\x7f]/.test(style) ||
+    /[\u0000-\u001f\u007f\\/*@<>!]/.test(style)
+  ) {
+    return null;
+  }
+
+  const rawDeclarations = style.split(";");
+  const declarations: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < rawDeclarations.length; index += 1) {
+    const declaration = rawDeclarations[index]!.trim();
+    if (declaration.length === 0) {
+      if (index === rawDeclarations.length - 1 && style.trimEnd().endsWith(";")) {
+        continue;
+      }
+      return null;
+    }
+    const separator = declaration.indexOf(":");
+    if (separator < 0) return null;
+    const property = declaration.slice(0, separator).trim();
+    const value = declaration.slice(separator + 1).trim();
+    if (
+      !EMAIL_STYLE_PROPERTIES.has(property) ||
+      seen.has(property) ||
+      !safeEmailStyleValue(property, value)
+    ) {
+      return null;
+    }
+    seen.add(property);
+    declarations.push(property + ":" + value);
+  }
+  return declarations.join(";");
+}
+
+function safeEmailStyleValue(property: string, value: string): boolean {
+  const lower = value.toLowerCase();
+  switch (property) {
+    case "color":
+      return safeEmailTextColor(lower);
+    case "background-color":
+      return safeEmailColor(lower);
+    case "font-size": {
+      const unitStart = lower.search(/[a-z%]/);
+      const split = unitStart < 0 ? lower.length : unitStart;
+      const size = parseEmailDecimal(lower.slice(0, split));
+      const unit = lower.slice(split);
+      if (size === null) return false;
+      if (unit === "px") return size >= 8 && size <= 72;
+      if (unit === "pt") return size >= 6 && size <= 54;
+      return false;
+    }
+    case "font-weight": {
+      if (["normal", "bold", "bolder", "lighter"].includes(lower)) return true;
+      if (!/^\d+$/.test(lower)) return false;
+      const weight = Number(lower);
+      return Number.isSafeInteger(weight) && weight >= 100 && weight <= 900 && weight % 100 === 0;
+    }
+    case "font-family":
+      return lower.split(",").every((rawFamily) => {
+        let family = rawFamily.trim();
+        if (family.startsWith("'") && family.endsWith("'")) {
+          family = family.slice(1, -1);
+        } else if (family.startsWith('"') && family.endsWith('"')) {
+          family = family.slice(1, -1);
+        }
+        family = family.split(/\s+/).filter(Boolean).join(" ");
+        return EMAIL_FONT_FAMILIES.has(family);
+      });
+    case "text-align":
+      return ["left", "right", "center", "justify", "start", "end"].includes(lower);
+    case "line-height": {
+      if (lower === "0") return false;
+      if (lower === "normal") return true;
+      const multiplier = parseEmailDecimal(lower);
+      return (
+        (multiplier !== null && multiplier >= 0.75 && multiplier <= 3.5) ||
+        safeEmailLength(lower, 64, 300, 8)
+      );
+    }
+    case "padding":
+      return safeEmailBoxLengths(lower, false, 64, 100, 8);
+    case "margin":
+      return safeEmailBoxLengths(lower, true, 64, 100, 8);
+    case "border":
+      return safeEmailBorder(lower);
+    case "border-radius":
+      return safeEmailBoxLengths(lower, false, 32, 50, 8);
+    case "width":
+    case "max-width":
+      return lower !== "0" && safeEmailLength(lower, 1200, 100, 100);
+    case "text-decoration":
+      return lower === "none" || lower === "underline";
+    case "display":
+      return ["inline", "inline-block", "block"].includes(lower);
+    case "border-collapse":
+      return lower === "collapse" || lower === "separate";
+    case "border-spacing":
+      return safeEmailBorderSpacing(lower);
+    case "vertical-align":
+      return ["baseline", "top", "middle", "bottom", "text-top", "text-bottom"].includes(lower);
+    case "table-layout":
+      return lower === "auto" || lower === "fixed";
+    default:
+      return false;
+  }
+}
+
+function parseEmailDecimal(value: string): number | null {
+  if (value.length === 0 || value.startsWith("+") || value.startsWith("-")) return null;
+  let decimalPoints = 0;
+  let digits = 0;
+  for (const character of value) {
+    if (character >= "0" && character <= "9") digits += 1;
+    else if (character === ".") decimalPoints += 1;
+    else return null;
+  }
+  if (digits === 0 || decimalPoints > 1) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function safeEmailLength(
+  value: string,
+  maxPx: number,
+  maxPercent: number,
+  maxEm: number
+): boolean {
+  if (value === "0") return true;
+  const unitStart = value.search(/[a-z%]/);
+  const split = unitStart < 0 ? value.length : unitStart;
+  const number = parseEmailDecimal(value.slice(0, split));
+  if (number === null || number <= 0) return false;
+  const unit = value.slice(split);
+  if (unit === "px") return number <= maxPx;
+  if (unit === "pt") return number <= maxPx * 0.75;
+  if (unit === "em" || unit === "rem") return number <= maxEm;
+  if (unit === "%") return maxPercent > 0 && number <= maxPercent;
+  return false;
+}
+
+function safeEmailBoxLengths(
+  value: string,
+  allowAuto: boolean,
+  maxPx: number,
+  maxPercent: number,
+  maxEm: number
+): boolean {
+  const values = value.split(/\s+/).filter(Boolean);
+  return (
+    values.length >= 1 &&
+    values.length <= 4 &&
+    values.every((part) => (part === "auto" && allowAuto) || safeEmailLength(part, maxPx, maxPercent, maxEm))
+  );
+}
+
+function safeEmailBorderSpacing(value: string): boolean {
+  const values = value.split(/\s+/).filter(Boolean);
+  return (
+    values.length >= 1 &&
+    values.length <= 2 &&
+    values.every((part) => safeEmailLength(part, 32, 0, 8))
+  );
+}
+
+function safeEmailBorder(value: string): boolean {
+  let width = false;
+  let style = false;
+  let color = false;
+  for (const part of value.split(/\s+/).filter(Boolean)) {
+    if (!width && safeEmailLength(part, 8, 0, 1)) width = true;
+    else if (!style && ["none", "solid", "dashed", "dotted", "double"].includes(part)) style = true;
+    else if (!color && safeEmailSimpleColor(part)) color = true;
+    else return false;
+  }
+  return width || style || color;
+}
+
+function safeEmailColor(value: string): boolean {
+  if (safeEmailSimpleColor(value)) return true;
+  const colorFunction = /^(rgb|rgba)\((.*)\)$/.exec(value);
+  if (!colorFunction) return false;
+  const parts = colorFunction[2]!.split(",").map((part) => part.trim());
+  if (colorFunction[1] === "rgb") {
+    return parts.length === 3 && parts.every(safeEmailRgbChannel);
+  }
+  return parts.length === 4 &&
+    parts.slice(0, 3).every(safeEmailRgbChannel) &&
+    safeEmailAlpha(parts[3]!);
+}
+
+function safeEmailTextColor(value: string): boolean {
+  if (value === "transparent") return false;
+  if (value.startsWith("#")) {
+    const hex = value.slice(1);
+    if (!/^[0-9a-f]+$/.test(hex)) return false;
+    if (hex.length === 3 || hex.length === 6) return true;
+    if (hex.length === 4) return hex[3]! >= "c";
+    if (hex.length === 8) return Number.parseInt(hex.slice(6), 16) >= 0xcc;
+    return false;
+  }
+  const rgba = /^rgba\((.*)\)$/.exec(value);
+  if (rgba) {
+    const parts = rgba[1]!.split(",").map((part) => part.trim());
+    if (parts.length !== 4 || !parts.slice(0, 3).every(safeEmailRgbChannel)) return false;
+    const alpha = parts[3]!;
+    if (alpha.endsWith("%")) {
+      const percent = parseEmailDecimal(alpha.slice(0, -1));
+      return percent !== null && percent >= 80 && percent <= 100;
+    }
+    const number = parseEmailDecimal(alpha);
+    return number !== null && number >= 0.8 && number <= 1;
+  }
+  return safeEmailColor(value);
+}
+
+function safeEmailSimpleColor(value: string): boolean {
+  if (EMAIL_COLOR_NAMES.has(value)) return true;
+  if (!value.startsWith("#")) return false;
+  const hex = value.slice(1);
+  return [3, 4, 6, 8].includes(hex.length) && /^[0-9a-f]+$/.test(hex);
+}
+
+function safeEmailRgbChannel(value: string): boolean {
+  if (value.endsWith("%")) {
+    const percent = parseEmailDecimal(value.slice(0, -1));
+    return percent !== null && percent >= 0 && percent <= 100;
+  }
+  const channel = parseEmailDecimal(value);
+  return channel !== null && channel >= 0 && channel <= 255;
+}
+
+function safeEmailAlpha(value: string): boolean {
+  if (value.endsWith("%")) {
+    const percent = parseEmailDecimal(value.slice(0, -1));
+    return percent !== null && percent >= 0 && percent <= 100;
+  }
+  const alpha = parseEmailDecimal(value);
+  return alpha !== null && alpha >= 0 && alpha <= 1;
+}
+
 /** An inert template keeps untrusted images/scripts out of the live document. */
 export function cleanEmailHtml(raw: string): { html: string; removed: boolean } {
   const source = document.createElement("template");
@@ -41,6 +318,13 @@ export function cleanEmailHtml(raw: string): { html: string; removed: boolean } 
         element.setAttribute("href", value.trim());
       } else if (tag === "a" && name === "title") {
         element.setAttribute("title", value);
+      } else if (name === "style") {
+        const sanitizedStyle = sanitizeEmailInlineStyle(value);
+        if (sanitizedStyle === null) {
+          removed = true;
+        } else if (sanitizedStyle) {
+          element.setAttribute("style", sanitizedStyle);
+        }
       } else if (tag === "table" && name === "role" && value === "presentation") {
         element.setAttribute("role", value);
       } else if (

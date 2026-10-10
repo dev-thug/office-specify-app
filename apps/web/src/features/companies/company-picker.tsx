@@ -67,6 +67,7 @@ export function CompanyPicker({
           type="button"
           variant="outline"
           role="combobox"
+          aria-label={placeholder}
           aria-expanded={open}
           disabled={disabled}
           className="w-full justify-between font-normal"

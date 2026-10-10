@@ -1844,6 +1844,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sales-campaigns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_sales_campaigns"];
+        put?: never;
+        post: operations["create_sales_campaign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-campaigns/sender": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_sales_campaign_sender"];
+        put: operations["set_sales_campaign_sender"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-campaigns/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_sales_campaign"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-campaigns/{id}/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["add_sales_campaign_target"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-campaigns/{id}/targets/{target_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["update_sales_campaign_target_stage"];
+        trace?: never;
+    };
+    "/api/v1/sales-campaigns/{id}/targets/{target_id}/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["create_sales_campaign_target_draft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sales-campaigns/{id}/targets/{target_id}/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["queue_sales_campaign_target"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/smtp-connections": {
         parameters: {
             query?: never;
@@ -2236,8 +2348,9 @@ export interface components {
         };
         /**
          * @description One `activities` timeline row (B.2 `/companies/{id}/activities`).
-         *     `summary` carries non-sensitive labels only — mail-derived rows never
-         *     expose subject/body here (§5.6, integration-contracts §activities).
+         *     `summary` carries non-sensitive labels, plus the current `body` for a
+         *     matching CRM note activity. Mail-derived rows never expose subject/body
+         *     here (§5.6, integration-contracts §activities).
          */
         ActivityResponse: {
             /** Format: uuid */
@@ -2277,6 +2390,14 @@ export interface components {
             linked_contact_ids: string[];
             marketing_eligibility: components["schemas"]["MarketingEligibility"];
             verification_status: components["schemas"]["VerificationStatus"];
+        };
+        AddSalesCampaignTargetRequest: {
+            /** Format: uuid */
+            company_id: string;
+            /** Format: uuid */
+            contact_id: string;
+            /** Format: uuid */
+            email_address_id: string;
         };
         /**
          * @description `email_addresses.kind` — mirrors the DDL CHECK.
@@ -3305,6 +3426,27 @@ export interface components {
             /** Format: int32 */
             revision_no: number;
             status: string;
+        };
+        CreateSalesCampaignDraftRequest: {
+            body_html?: string | null;
+            body_text: string;
+            /**
+             * @description Required to make a new draft after provider acceptance a deliberate
+             *     follow-up instead of a silent retry.
+             */
+            explicit_follow_up?: boolean;
+            subject: string;
+            /** Format: uuid */
+            template_version_id?: string | null;
+            variables?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        CreateSalesCampaignRequest: {
+            /** Format: uuid */
+            meeting_type_id?: string | null;
+            name: string;
+            objective?: string | null;
         };
         /**
          * @description `POST /smtp-connections` — credential is accepted on write only.
@@ -4476,6 +4618,16 @@ export interface components {
             purpose: string;
             /** Format: uuid */
             reply_to_message_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Present when the draft belongs to a personalized sales campaign.
+             */
+            sales_campaign_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Present when the draft belongs to a personalized sales target.
+             */
+            sales_target_id?: string | null;
             status: string;
             subject: string;
             /** Format: uuid */
@@ -4905,6 +5057,18 @@ export interface components {
              */
             can_send: boolean;
         };
+        QueueSalesCampaignTargetRequest: {
+            expected_payload_hash: string;
+            /** Format: int64 */
+            expected_target_version: number;
+            /** Format: uuid */
+            outbound_message_id: string;
+        };
+        QueueSalesCampaignTargetResponse: {
+            /** Format: date-time */
+            batch_at: string;
+            submission: components["schemas"]["SubmitOutboundResponse"];
+        };
         /** @description 비율 KPI: 분모가 0이면 `value`는 null(UI01의 N/A 표시). 분자·분모는 항상 표시. */
         RatioKpi: {
             /** Format: int64 */
@@ -5063,6 +5227,120 @@ export interface components {
         };
         /** @enum {string} */
         Role: "admin" | "manager" | "member" | "agent" | "system";
+        SalesCampaignDraftSummary: {
+            /** Format: uuid */
+            draft_id: string;
+            /** Format: uuid */
+            outbound_message_id?: string | null;
+            status: string;
+            subject: string;
+            /** Format: int64 */
+            version: number;
+        };
+        SalesCampaignOutboundSummary: {
+            /** Format: date-time */
+            accepted_at?: string | null;
+            /** Format: date-time */
+            approval_expires_at?: string | null;
+            approval_status?: string | null;
+            /** Format: date-time */
+            approved_at?: string | null;
+            /** Format: int64 */
+            click_count: number;
+            failure_code?: string | null;
+            /** Format: int64 */
+            known_reply_count: number;
+            /** Format: date-time */
+            last_reply_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Persisted ten-minute batch boundary. Kept on the card after reload.
+             */
+            not_before?: string | null;
+            /** Format: int64 */
+            open_count: number;
+            /** Format: uuid */
+            outbound_message_id: string;
+            payload_hash: string;
+            provider_accepted: boolean;
+            status: string;
+        };
+        SalesCampaignResponse: {
+            campaign: components["schemas"]["SalesCampaignSummary"];
+            targets: components["schemas"]["SalesCampaignTargetResponse"][];
+        };
+        SalesCampaignSenderResponse: {
+            sender?: null | components["schemas"]["SalesCampaignSenderSummary"];
+        };
+        SalesCampaignSenderSummary: {
+            /** Format: uuid */
+            delivery_channel_id: string;
+            from_address: string;
+            from_name: string;
+            /** Format: uuid */
+            mail_account_id: string;
+            mailbox_name: string;
+            profile_name: string;
+            ready: boolean;
+            reply_to?: string | null;
+            /** Format: uuid */
+            sender_identity_id: string;
+            /** Format: uuid */
+            smtp_profile_id: string;
+            status: string;
+        };
+        SalesCampaignSummary: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            delivery_channel_id: string;
+            from_address: string;
+            from_name: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            mail_account_id: string;
+            /** Format: uuid */
+            meeting_type_id?: string | null;
+            name: string;
+            objective?: string | null;
+            reply_to?: string | null;
+            /** Format: uuid */
+            sender_identity_id: string;
+            sender_ready: boolean;
+            sender_status: string;
+            /** Format: uuid */
+            smtp_profile_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+        };
+        SalesCampaignTargetResponse: {
+            /** Format: uuid */
+            company_id?: string | null;
+            company_name?: string | null;
+            /** Format: uuid */
+            contact_id?: string | null;
+            contact_name?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            current_draft?: null | components["schemas"]["SalesCampaignDraftSummary"];
+            email_address?: string | null;
+            /** Format: uuid */
+            email_address_id?: string | null;
+            /** Format: uuid */
+            id: string;
+            outbound?: null | components["schemas"]["SalesCampaignOutboundSummary"];
+            /** @description Effective board column. Later delivery columns are server-derived. */
+            stage: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version: number;
+            /** @description Last editable workflow column, retained when a send is queued. */
+            workflow_stage: string;
+        };
         /**
          * @description Sending window/rate rules stored on the revision (B.3.6 `schedule_rules`).
          *     Weekdays are ISO-8601 numbers (1 = Monday … 7 = Sunday).
@@ -5100,6 +5378,10 @@ export interface components {
         SetPrimaryEmailRequest: {
             /** Format: uuid */
             email_address_id: string;
+        };
+        SetSalesCampaignSenderRequest: {
+            /** Format: uuid */
+            smtp_profile_id: string;
         };
         SlotResponse: {
             /** Format: date-time */
@@ -5390,6 +5672,15 @@ export interface components {
             minimum_notice_minutes?: number | null;
             name?: string | null;
             status?: string | null;
+        };
+        UpdateSalesCampaignTargetRequest: {
+            /** Format: int64 */
+            expected_target_version: number;
+            /**
+             * @description Only `research`, `draft`, and `review` are writable. Queued,
+             *     accepted, and attention are derived from approval and outbound state.
+             */
+            stage: string;
         };
         UploadRequestResponse: {
             /** Format: date-time */
@@ -13187,6 +13478,551 @@ export interface operations {
             };
             /** @description Already reviewed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_sales_campaigns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque cursor returned in the previous list response page. */
+                cursor: string | null;
+                /** @description Page size (default 50, maximum 200). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Readable personalized sales campaigns */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignSummary"][];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Missing scope */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_sales_campaign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSalesCampaignRequest"];
+            };
+        };
+        responses: {
+            /** @description Personalized sales campaign created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignSummary"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Mailbox/scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency or sender conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_sales_campaign_sender: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Workspace default SMTP sender or null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignSenderResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    set_sales_campaign_sender: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSalesCampaignSenderRequest"];
+            };
+        };
+        responses: {
+            /** @description Workspace default SMTP sender updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignSenderResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Admin/mailbox access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP profile is not eligible */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_sales_campaign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales campaign id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Campaign with all target cards */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Mailbox/scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Campaign not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    add_sales_campaign_target: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales campaign id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddSalesCampaignTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Verified CRM target added */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignTargetResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Mailbox/CRM scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency or duplicate-recipient conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description CRM binding or target limit invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    update_sales_campaign_target_stage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales campaign id */
+                id: string;
+                /** @description Sales campaign target id */
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSalesCampaignTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Editable stage updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SalesCampaignTargetResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Mailbox/scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency or derived-stage conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Target version changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Stage is invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_sales_campaign_target_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales campaign id */
+                id: string;
+                /** @description Sales campaign target id */
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSalesCampaignDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Company-specific mailbox-visible marketing draft created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["MessageDraftResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Mailbox/scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency/current-send conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Draft content or CRM binding invalid */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    queue_sales_campaign_target: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Sales campaign id */
+                id: string;
+                /** @description Sales campaign target id */
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueSalesCampaignTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Approved outbound message scheduled for the next ten-minute batch */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["QueueSalesCampaignTargetResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Human approval/send or mailbox scope required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency/current-draft/approval conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Target version changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Outbound binding or payload hash invalid */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

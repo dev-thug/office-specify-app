@@ -597,7 +597,7 @@ export function CampaignBuilder({
     return (
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
         <Link
-          href={mode === "revision" ? `/app/campaigns/${sourceCampaignId}` : "/app/campaigns"}
+          href={mode === "revision" ? `/app/campaigns/bulk/${sourceCampaignId}` : "/app/campaigns/bulk"}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeftIcon className="size-4" aria-hidden />
@@ -615,7 +615,7 @@ export function CampaignBuilder({
           </AlertDescription>
         </Alert>
         <Link
-          href="/app/campaigns/new"
+          href="/app/campaigns/bulk/new"
           className="w-fit text-sm font-medium underline underline-offset-4"
         >
           {t("startNewCampaign")}
@@ -633,8 +633,8 @@ export function CampaignBuilder({
         <Link
           href={
             mode === "revision" && sourceCampaignId
-              ? `/app/campaigns/${sourceCampaignId}`
-              : "/app/campaigns"
+              ? `/app/campaigns/bulk/${sourceCampaignId}`
+              : "/app/campaigns/bulk"
           }
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
@@ -1345,7 +1345,7 @@ export function CampaignBuilder({
                   </Alert>
                   <div className="flex gap-2">
                     <Button asChild size="sm">
-                      <Link href={`/app/campaigns/${created?.campaignId}`}>
+                      <Link href={`/app/campaigns/bulk/${created?.campaignId}`}>
                         {t("goToDetail")}
                       </Link>
                     </Button>

@@ -76,6 +76,17 @@
     "disableDescription": "{name} will stop being available for campaign delivery.",
     "disabling": "Disabling…",
     "confirmDisable": "Confirm disable",
+  "campaignSender": {
+    "title": "Default sender for sales campaigns",
+    "description": "New sales campaigns use this active marketing profile. Existing campaigns keep their bound sender.",
+    "unset": "No ready default marketing sender is set. Choose an active marketing profile below.",
+    "unready": "The default sender {name} is not ready. Choose another active marketing profile below.",
+    "loadFailed": "The default sender could not be loaded.",
+    "saveFailed": "The default sender could not be changed. Refresh and try again.",
+    "current": "Campaign default",
+    "setDefault": "Set as campaign sender",
+    "saving": "Saving…"
+  },
   "inbox": {
     "title": "SMTP inbox sync",
     "credentialNotice": "Inbox sync reuses the encrypted SMTP credential stored for this connection. No separate IMAP password is shown or requested.",

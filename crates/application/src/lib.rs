@@ -18,6 +18,7 @@ pub mod marketing;
 pub mod operations;
 pub mod org;
 pub mod research;
+pub mod sales_campaigns;
 pub mod sending;
 pub mod smtp;
 pub mod smtp_inbox;

@@ -170,7 +170,7 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
           description={t("notFoundDescription")}
           action={
             <Button asChild variant="outline" size="sm">
-              <Link href="/app/campaigns">{t("back")}</Link>
+              <Link href="/app/campaigns/bulk">{t("back")}</Link>
             </Button>
           }
         />
@@ -184,7 +184,7 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-6">
       <div>
         <Link
-          href="/app/campaigns"
+          href="/app/campaigns/bulk"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeftIcon className="size-4" aria-hidden />
@@ -200,7 +200,7 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
             {actions.editDraft.visible || actions.newRevision.visible ? (
               <Button asChild size="sm" variant="outline">
                 <Link
-                  href={`/app/campaigns/new?source=${campaign.id}&mode=revision`}
+                  href={`/app/campaigns/bulk/new?source=${campaign.id}&mode=revision`}
                 >
                   {actions.editDraft.visible ? t("editDraft") : t("newRevision")}
                 </Link>
@@ -208,7 +208,7 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
             ) : null}
             {actions.clone.visible ? (
               <Button asChild size="sm" variant="outline">
-                <Link href={`/app/campaigns/new?source=${campaign.id}&mode=clone`}>
+                <Link href={`/app/campaigns/bulk/new?source=${campaign.id}&mode=clone`}>
                   {t("clone")}
                 </Link>
               </Button>

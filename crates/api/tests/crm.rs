@@ -6,7 +6,9 @@
 use api::AppState;
 use api::testing::TestApp;
 use infrastructure::config::Config;
-use infrastructure::db::{Db, ROLE_API};
+use infrastructure::db::{Db, ROLE_API, ROLE_RETENTION};
+use infrastructure::retention::{CacheInvalidator, ErasureRequest, erase_contact};
+use infrastructure::storage::ObjectStore;
 use infrastructure::testing::{TEST_PASSWORD, TestWorld, ctx_for_credential, seed_workspace};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -620,6 +622,314 @@ async fn notes_target_and_mailbox_acl() {
     // (Thread-linked note ACL is covered in worker/tests/crm_jobs.rs —
     //  creating an email_threads fixture needs sqlx, which the api crate
     //  does not dev-depend on.)
+}
+
+struct NoopErasureObjectStore;
+
+#[async_trait::async_trait]
+impl ObjectStore for NoopErasureObjectStore {
+    async fn put(&self, _key: &str, _plaintext: &[u8]) -> Result<(), contracts::AppError> {
+        Ok(())
+    }
+
+    async fn get(&self, _key: &str) -> Result<Vec<u8>, contracts::AppError> {
+        Err(contracts::AppError::not_found("object not found"))
+    }
+
+    async fn delete(&self, _key: &str) -> Result<(), contracts::AppError> {
+        Ok(())
+    }
+
+    fn sign_access(&self, key: &str, _ttl: std::time::Duration) -> String {
+        key.to_string()
+    }
+
+    fn verify_access(&self, key: &str, token: &str) -> bool {
+        key == token
+    }
+}
+
+struct NoopErasureCache;
+
+#[async_trait::async_trait]
+impl CacheInvalidator for NoopErasureCache {
+    async fn invalidate_contact(
+        &self,
+        _workspace_id: Uuid,
+        _contact_id: Uuid,
+        _email_address_ids: &[Uuid],
+    ) -> Result<(), contracts::AppError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn company_activity_note_body_is_current_permission_filtered_and_removed_with_note() {
+    let database_url = match std::env::var("DATABASE_URL") {
+        Ok(url) if !url.is_empty() => url,
+        _ => {
+            eprintln!("DATABASE_URL not set — skipping activity note-body test");
+            return;
+        }
+    };
+    let database_name = database_url
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .split('?')
+        .next()
+        .unwrap_or_default();
+    assert_eq!(
+        database_name, "outreach_sales_kanban_api",
+        "activity note-body regression must use the dedicated API test database"
+    );
+    let Some((db, world)) = setup().await else {
+        return;
+    };
+    let app = app_for(&db, &world).await;
+    let csrf = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let company = create_company(&app, &csrf, "Note projection company", None).await;
+    let company_id = Uuid::parse_str(company["id"].as_str().unwrap()).unwrap();
+    let contact = TestApp::data(
+        post(
+            &app,
+            "/api/v1/contacts",
+            json!({"company_id":company_id,"name":"Note projection contact"}),
+            &csrf,
+            None,
+        )
+        .await,
+    )
+    .await;
+    let contact_id = Uuid::parse_str(contact["id"].as_str().unwrap()).unwrap();
+
+    let first_note = TestApp::data(
+        post(
+            &app,
+            "/api/v1/notes",
+            json!({"contact_id":contact_id,"body":"Original research note body"}),
+            &csrf,
+            None,
+        )
+        .await,
+    )
+    .await;
+    let first_note_id = Uuid::parse_str(first_note["id"].as_str().unwrap()).unwrap();
+    let current_body = "Updated current research note body";
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE notes SET body = $3, version = version + 1, updated_at = now()
+          WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(first_note_id)
+    .bind(current_body)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let erased_body = "Contact research body to erase";
+    let second_note = TestApp::data(
+        post(
+            &app,
+            "/api/v1/notes",
+            json!({"contact_id":contact_id,"body":erased_body}),
+            &csrf,
+            None,
+        )
+        .await,
+    )
+    .await;
+    let second_note_id = Uuid::parse_str(second_note["id"].as_str().unwrap()).unwrap();
+
+    // A mailbox-derived activity can carry an arbitrary note_id in its
+    // summary; it must neither inherit CRM note content nor bypass can_read.
+    let mail_activity_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO activities
+            (workspace_id,company_id,contact_id,mail_account_id,kind,source_event_id,
+             occurred_at,summary)
+         VALUES ($1,NULL,$2,$3,'mail.received',$4,now(),$5) RETURNING id",
+    )
+    .bind(world.workspace_id)
+    .bind(contact_id)
+    .bind(world.mail_account_id)
+    .bind(Uuid::new_v4())
+    .bind(json!({"note_id":second_note_id,"label":"mail activity"}))
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE mail_account_grants
+            SET can_read = false, can_compose = false, can_send = false,
+                can_approve = false, can_assign = false, version = version + 1
+          WHERE workspace_id = $1 AND mail_account_id = $2 AND principal_id = $3",
+    )
+    .bind(world.workspace_id)
+    .bind(world.mail_account_id)
+    .bind(world.agent.principal_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let activity_path = format!("/api/v1/companies/{company_id}/activities");
+    let rows = TestApp::data(app.get(&activity_path).await).await;
+    let first_activity = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["kind"] == "note.created" && row["summary"]["note_id"] == first_note_id.to_string()
+        })
+        .unwrap();
+    assert_eq!(first_activity["summary"]["body"], current_body);
+    let second_activity = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["kind"] == "note.created" && row["summary"]["note_id"] == second_note_id.to_string()
+        })
+        .unwrap();
+    assert_eq!(second_activity["summary"]["body"], erased_body);
+    let mail_activity = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == mail_activity_id.to_string())
+        .unwrap();
+    assert!(mail_activity["summary"].get("body").is_none());
+
+    let agent_token = {
+        let mut tx = db.begin(world.workspace_id).await.unwrap();
+        let (_, token) = infrastructure::repo::auth::create_service_credential(
+            &mut tx,
+            world.agent.principal_id,
+            "activity note read",
+            &["crm.read".to_string()],
+            chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        token
+    };
+    let agent_rows = app
+        .client
+        .get(app.url(&activity_path))
+        .bearer_auth(&agent_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(agent_rows.status(), StatusCode::OK);
+    let agent_rows = TestApp::data(agent_rows).await;
+    assert!(agent_rows.as_array().unwrap().iter().any(|row| {
+        row["kind"] == "note.created"
+            && row["summary"]["note_id"] == first_note_id.to_string()
+            && row["summary"]["body"] == current_body
+    }));
+    assert!(
+        !agent_rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == mail_activity_id.to_string())
+    );
+
+    let no_crm_token = {
+        let mut tx = db.begin(world.workspace_id).await.unwrap();
+        let (_, token) = infrastructure::repo::auth::create_service_credential(
+            &mut tx,
+            world.agent.principal_id,
+            "activity note no crm read",
+            &[],
+            chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        token
+    };
+    let denied = app
+        .client
+        .get(app.url(&activity_path))
+        .bearer_auth(&no_crm_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let denied_body = denied.text().await.unwrap();
+    assert!(!denied_body.contains(current_body));
+    assert!(!denied_body.contains(erased_body));
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query("DELETE FROM notes WHERE workspace_id = $1 AND id = $2")
+        .bind(world.workspace_id)
+        .bind(first_note_id)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let after_delete = TestApp::data(app.get(&activity_path).await).await;
+    let deleted_activity = after_delete
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["kind"] == "note.created" && row["summary"]["note_id"] == first_note_id.to_string()
+        })
+        .unwrap();
+    assert!(deleted_activity["summary"].get("body").is_none());
+
+    let owner_db = Db::connect(&database_url, None).await.unwrap();
+    let mut tx = owner_db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE activities
+            SET summary = summary || jsonb_build_object('body', $3)
+          WHERE workspace_id = $1 AND kind = 'note.created' AND source_event_id = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(first_note_id)
+    .bind("stale note body that must stay hidden")
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let after_stale_summary = TestApp::data(app.get(&activity_path).await).await;
+    let stale_activity = after_stale_summary
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["kind"] == "note.created" && row["summary"]["note_id"] == first_note_id.to_string()
+        })
+        .unwrap();
+    assert!(stale_activity["summary"].get("body").is_none());
+
+    let retention_db = Db::connect(&database_url, Some(ROLE_RETENTION))
+        .await
+        .unwrap();
+    erase_contact(
+        &retention_db,
+        ErasureRequest {
+            workspace_id: world.workspace_id,
+            contact_id,
+            actor_principal_id: Some(world.admin.principal_id),
+            request_id: "crm-note-body-erasure-test".into(),
+            trace_id: None,
+        },
+        &NoopErasureObjectStore,
+        &NoopErasureCache,
+    )
+    .await
+    .unwrap();
+    let after_erasure = TestApp::data(app.get(&activity_path).await).await;
+    assert!(!after_erasure.as_array().unwrap().iter().any(|row| {
+        row["summary"]["body"] == erased_body
+            || row["summary"]["note_id"] == second_note_id.to_string()
+    }));
 }
 
 /// MCP CRM notes are a scoped internal-memo action; the agent may add a note

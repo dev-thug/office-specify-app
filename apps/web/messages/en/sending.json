@@ -40,6 +40,7 @@
     "freeze": "Freeze exact message",
     "freezing": "Freezing message…",
     "freezeBlocked": "Only a draft message can be frozen.",
+    "campaignEditsUnsaved": "Save draft changes before freezing and requesting review.",
     "frozen": "The message is frozen. Review this exact snapshot before submitting.",
     "snapshotTitle": "Frozen message snapshot",
     "from": "From",
@@ -106,6 +107,8 @@
       "complained": "Complained",
       "not_reported": "Not reported"
     },
+    "campaignLinked": "This draft is managed by a sales campaign.",
+    "openCampaign": "Open campaign",
     "cancel": "Cancel before dispatch",
     "confirmCancelTitle": "Cancel this message before dispatch?",
     "confirmCancelDescription": "Cancellation is available only before the provider call starts.",

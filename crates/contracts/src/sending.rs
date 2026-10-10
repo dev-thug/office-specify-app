@@ -50,6 +50,10 @@ pub struct PatchMessageDraftRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MessageDraftResponse {
     pub draft_id: Uuid,
+    /// Present when the draft belongs to a personalized sales campaign.
+    pub sales_campaign_id: Option<Uuid>,
+    /// Present when the draft belongs to a personalized sales target.
+    pub sales_target_id: Option<Uuid>,
     /// Present after this draft has been frozen into an immutable snapshot.
     pub outbound_message_id: Option<Uuid>,
     pub mail_account_id: Uuid,

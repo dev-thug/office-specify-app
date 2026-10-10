@@ -14,5 +14,6 @@ pub mod mailboxes;
 pub mod operations;
 pub mod org;
 pub mod research;
+pub mod sales_campaigns;
 pub mod sending;
 pub mod templates;

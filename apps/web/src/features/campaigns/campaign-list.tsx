@@ -38,6 +38,7 @@ const STATUSES: CampaignStatus[] = [
 
 export function CampaignList() {
   const t = useTranslations("campaigns.list");
+  const tPersonalized = useTranslations("campaigns.personalized.list");
   const tCommon = useTranslations("common");
   const tStatus = useTranslations("status");
   const locale = useLocale();
@@ -86,7 +87,7 @@ export function CampaignList() {
       cell: (row) => (
         <span className="flex min-w-0 flex-col">
           <Link
-            href={`/app/campaigns/${row.id}`}
+            href={`/app/campaigns/bulk/${row.id}`}
             className="truncate font-medium text-foreground underline-offset-4 hover:underline"
           >
             {row.name}
@@ -133,12 +134,17 @@ export function CampaignList() {
         title={t("title")}
         description={t("description")}
         actions={
-          <Button asChild size="sm">
-            <Link href="/app/campaigns/new">
-              <PlusIcon aria-hidden />
-              {t("newCampaign")}
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild size="sm" variant="outline">
+              <Link href="/app/campaigns">{tPersonalized("title")}</Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link href="/app/campaigns/bulk/new">
+                <PlusIcon aria-hidden />
+                {t("newCampaign")}
+              </Link>
+            </Button>
+          </div>
         }
       />
 

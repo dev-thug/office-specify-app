@@ -59,6 +59,33 @@ pub struct Stored<T> {
     pub body: T,
 }
 
+/// Read an unexpired completed response for authorization-aware replay
+/// preflights. Callers must still invoke `run` to verify the request hash and
+/// receive the canonical replay result.
+pub async fn completed_response(
+    db: &Db,
+    scope: &Scope,
+    request_hash: &[u8],
+) -> Result<Option<serde_json::Value>, AppError> {
+    let mut tx = db.begin(scope.workspace_id).await?;
+    let response = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT response_body FROM idempotency_records
+          WHERE workspace_id = $1 AND scope_key = $2 AND endpoint = $3
+            AND idempotency_key = $4 AND request_hash = $5
+            AND state = 'completed' AND expires_at > now()",
+    )
+    .bind(scope.workspace_id)
+    .bind(scope.scope_key())
+    .bind(&scope.endpoint)
+    .bind(&scope.key)
+    .bind(request_hash)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    tx.commit().await?;
+    Ok(response)
+}
+
 #[derive(Debug)]
 pub enum Outcome<T> {
     /// `f` ran and its result was persisted.

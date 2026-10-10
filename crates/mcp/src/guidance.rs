@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 
 pub const INSTRUCTIONS: &str = r#"Office is a CRM, email preparation, and meeting application. This MCP exposes a limited agent workflow, NOT every REST/UI operation. Discover tools/list and follow each inputSchema; visibility of a tool does not grant permission. Identity/workspace come from your Bearer service credential. Never supply identity overrides or invent record IDs.
 
+Personalized sales campaigns are the default for company-specific outreach: use sales_campaigns_list/create/get to reuse one group across companies, sales_campaigns_add_target with verified company/contact/email_address UUIDs, and sales_campaigns_create_message for different researched copy per target. Store sources in existing CRM evidence/notes. Read the latest target version and draft before moving research/draft/review stages. A human must freeze and independently approve the exact recipient-rendered snapshot; moving a card is not approval. sales_campaigns_queue requires mail.submit_approved and the current target version/outbound hash, schedules the next ten-minute batch, and never bypasses source-credential, mailbox, suppression, or unknown-send protections. Queued/accepted/attention columns are server-derived. SMTP accepted is not proof of inbox delivery. Sender defaults are operator-only Settings. Existing campaign_* tools describe legacy common-template bulk campaigns, not these personalized groups.
+
 Company research workflow:
 1. crm_search_companies by name/domain, then crm_get_company using the returned id and requested_sections such as contacts, research, notes. Compare domains and existing evidence before creating a duplicate. Respect has_more/cursors; page contacts with crm_search_contacts(company_id). Notes/research section pagination remains unavailable through MCP.
 2. For a NEW lead use research_propose_leads with your existing agent_run_id. Put company name in proposals[].company_name, bare domain in proposals[].domain, and industry/country_code/website_url in proposed_data. Put people in proposed_data.contacts: [{name, job_title?, department?, email?}]. These are the fields the human acceptance path reads; arbitrary extra JSON keys do not become CRM columns. Include actual public-source evidence and only email addresses found in that evidence. A proposal is pending, not a created company or consent to send. A human reviews proposals in the agent run detail. Existing-company matching does not overwrite existing company fields.
@@ -189,6 +191,21 @@ fn field_description(tool: &str, field: &str) -> Option<&'static str> {
         }
         "meeting_type_id" => {
             "Existing active meeting-type UUID from booking_list_meeting_types. Discovering an ID does not grant host access for slots or proposals. MCP does not create meeting types. For proposals choose a fresh slot for this same type."
+        }
+        "campaign_id" if tool.starts_with("sales_campaigns_") => {
+            "Personalized sales group UUID returned by sales_campaigns_create/list/get. This is not a legacy bulk campaign ID, target ID or company ID; reuse the same group across company-specific messages."
+        }
+        "target_id" if tool.starts_with("sales_campaigns_") => {
+            "Verified company/contact/email target UUID from sales_campaigns_add_target or sales_campaigns_get. It must belong to campaign_id; do not substitute the company or draft UUID."
+        }
+        "expected_target_version" => {
+            "Current target version from sales_campaigns_get. Re-read after a change; stale versions must not queue a superseded draft."
+        }
+        "stage" if tool.starts_with("sales_campaigns_") => {
+            "Editable preparation column: research, draft or review. Moving does not approve or send. Queued, accepted and attention are derived from actual outbound results and cannot be assigned."
+        }
+        "limit" if tool == "sales_campaigns_list" => {
+            "Bounded number of accessible personalized groups to return. Follow the schema maximum; this list does not grant access to other mailboxes."
         }
         "campaign_id" => {
             "Existing campaign UUID returned by campaign_create_draft or supplied by the operator. Use its matching immutable revision_id for preflight."
