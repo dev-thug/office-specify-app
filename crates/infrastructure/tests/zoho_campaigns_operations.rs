@@ -141,6 +141,43 @@ fn sample_contact() -> ContactInput {
 }
 
 #[tokio::test]
+async fn contact_fields_accept_live_fieldnames_wrapper() {
+    let (client, _, server) = start_client(
+        vec![MockReply::json(StatusCode::OK,
+            r#"{"response":{"code":0,"message":"success","fieldnames":{"fieldname":[{"DISPLAY_NAME":"Contact Email","FIELD_NAME":"contact_email","FIELD_ID":4001}]}}}"#)],
+        Duration::from_secs(2),
+    ).await;
+    let fields = client
+        .get_contact_fields(&SecretValue::new("test-access-token"))
+        .await
+        .unwrap();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].field_name, "contact_email");
+    assert_eq!(fields[0].display_name, "Contact Email");
+    server.abort();
+}
+
+#[tokio::test]
+async fn explicit_empty_list_message_is_empty_but_generic_2502_stays_an_error() {
+    let (client, _, server) = start_client(vec![
+        MockReply::json(StatusCode::OK, r#"{"code":"2502","message":"아직은 이 목록에 연락처가 없습니다.","uri":"/getlistsubscribers","status":"error"}"#),
+        MockReply::json(StatusCode::OK, r#"{"code":"2502","message":"Error in displaying contacts details.Please try after sometime.","uri":"/api/v1.1/getlistsubscribers","status":"error"}"#),
+    ], Duration::from_secs(2)).await;
+    let access = SecretValue::new("test-access-token");
+    assert!(
+        client
+            .get_all_list_contacts(&access, "test-list", CampaignContactStatus::Unsubscribed)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        matches!(client.get_all_list_contacts(&access, "test-list", CampaignContactStatus::Unsubscribed).await, Err(CampaignsOperationsError::Rejected { code }) if code == "2502")
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn list_and_field_reads_use_official_paths_pagination_and_success_envelopes() {
     let (client, captured, server) = start_client(
         vec![

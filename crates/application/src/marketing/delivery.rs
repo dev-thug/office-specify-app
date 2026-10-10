@@ -146,6 +146,14 @@ fn response(
     })
 }
 
+// Office's normal contact API creates syntactically checked addresses as
+// `unknown`; it has no deliverability-verification endpoint. Consent remains
+// mandatory and provider-confirmed exact list membership is checked before
+// submission. Known invalid/risky (or unexpected) statuses stay blocked.
+fn recipient_address_status_allowed(status: &str) -> bool {
+    matches!(status, "unknown" | "verified")
+}
+
 fn campaigns_error(error: CampaignsOperationsError) -> AppError {
     match error {
         CampaignsOperationsError::ReauthRequired => AppError::new(
@@ -675,10 +683,10 @@ pub async fn prepare_export(
                 "frozen recipient address is unavailable",
             ));
         };
-        if verification != "verified" {
+        if !recipient_address_status_allowed(&verification) {
             return Err(AppError::new(
                 ErrorCode::SendBasisUnverified,
-                "Campaigns export recipient address is not verified",
+                "Campaigns export recipient address has a blocked verification status",
             ));
         }
         compliance_core::lock_email_address(&mut tx, email_address_id).await?;
@@ -1377,9 +1385,9 @@ async fn current_recipient_eligibility_in_tx(
         }
         if campaigns_repo::get_email_address(tx, recipient.email_address_id)
             .await?
-            .is_none_or(|(_, verification)| verification != "verified")
+            .is_none_or(|(_, verification)| !recipient_address_status_allowed(&verification))
         {
-            return Ok(Some("recipient_address_unverified"));
+            return Ok(Some("recipient_address_blocked"));
         }
     }
     Ok(None)
@@ -3539,6 +3547,14 @@ pub async fn refresh_export(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_address_status_uses_default_contact_state_without_accepting_known_risks() {
+        assert!(super::recipient_address_status_allowed("unknown"));
+        assert!(super::recipient_address_status_allowed("verified"));
+        for status in ["invalid", "risky", "unexpected", ""] {
+            assert!(!super::recipient_address_status_allowed(status));
+        }
+    }
     use super::*;
 
     #[test]

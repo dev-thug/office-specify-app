@@ -24,7 +24,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import {
   reviewCommunicationBasis,
   type BasisReviewDecision,
@@ -63,7 +62,6 @@ export function BasisReviewDialog({
 
   const [decision, setDecision] = useState<BasisReviewDecision>("valid");
   const [validUntil, setValidUntil] = useState("");
-  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
 
@@ -73,7 +71,6 @@ export function BasisReviewDialog({
     mutationFn: (input: {
       decision: BasisReviewDecision;
       valid_until?: string;
-      reason?: string;
     }) =>
       reviewCommunicationBasis(basis!.id, input, {
         // ETag는 GET 응답 헤더의 "v" — 리소스 version 필드를 그대로 쓴다 (§4.4).
@@ -100,11 +97,9 @@ export function BasisReviewDialog({
   function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (decision === "rejected" && reason.trim().length === 0) return;
     mutation.mutate({
       decision,
       ...(validUntil ? { valid_until: new Date(validUntil).toISOString() } : {}),
-      ...(reason.trim() ? { reason: reason.trim() } : {}),
     });
   }
 
@@ -200,22 +195,6 @@ export function BasisReviewDialog({
             </div>
           ) : null}
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="basis-review-reason">
-              {t("review.reasonLabel")}
-              {decision === "rejected" ? (
-                <span className="text-destructive"> *</span>
-              ) : null}
-            </Label>
-            <Textarea
-              id="basis-review-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder={t("review.reasonPlaceholder")}
-              required={decision === "rejected"}
-            />
-          </div>
-
           {conflict ? (
             <Alert variant="warning">
               <AlertTitle>{t("conflictTitle")}</AlertTitle>
@@ -252,8 +231,7 @@ export function BasisReviewDialog({
               type="submit"
               disabled={
                 mutation.isPending ||
-                conflict ||
-                (decision === "rejected" && reason.trim().length === 0)
+                conflict
               }
             >
               {mutation.isPending

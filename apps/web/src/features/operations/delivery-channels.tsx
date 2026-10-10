@@ -320,7 +320,6 @@ function ReviewFormDialog({
         channel!.id,
         {
           result,
-          purpose: channel!.purpose as ChannelPurpose,
           policy_url: policyUrl.trim() || undefined,
           contract_evidence_ref: evidenceRef.trim() || undefined,
           notes: notes.trim() || undefined,

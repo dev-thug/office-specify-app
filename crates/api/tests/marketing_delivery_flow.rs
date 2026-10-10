@@ -639,7 +639,7 @@ async fn create_recipient(db: &Db, world: &TestWorld, local_part: &str) -> Uuid 
     let address: Uuid = sqlx::query_scalar(
         "INSERT INTO email_addresses
             (workspace_id, address_original, normalized_key, kind, verification_status, verified_at)
-         VALUES ($1, $2, $2, 'person', 'verified', now()) RETURNING id",
+         VALUES ($1, $2, $2, 'person', 'unknown', NULL) RETURNING id",
     )
     .bind(world.workspace_id)
     .bind(format!("{local_part}@recipient.example.test"))

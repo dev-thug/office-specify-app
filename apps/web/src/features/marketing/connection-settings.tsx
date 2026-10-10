@@ -112,7 +112,7 @@ function MarketingChannelSetup({connections,configured}:{connections:MarketingCo
   onError:(cause)=>{setError(t('channelSetup.senderRegisterFailed'));if(cause instanceof ApiError&&cause.status<500&&cause.problem.retryable!==true)registerKey.current=idempotencyKey();},
  });
  const review=useMutation({
-  mutationFn:({channel,input,key}:{channel:DeliveryChannel;input:{result:'allowed';purpose:'marketing';policy_url:string;contract_evidence_ref:string;notes:string};key:string})=>createChannelReview(channel.id,input,{idempotencyKey:key}),
+  mutationFn:({channel,input,key}:{channel:DeliveryChannel;input:{result:'allowed';policy_url:string;contract_evidence_ref:string;notes:string};key:string})=>createChannelReview(channel.id,input,{idempotencyKey:key}),
   onSuccess:(_result,variables)=>{setError(null);setReviewFor(null);setReviewEvidence({policyUrl:'',evidenceRef:'',notes:'',confirmed:false});actionKeys.current.delete(`review:${variables.channel.id}`);void qc.invalidateQueries({queryKey:['operations','delivery-channels']});},
   onError:()=>setError(t('channelSetup.reviewFailed')),
  });
@@ -125,7 +125,7 @@ function MarketingChannelSetup({connections,configured}:{connections:MarketingCo
  const valid=Boolean(configured&&campaigns.some(connection=>connection.id===selectedConnectionId)&&account&&selectedSenderIdentityId&&verifiedSenders.some(sender=>sender.id===selectedSenderIdentityId)&&name.trim());
  function submitCreate(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!valid||create.isPending)return;setError(null);create.mutate()}
  function submitRegister(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!selectedMailAccountId||!senderRegistration.confirmed||!senderRegistration.address.trim()||!senderRegistration.displayName.trim()||!senderRegistration.evidenceRef.trim()||register.isPending)return;setError(null);register.mutate()}
- function submitReview(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!reviewFor||!reviewEvidence.confirmed||!reviewEvidence.policyUrl.trim()||!reviewEvidence.evidenceRef.trim())return;const key=keyFor(actionKeys.current,'review',reviewFor.id);review.mutate({channel:reviewFor,input:{result:'allowed',purpose:'marketing',policy_url:reviewEvidence.policyUrl.trim(),contract_evidence_ref:reviewEvidence.evidenceRef.trim(),notes:reviewEvidence.notes.trim()||t('channelSetup.reviewDefaultNote')},key})}
+ function submitReview(event:FormEvent<HTMLFormElement>){event.preventDefault();if(!reviewFor||!reviewEvidence.confirmed||!reviewEvidence.policyUrl.trim()||!reviewEvidence.evidenceRef.trim())return;const key=keyFor(actionKeys.current,'review',reviewFor.id);review.mutate({channel:reviewFor,input:{result:'allowed',policy_url:reviewEvidence.policyUrl.trim(),contract_evidence_ref:reviewEvidence.evidenceRef.trim(),notes:reviewEvidence.notes.trim()||t('channelSetup.reviewDefaultNote')},key})}
 
  return <section className="flex flex-col gap-3 border-t pt-4" aria-label={t('channelSetup.title')}>
   <div className="grid gap-1"><h3 className="text-sm font-semibold">{t('channelSetup.title')}</h3><p className="text-2xs text-muted-foreground">{t('channelSetup.description')}</p></div>

@@ -93,6 +93,7 @@ describe('Campaigns OAuth setup',()=>{
     channel={id:'channel-1',mail_account_id:String(body?.mail_account_id),sender_identity_id:String(body?.sender_identity_id),connection_id:String(body?.connection_id),provider:'zoho_campaigns',purpose:'marketing',name:String(body?.name),policy_status:'unverified',enabled:false,version:1};data=channel;status=201;
    }
    else if(path==='/api/v1/delivery-channels/channel-1/reviews'&&method==='POST'){
+    if(body&&'purpose' in body)return new Response(JSON.stringify({code:'VALIDATION_FAILED',detail:'unknown field purpose'}),{status:422,headers:{'content-type':'application/problem+json'}});
     if(channel)channel={...channel,policy_status:'allowed',version:2};data={id:'review-1',delivery_channel_id:'channel-1',reviewed_by:'admin-1',result:'allowed',purpose:'marketing',policy_url:body?.policy_url,contract_evidence_ref:body?.contract_evidence_ref,notes:body?.notes,reviewed_at:'2026-10-10T00:00:00Z',created_at:'2026-10-10T00:00:00Z'};status=201;
    }
    else if(path==='/api/v1/delivery-channels/channel-1'&&method==='PATCH'){
@@ -133,7 +134,8 @@ describe('Campaigns OAuth setup',()=>{
   await waitFor(()=>expect(calls.some(call=>call.path==='/api/v1/delivery-channels/channel-1/reviews'&&call.method==='POST')).toBe(true));
   await screen.findByText(/Policy: allowed · disabled/);
   const reviewCall=calls.find(call=>call.path==='/api/v1/delivery-channels/channel-1/reviews')!;
-  expect(reviewCall.body).toMatchObject({result:'allowed',purpose:'marketing',policy_url:'https://www.zoho.com/campaigns/terms.html',contract_evidence_ref:'https://docs.example.test/marketing-approval'});
+  expect(reviewCall.body).not.toHaveProperty('purpose');
+  expect(reviewCall.body).toMatchObject({result:'allowed',policy_url:'https://www.zoho.com/campaigns/terms.html',contract_evidence_ref:'https://docs.example.test/marketing-approval'});
   expect(reviewCall.headers.get('Idempotency-Key')).toBeTruthy();
 
   fireEvent.click(screen.getByRole('button',{name:'Enable channel'}));

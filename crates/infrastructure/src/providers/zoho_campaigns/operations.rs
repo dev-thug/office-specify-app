@@ -476,8 +476,27 @@ impl CampaignsOperations {
         let response = self
             .read_json(Method::GET, "getlistsubscribers", &params, access)
             .await?;
-        require_read_success(&response, &["0"])?;
         let root = data_root(&response);
+        // The live Korean API uses the generic 2502 code for an explicitly
+        // empty filtered list. Never treat 2502 alone as complete coverage:
+        // the documented generic display failure must still fail closed.
+        if api_code(&response).as_deref() == Some("2502")
+            && matches!(
+                root.get("uri").and_then(Value::as_str),
+                Some("/api/v1.1/getlistsubscribers" | "/getlistsubscribers")
+            )
+            && root.get("status").and_then(Value::as_str) == Some("error")
+            && root.get("message").and_then(Value::as_str)
+                == Some("아직은 이 목록에 연락처가 없습니다.")
+            && root.get("list_of_details").is_none()
+        {
+            return Ok(CampaignsPage {
+                entries: Vec::new(),
+                from_index,
+                range: 0,
+            });
+        }
+        require_read_success(&response, &["0"])?;
         let rows = array_field(root, "list_of_details")?;
         if rows.len() > range as usize {
             return Err(CampaignsOperationsError::InvalidResponse);
@@ -601,7 +620,9 @@ impl CampaignsOperations {
             )
             .await?;
         require_read_success(&response, &["0"])?;
-        let rows = array_field(data_root(&response), "fieldname")?;
+        let root = data_root(&response);
+        let fields = root.get("fieldnames").unwrap_or(root);
+        let rows = array_field(fields, "fieldname")?;
         rows.iter()
             .map(|row| {
                 Ok(CampaignContactField {

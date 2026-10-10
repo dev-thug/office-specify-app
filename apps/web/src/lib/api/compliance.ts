@@ -203,8 +203,6 @@ export interface ReviewCommunicationBasisInput {
   decision: BasisReviewDecision;
   /** decision=valid 일 때 유효 기간 (RFC 3339). */
   valid_until?: string;
-  /** 검토 메모·거절 사유. */
-  reason?: string;
 }
 
 /**

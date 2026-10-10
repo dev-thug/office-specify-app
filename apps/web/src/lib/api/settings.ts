@@ -464,7 +464,6 @@ export function useChannelReviews(channelId: string | undefined) {
 
 export interface CreateChannelReviewInput {
   result: ChannelReviewResult;
-  purpose?: ChannelPurpose;
   policy_url?: string;
   contract_evidence_ref?: string;
   notes?: string;
