@@ -188,7 +188,7 @@ pub fn all_tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
     v.extend(tools::crm::tools_with_key(hmac_key));
     v.extend(tools::discovery::tools_with_key(hmac_key));
     v.extend(tools::imports::tools());
-    v.extend(tools::inbox::tools());
+    v.extend(tools::inbox::tools_with_key(hmac_key));
     v.extend(tools::mailboxes::tools());
     v.extend(tools::operations::tools());
     v.extend(tools::org::tools());
@@ -220,14 +220,28 @@ mod tests {
             "crm_get_company",
             "crm_get_contact",
             "mail_get_thread",
+            "mail_list_threads",
+            "mail_search_messages",
+            "mail_update_thread_status",
+            "mail_set_thread_read",
+            "mail_assign_thread",
+            "mail_get_outbound",
             "research_propose_leads",
             "research_add_evidence",
             "research_get_run",
             "crm_propose_update",
             "crm_create_note",
             "mail_create_draft",
+            "mail_create_reply_draft",
+            "templates_create",
+            "mail_submit_approved",
+            "mail_update_thread_status",
+            "mail_set_thread_read",
+            "mail_assign_thread",
             "templates_create_draft_version",
             "campaign_create_draft",
+            "campaign_get_launch",
+            "campaign_submit_approved",
             "campaign_preflight",
             "campaign_request_launch",
             "campaign_pause",
@@ -259,8 +273,15 @@ mod tests {
             "crm_propose_update",
             "crm_create_note",
             "mail_create_draft",
+            "mail_create_reply_draft",
+            "templates_create",
+            "mail_submit_approved",
+            "mail_update_thread_status",
+            "mail_set_thread_read",
+            "mail_assign_thread",
             "templates_create_draft_version",
             "campaign_create_draft",
+            "campaign_submit_approved",
             "campaign_request_launch",
             "campaign_pause",
             "booking_propose",

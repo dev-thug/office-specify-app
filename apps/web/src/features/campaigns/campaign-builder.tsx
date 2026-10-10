@@ -22,6 +22,7 @@ import { StatusBadge } from "@/components/patterns/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -135,6 +136,7 @@ export function CampaignBuilder({
   const tDetail = useTranslations("campaigns.detail");
   const tAudience = useTranslations("campaigns.audience");
   const tPreflight = useTranslations("campaigns.preflight");
+  const tSending = useTranslations("sending.workflow");
   const tGate = useTranslations("campaigns.channelGate");
   const tReason = useTranslations("campaigns.reasonCodes");
   const tCommon = useTranslations("common");
@@ -176,6 +178,7 @@ export function CampaignBuilder({
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [launchId, setLaunchId] = useState<string | null>(null);
   const [freezeOpen, setFreezeOpen] = useState(false);
+  const [trackingRequested, setTrackingRequested] = useState(false);
   const [approvalReason, setApprovalReason] = useState("");
   const [approvalDone, setApprovalDone] = useState(false);
   const [pending, setPending] = useState<"draft" | "preflight" | "freeze" | "approve" | null>(null);
@@ -499,6 +502,7 @@ export function CampaignBuilder({
           revision_id: created.revisionId,
           // 검증을 통과한 주소만 동결 대상에 포함한다.
           email_address_ids: passed,
+          tracking_requested: trackingRequested,
         },
         { idempotencyKey: freezeIdem.key() }
       );
@@ -1213,6 +1217,27 @@ export function CampaignBuilder({
                 <CheckIcon />
                 <AlertDescription>{t("draftCreated")}</AlertDescription>
               </Alert>
+
+              <div className="grid gap-1.5 rounded-lg border border-border px-3 py-3">
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="campaign-tracking-requested"
+                    checked={trackingRequested}
+                    onCheckedChange={(checked) =>
+                      setTrackingRequested(checked === true)
+                    }
+                  />
+                  <Label
+                    htmlFor="campaign-tracking-requested"
+                    className="cursor-pointer text-sm leading-5"
+                  >
+                    {tSending("trackingRequested")}
+                  </Label>
+                </div>
+                <p className="ml-6 text-2xs text-muted-foreground">
+                  {tSending("trackingDescription")}
+                </p>
+              </div>
 
               {/* preflight — 비구속 검증 (B.3.7) */}
               <div className="flex flex-col gap-3 rounded-lg border border-border px-3 py-3">

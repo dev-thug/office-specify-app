@@ -130,7 +130,34 @@ impl SmtpDeliveryProvider {
             .map(|(_, domain)| domain.trim_matches(['[', ']']))
             .filter(|domain| valid_message_id_domain(domain))
             .unwrap_or("localhost");
-        let message_id = format!("<{correlation_id}@{sender_domain}>");
+        let message_id = match req.internet_message_id.as_deref() {
+            Some(value) => crate::providers::mail_headers::parse_single_message_id(value)
+                .filter(|id| id.len() <= MAX_HEADER_VALUE_BYTES)
+                .ok_or("invalid_message_id")?,
+            None => format!("<{correlation_id}@{sender_domain}>"),
+        };
+        let in_reply_to = match req.in_reply_to.as_deref() {
+            Some(value) => Some(
+                crate::providers::mail_headers::parse_single_message_id(value)
+                    .filter(|id| id.len() <= MAX_HEADER_VALUE_BYTES)
+                    .ok_or("invalid_in_reply_to")?,
+            ),
+            None => None,
+        };
+        let mut references = Vec::new();
+        for value in &req.references {
+            let reference = crate::providers::mail_headers::parse_single_message_id(value)
+                .ok_or("invalid_references")?;
+            if !references.contains(&reference) {
+                references.push(reference);
+            }
+        }
+        let references = references.join(" ");
+        // Include field-name overhead so the generated header line remains
+        // within the RFC 5322 hard line limit.
+        if references.len() > MAX_HEADER_VALUE_BYTES.saturating_sub(14) {
+            return Err("invalid_references");
+        }
 
         let headers =
             effective_headers(&self.config.custom_headers, &req.headers, &correlation_id)?;
@@ -146,11 +173,13 @@ impl SmtpDeliveryProvider {
             let reply_to = parse_address(reply_to).ok_or("invalid_reply_to")?;
             builder = builder.reply_to(Mailbox::new(None, reply_to));
         }
-        if let Some(in_reply_to) = req.in_reply_to.as_deref() {
-            if in_reply_to.len() > MAX_HEADER_VALUE_BYTES || contains_header_control(in_reply_to) {
-                return Err("invalid_in_reply_to");
-            }
-            builder = builder.in_reply_to(in_reply_to.to_owned());
+        if let Some(in_reply_to) = in_reply_to {
+            builder = builder.in_reply_to(in_reply_to);
+        }
+        if !references.is_empty() {
+            let header_name =
+                HeaderName::new_from_ascii("References".into()).map_err(|_| "invalid_header")?;
+            builder = builder.raw_header(HeaderValue::new(header_name, references));
         }
 
         for (name, value) in headers {
@@ -643,7 +672,9 @@ mod tests {
             subject: "안녕하세요 — Office update".into(),
             body_text: Some("A plain-text update".into()),
             body_html: Some("<p><strong>HTML</strong> update</p>".into()),
+            internet_message_id: None,
             in_reply_to: None,
+            references: vec![],
             headers: vec![
                 (
                     "List-Unsubscribe".into(),
@@ -727,6 +758,60 @@ mod tests {
         );
         drop(captured);
         server.task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sends_frozen_message_id_and_reply_chain_headers() {
+        let server = start_server(ServerBehavior::Accept).await;
+        let provider = SmtpDeliveryProvider::for_test(config(server.addr.port()), server.addr)
+            .expect("valid loopback test transport");
+        let mut req = request();
+        req.internet_message_id = Some("<outbound@news.specify.app>".into());
+        req.in_reply_to = Some("<inbound@customer.example>".into());
+        req.references = vec![
+            "<root@customer.example>".into(),
+            "<inbound@customer.example>".into(),
+        ];
+
+        let outcome = provider.send(req).await.unwrap();
+
+        assert!(
+            matches!(outcome, SendOutcome::Accepted { ref provider_message_id }
+            if provider_message_id == "<outbound@news.specify.app>")
+        );
+        let captured = server.captured.lock().await;
+        assert!(
+            captured
+                .message
+                .contains("Message-ID: <outbound@news.specify.app>")
+        );
+        assert!(
+            captured
+                .message
+                .contains("In-Reply-To: <inbound@customer.example>")
+        );
+        assert!(
+            captured
+                .message
+                .contains("References: <root@customer.example> <inbound@customer.example>")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_injected_message_reference_headers_before_network_io() {
+        let server = start_server(ServerBehavior::Accept).await;
+        let provider = SmtpDeliveryProvider::for_test(config(server.addr.port()), server.addr)
+            .expect("valid loopback test transport");
+        let mut req = request();
+        req.references = vec!["<reply@customer.example>\r\nBcc: victim@example.test".into()];
+
+        let outcome = provider.send(req).await.unwrap();
+
+        assert!(
+            matches!(outcome, SendOutcome::Rejected { permanent: true, code }
+            if code == "invalid_references")
+        );
+        assert!(server.captured.lock().await.message.is_empty());
     }
 
     #[tokio::test]

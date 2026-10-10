@@ -220,7 +220,62 @@
     "enrollmentStatus": "상태",
     "enrollmentNext": "다음 발송",
     "enrollmentStopReason": "중지 사유",
-    "versionFrozen": "frozen 부모의 단계·대상은 변경할 수 없습니다."
+    "versionFrozen": "frozen 부모의 단계·대상은 변경할 수 없습니다.",
+    "payloadHash": "스냅샷 해시",
+    "enrollmentCounts": {
+      "total": "전체",
+      "pending": "대기 중",
+      "active": "진행 중",
+      "completed": "완료",
+      "stopped": "중지됨",
+      "suppressed": "차단됨"
+    },
+    "execution": {
+      "title": "실행 상태",
+      "launchStatusLabel": "실행 묶음 상태",
+      "executionStatusLabel": "실행 작업 상태",
+      "jobId": "실행 작업",
+      "launchStatuses": {
+        "approved": "승인됨",
+        "running": "진행 중",
+        "paused": "일시정지",
+        "completed": "완료",
+        "canceled": "취소됨",
+        "awaiting_approval": "승인 대기",
+        "frozen": "동결됨",
+        "building": "구성 중"
+      },
+      "statuses": {
+        "not_ready": "준비되지 않음",
+        "ready": "실행 가능",
+        "queued": "대기열",
+        "running": "시작 중",
+        "activated": "시작됨",
+        "failed": "실패",
+        "canceled": "취소됨"
+      },
+      "readyDescription": "승인이 기록되었습니다. 사람이 별도로 실행을 시작해야 합니다.",
+      "queuedDescription": "작업 {job_id}을 대기열에 등록했습니다. 활성화될 때까지 실행 묶음 상태는 승인됨으로 유지됩니다.",
+      "runningDescription": "실행 작업 {job_id}이 진행 중입니다.",
+      "activatedDescription": "실행 작업이 이 실행 묶음을 활성화했습니다.",
+      "failedDescription": "실행 작업이 실패했습니다. 다시 시도하기 전에 최신 상태를 확인하세요.",
+      "canceledDescription": "실행 작업이 취소되었습니다.",
+      "permissionDenied": "이 실행 묶음을 실행할 권한이 없습니다.",
+      "notReady": "이 실행 묶음은 아직 실행할 수 없습니다.",
+      "executeAction": "승인된 실행 시작",
+      "dialogTitle": "승인된 실행을 시작할까요?",
+      "dialogDescription": "별도의 사람 확인 작업으로 대상 {count}명에게 발송할 작업을 대기열에 등록합니다.",
+      "recipients": "수신 대상",
+      "manifestHash": "승인된 매니페스트",
+      "version": "실행 묶음 버전",
+      "confirmExecute": "실행 확정",
+      "executing": "실행을 대기열에 등록하는 중…",
+      "cancel": "취소",
+      "loading": "실행 상태를 불러오는 중…",
+      "loadFailed": "실행 상태를 불러오지 못했습니다.",
+      "requestFailed": "실행을 시작하지 못했습니다. 상태를 새로고침한 후 다시 시도하세요.",
+      "jobPending": "대기 중"
+    }
   },
   "channelGate": {
     "title": "발신 채널이 차단되어 있습니다",

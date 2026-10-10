@@ -22,6 +22,7 @@ import { ApiError } from "@/lib/api/problem";
 import {
   cancelOutbound,
   freezeMessageDraft,
+  type FreezeMessageDraftInput,
   getMessageDraft,
   getOutboundMessage,
   listMessageDrafts,
@@ -81,6 +82,7 @@ interface DraftControls {
   selectedChannelId: string;
   meetingTypeId: string;
   approvalReason: string;
+  trackingRequested: boolean;
 }
 
 export function DraftSendingWorkflow({
@@ -95,6 +97,7 @@ export function DraftSendingWorkflow({
   const queryClient = useQueryClient();
   const channelSelectId = useId();
   const meetingTypeSelectId = useId();
+  const trackingSelectId = useId();
   const approvalReasonId = useId();
 
   const [draftSelection, setDraftSelection] = useState<DraftSelection>(() => ({
@@ -116,6 +119,7 @@ export function DraftSendingWorkflow({
     selectedChannelId: "",
     meetingTypeId: "",
     approvalReason: "",
+    trackingRequested: false,
   }));
   if (draftControls.draftId !== selectedDraftId) {
     setDraftControls({
@@ -123,15 +127,18 @@ export function DraftSendingWorkflow({
       selectedChannelId: "",
       meetingTypeId: "",
       approvalReason: "",
+      trackingRequested: false,
     });
   }
-  const { selectedChannelId, meetingTypeId, approvalReason } = draftControls;
+  const { selectedChannelId, meetingTypeId, approvalReason, trackingRequested } = draftControls;
   const setSelectedChannelId = (value: string) =>
     setDraftControls((current) => ({ ...current, selectedChannelId: value }));
   const setMeetingTypeId = (value: string) =>
     setDraftControls((current) => ({ ...current, meetingTypeId: value }));
   const setApprovalReason = (value: string) =>
     setDraftControls((current) => ({ ...current, approvalReason: value }));
+  const setTrackingRequested = (value: boolean) =>
+    setDraftControls((current) => ({ ...current, trackingRequested: value }));
   const [pending, setPending] = useState<PendingAction>(null);
   const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
   const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
@@ -283,12 +290,19 @@ export function DraftSendingWorkflow({
       : undefined) ?? matchingApproval?.id;
   const approvalRequestExists = Boolean(approvalId);
 
+  const approvalIsValid = Boolean(
+    outbound?.approval_status === "approved" &&
+      outbound.approval_valid &&
+      outbound.approval_snapshot_matches
+  );
+  const approvalAllowsSubmit =
+    !outbound?.approval_status || approvalIsValid;
   const canSubmit = canSubmitOutbound(
     outbound,
     me?.kind,
     preflight,
     hasSendGrant
-  ) && !sendBlocked;
+  ) && !sendBlocked && approvalAllowsSubmit;
   const canRequestApproval =
     !sendBlocked &&
     hasComposeGrant &&
@@ -347,9 +361,10 @@ export function DraftSendingWorkflow({
     ) {
       return;
     }
-    const scope = `freeze:${activeDraft.draft_id}:${selectedChannelId}:${meetingTypeId}`;
-    const request: { delivery_channel_id: string; meeting_type_id?: string } = {
+    const scope = `freeze:${activeDraft.draft_id}:${selectedChannelId}:${meetingTypeId}:${trackingRequested}`;
+    const request: FreezeMessageDraftInput = {
       delivery_channel_id: selectedChannelId,
+      tracking_requested: trackingRequested,
     };
     if (meetingTypeId) request.meeting_type_id = meetingTypeId;
 
@@ -472,6 +487,14 @@ export function DraftSendingWorkflow({
 
   const statusLabel = (status: string) =>
     t.has(`statuses.${status}`) ? t(`statuses.${status}`) : status;
+  const deliveryStatusLabel = (status: string) =>
+    t.has(`deliveryStatuses.${status}`)
+      ? t(`deliveryStatuses.${status}`)
+      : status;
+  const approvalStatusLabel = (status: string) =>
+    t.has(`approvalStatuses.${status}`)
+      ? t(`approvalStatuses.${status}`)
+      : status;
   const purposeLabel = (purpose: string) =>
     t.has(`purposes.${purpose}`) ? t(`purposes.${purpose}`) : purpose;
   const operatorActionLabel = (action: string) =>
@@ -491,9 +514,16 @@ export function DraftSendingWorkflow({
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="min-w-0 flex-1 text-sm font-semibold">{t("title")}</h3>
         {outbound ? (
-          <span className="text-xs text-muted-foreground">
-            {t("status", { status: statusLabel(outbound.status) })}
-          </span>
+          <>
+            <span className="text-xs text-muted-foreground">
+              {t("submissionStatus", { status: statusLabel(outbound.status) })}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {t("deliveryStatus", {
+                status: deliveryStatusLabel(outbound.delivery_status),
+              })}
+            </span>
+          </>
         ) : null}
       </div>
 
@@ -602,6 +632,26 @@ export function DraftSendingWorkflow({
                 ) : null}
                 {meetingTypesQuery.isSuccess && meetingTypes.length === 0 ? <p role="status" className="mt-1 text-xs text-muted-foreground">{t("noActiveMeetingTypes")} <Link href="/app/meeting-types" className="underline underline-offset-4">{t("manageMeetingTypes")}</Link></p> : null}
                 {meetingTypesQuery.hasNextPage ? <Button type="button" variant="link" size="xs" className="mt-1 h-auto w-fit p-0" disabled={meetingTypesQuery.isFetchingNextPage} onClick={() => void meetingTypesQuery.fetchNextPage()}>{meetingTypesQuery.isFetchingNextPage ? t("loadingMoreMeetingTypes") : t("loadMoreMeetingTypes")}</Button> : null}
+                <div className="sm:col-span-2 flex items-start gap-2 rounded-md border border-border p-3">
+                  <input
+                    id={trackingSelectId}
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-primary"
+                    checked={trackingRequested}
+                    onChange={(event) => setTrackingRequested(event.target.checked)}
+                    disabled={pending === "freeze"}
+                    aria-describedby={`${trackingSelectId}-description`}
+                  />
+                  <div className="grid gap-1">
+                    <Label htmlFor={trackingSelectId}>{t("trackingRequested")}</Label>
+                    <p
+                      id={`${trackingSelectId}-description`}
+                      className="text-xs text-muted-foreground"
+                    >
+                      {t("trackingDescription")}
+                    </p>
+                  </div>
+                </div>
               </div>
               {channelsQuery.isLoading ? (
                 <p className="text-xs text-muted-foreground">{t("channelsLoading")}</p>
@@ -792,14 +842,32 @@ export function DraftSendingWorkflow({
             </div>
           ) : null}
 
-          {matchingApproval?.status === "pending" ? (
+          {outbound.approval_status === "approved" ? (
+            <Alert variant={approvalIsValid ? "success" : "warning"}>
+              <AlertTitle>
+                {approvalIsValid
+                  ? t("approvalValidTitle")
+                  : t("approvalNeedsRefreshTitle")}
+              </AlertTitle>
+              <AlertDescription>
+                {!outbound.approval_snapshot_matches
+                  ? t("approvalSnapshotMismatch")
+                  : approvalIsValid
+                    ? t("approvalValidDescription")
+                    : t("approvalInvalidDescription")}
+              </AlertDescription>
+            </Alert>
+          ) : outbound.approval_status === "pending" ? (
             <Alert>
               <AlertDescription>{t("approvalPending")}</AlertDescription>
             </Alert>
-          ) : null}
-          {matchingApproval?.status === "approved" ? (
-            <Alert variant="success">
-              <AlertDescription>{t("approvalApproved")}</AlertDescription>
+          ) : outbound.approval_status ? (
+            <Alert variant="warning">
+              <AlertDescription>
+                {t("approvalStatusOther", {
+                  status: approvalStatusLabel(outbound.approval_status),
+                })}
+              </AlertDescription>
             </Alert>
           ) : null}
           {createdApproval?.outboundId === outboundId && !matchingApproval ? (
@@ -913,6 +981,64 @@ export function DraftSendingWorkflow({
               </AlertDescription>
             </Alert>
           ) : null}
+
+          {outbound.thread_id ? (
+            <Link
+              href={`/app/inbox/${encodeURIComponent(outbound.thread_id)}`}
+              className="w-fit text-sm font-medium underline underline-offset-4"
+            >
+              {t("openConversation")}
+            </Link>
+          ) : null}
+
+          <section
+            aria-label={t("engagementTitle")}
+            className="grid gap-1 rounded-xl border border-border p-3 text-sm"
+          >
+            <h4 className="font-medium">{t("engagementTitle")}</h4>
+            {outbound.engagement.tracking_enabled ? (
+              <>
+                <p>{t("trackingActive")}</p>
+                <p>{t("openRequestCount", { count: outbound.engagement.open_request_count })}</p>
+                <p>{t("clickRequestCount", { count: outbound.engagement.click_request_count })}</p>
+                <p className="text-xs text-muted-foreground">{t("engagementRequestDisclaimer")}</p>
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">{t("trackingOff")}</p>
+            )}
+          </section>
+
+          <section
+            aria-label={t("linkedReplies")}
+            className="grid gap-2 rounded-xl border border-border p-3"
+          >
+            <h4 className="text-sm font-medium">{t("linkedReplies")}</h4>
+            {outbound.known_replies.length > 0 ? (
+              <ul className="grid gap-2">
+                {outbound.known_replies.map((reply) => (
+                  <li
+                    key={reply.inbound_message_id}
+                    className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                  >
+                    <Link
+                      href={`/app/inbox/${encodeURIComponent(reply.thread_id)}`}
+                      className="font-medium underline underline-offset-4"
+                    >
+                      {t("replyFrom", { from: reply.from_address })}
+                    </Link>
+                    <time
+                      dateTime={reply.received_at}
+                      className="text-xs text-muted-foreground"
+                    >
+                      {reply.received_at}
+                    </time>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t("noLinkedReplies")}</p>
+            )}
+          </section>
 
           {outbound.status !== "draft" || approvalId ? (
             <div className="flex flex-wrap items-center gap-2">

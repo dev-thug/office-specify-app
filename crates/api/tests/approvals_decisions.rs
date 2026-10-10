@@ -213,10 +213,9 @@ async fn scalar<
 
 // ------------------------------------------------------------------ tests
 
-/// Approve a message_submit request → outbound queued + dispatch job
-/// enqueued in the same transaction as the decision.
+/// Approval records permission to execute, but does not queue delivery.
 #[tokio::test]
-async fn approve_message_submit_queues_dispatch() {
+async fn approve_message_submit_leaves_outbound_unqueued() {
     let Some((app, world)) = test_app().await else {
         return;
     };
@@ -245,8 +244,8 @@ async fn approve_message_submit_queues_dispatch() {
     .await;
     let data = TestApp::data(res).await;
     assert_eq!(data["approval_status"], "approved");
-    assert_eq!(data["execution_status"], "queued");
-    assert!(data["job_id"].is_string());
+    assert_eq!(data["execution_status"], "ready");
+    assert!(data["job_id"].is_null());
     assert_eq!(data["provider_accepted_count"], 0);
 
     let status: String = scalar(
@@ -256,7 +255,7 @@ async fn approve_message_submit_queues_dispatch() {
         outbound,
     )
     .await;
-    assert_eq!(status, "queued");
+    assert_eq!(status, "draft");
 
     // Per-message message_submit approval remains the standalone send gate.
     let preflight = manager
@@ -285,7 +284,7 @@ async fn approve_message_submit_queues_dispatch() {
         world.workspace_id,
     )
     .await;
-    assert_eq!(jobs, 1);
+    assert_eq!(jobs, 0);
     // audit + outbox in the same tx.
     let audits: i64 = scalar(
         db,
@@ -710,6 +709,22 @@ async fn revoke_approved_cancels_queued_dispatch() {
     let data = TestApp::data(res).await;
     let v = data["version"].as_i64().unwrap();
 
+    // Approval is deliberately separate from execution. The human explicitly
+    // submits after reviewing the approved snapshot; revocation can still
+    // cancel that queued job before the provider boundary.
+    let submitted = post(
+        &app,
+        &admin,
+        &acsrf,
+        &format!("/api/v1/outbound-messages/{outbound}/submit"),
+        json!({"expected_payload_hash": hex(&hash)}),
+        Some("revoke-approved-human-submit"),
+        None,
+    )
+    .await;
+    let submitted = TestApp::data(submitted).await;
+    assert_eq!(submitted["status"], "queued");
+
     let res = post(
         &app,
         &admin,
@@ -742,6 +757,81 @@ async fn revoke_approved_cancels_queued_dispatch() {
     )
     .await;
     assert_eq!(live_jobs, 0, "the queued dispatch job must be canceled");
+}
+
+/// An approval that has not been explicitly submitted can be revoked while
+/// the immutable outbound remains a draft; subsequent submit must fail.
+#[tokio::test]
+async fn revoke_approved_before_submit_leaves_draft_and_blocks_submit() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, admin_csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let (manager, manager_csrf) = login(&app, world.manager.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (outbound, hash) = outbound_draft(db, &world).await;
+    let request = message_request(
+        db,
+        &world,
+        world.admin.principal_id,
+        outbound,
+        &hash,
+        chrono::Duration::days(1),
+    )
+    .await;
+    let approved = TestApp::data(
+        post(
+            &app,
+            &manager,
+            &manager_csrf,
+            &format!("/api/v1/approvals/{request}/decisions"),
+            json!({"decision":"approved","expected_snapshot_hash":hex(&hash)}),
+            Some("revoke-before-submit-decision"),
+            Some(1),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(approved["execution_status"], "ready");
+
+    let revoked = TestApp::data(
+        post(
+            &app,
+            &admin,
+            &admin_csrf,
+            &format!("/api/v1/approvals/{request}/revoke"),
+            json!({"reason":"changed my mind"}),
+            None,
+            Some(approved["version"].as_i64().unwrap()),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(revoked["status"], "revoked");
+
+    let status_response = manager
+        .get(app.url(&format!("/api/v1/outbound-messages/{outbound}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_response.status(), StatusCode::OK);
+    let status = TestApp::data(status_response).await;
+    assert_eq!(status["status"], "draft");
+    assert_eq!(status["approval_status"], "revoked");
+    assert_eq!(status["approval_valid"], false);
+
+    let submit = post(
+        &app,
+        &admin,
+        &admin_csrf,
+        &format!("/api/v1/outbound-messages/{outbound}/submit"),
+        json!({"expected_payload_hash":hex(&hash)}),
+        Some("submit-after-approval-revoked"),
+        None,
+    )
+    .await;
+    let problem = TestApp::problem(submit, StatusCode::CONFLICT).await;
+    assert_eq!(problem["code"], "CONFLICT");
 }
 
 #[tokio::test]

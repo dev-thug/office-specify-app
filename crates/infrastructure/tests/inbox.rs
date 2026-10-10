@@ -127,6 +127,70 @@ async fn t17_read_state_is_per_principal_and_monotonic() {
 }
 
 #[tokio::test]
+async fn message_search_treats_percent_and_underscore_as_literal_text() {
+    let Some(db) = test_db().await else { return };
+    let world = seed_workspace(&db).await.unwrap();
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let exact_thread = repo::create_thread(&mut tx, world.mail_account_id, None, None)
+        .await
+        .unwrap();
+    let wildcard_thread = repo::create_thread(&mut tx, world.mail_account_id, None, None)
+        .await
+        .unwrap();
+    let exact_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_messages
+            (workspace_id, mail_account_id, thread_id, direction,
+             subject, body_text, message_at, classification)
+         VALUES ($1, $2, $3, 'inbound', 'Deal 50%_complete', 'note', now(), 'unknown')
+         RETURNING id",
+    )
+    .bind(world.workspace_id)
+    .bind(world.mail_account_id)
+    .bind(exact_thread)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO email_messages
+            (workspace_id, mail_account_id, thread_id, direction,
+             subject, body_text, message_at, classification)
+         VALUES ($1, $2, $3, 'inbound', 'Deal 50XXcomplete', 'note', now(), 'unknown')",
+    )
+    .bind(world.workspace_id)
+    .bind(world.mail_account_id)
+    .bind(wildcard_thread)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+
+    let results = repo::search_messages(
+        &mut tx,
+        world.member_a.principal_id,
+        Some(world.mail_account_id),
+        "%_",
+        None,
+        101,
+    )
+    .await
+    .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, exact_id);
+
+    let denied = repo::search_messages(
+        &mut tx,
+        world.member_b.principal_id,
+        Some(world.mail_account_id),
+        "%_",
+        None,
+        101,
+    )
+    .await
+    .unwrap();
+    assert!(denied.is_empty(), "mailbox ACL must gate matching rows");
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
 async fn t26_inbound_html_strips_scripts_forms_and_remote_images() {
     let dirty = r#"<div onclick="x()"><script>alert(1)</script>
         <style>.a{}</style><form action="/x"><input name="q"></form>

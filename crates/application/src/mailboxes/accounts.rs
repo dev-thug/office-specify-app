@@ -8,8 +8,8 @@
 use chrono::{DateTime, Utc};
 use contracts::AppError;
 use contracts::Ctx;
-use contracts::Role;
 use contracts::mailboxes::MailAccountResponse;
+use contracts::{PrincipalKind, Role};
 use infrastructure::db::Db;
 use infrastructure::repo::mailboxes as repo;
 use uuid::Uuid;
@@ -21,7 +21,16 @@ pub struct AccountPage {
     pub cursor_seed: Option<(DateTime<Utc>, Uuid)>,
 }
 
-fn response((account, grant): repo::AccountWithGrant) -> MailAccountResponse {
+fn response(
+    (account, grant): repo::AccountWithGrant,
+    principal_kind: PrincipalKind,
+) -> MailAccountResponse {
+    let mut allowed_actions = grant.map(|g| g.allowed_actions()).unwrap_or_default();
+    if principal_kind == PrincipalKind::Agent {
+        // The can_send ACL is used only by the explicit approved-submit
+        // service. It must not advertise direct `mail.send`/`mail.approve`.
+        allowed_actions.retain(|action| action != "mail.send" && action != "mail.approve");
+    }
     MailAccountResponse {
         id: account.id,
         connection_id: account.connection_id,
@@ -33,7 +42,7 @@ fn response((account, grant): repo::AccountWithGrant) -> MailAccountResponse {
         last_synced_at: account.last_synced_at,
         version: account.version,
         created_at: account.created_at,
-        allowed_actions: grant.map(|g| g.allowed_actions()).unwrap_or_default(),
+        allowed_actions,
     }
 }
 
@@ -57,7 +66,10 @@ pub async fn list_mail_accounts(
         .then(|| rows.last().map(|(a, _)| (a.created_at, a.id)))
         .flatten();
     Ok(AccountPage {
-        items: rows.into_iter().map(response).collect(),
+        items: rows
+            .into_iter()
+            .map(|row| response(row, ctx.principal_kind))
+            .collect(),
         has_more,
         cursor_seed,
     })
@@ -79,5 +91,5 @@ pub async fn get_mail_account(
     if ctx.role != Role::Admin && !pair.1.as_ref().is_some_and(|g| g.can_read) {
         return Err(AppError::not_found("mail account not found"));
     }
-    Ok(response(pair))
+    Ok(response(pair, ctx.principal_kind))
 }

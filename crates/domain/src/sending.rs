@@ -141,8 +141,9 @@ pub fn payload_preimage(
     reply_to_message_id: Option<&str>,
     communication_basis_id: Option<&str>,
     template_version_id: Option<&str>,
+    internet_message_id: Option<&str>,
 ) -> Vec<u8> {
-    [
+    let mut fields = vec![
         purpose,
         mail_account_id,
         delivery_channel_id,
@@ -157,9 +158,14 @@ pub fn payload_preimage(
         reply_to_message_id.unwrap_or(""),
         communication_basis_id.unwrap_or(""),
         template_version_id.unwrap_or(""),
-    ]
-    .join("\u{1f}")
-    .into_bytes()
+    ];
+    // Preserve every legacy preimage byte-for-byte when there is no stored
+    // internet Message-ID. New snapshots bind the stable RFC ID as well.
+    if let Some(message_id) = internet_message_id {
+        fields.push("internet_message_id");
+        fields.push(message_id);
+    }
+    fields.join("\u{1f}").into_bytes()
 }
 
 /// Add the required visible marketing unsubscribe footer to each rendered
@@ -400,6 +406,50 @@ mod tests {
             DeliveryStatus::fold(vec!["delivered".to_string(), "bounced".to_string()]),
             DeliveryStatus::Delivered
         );
+    }
+
+    #[test]
+    fn optional_internet_message_id_preserves_legacy_preimage_and_binds_new_ids() {
+        let legacy = payload_preimage(
+            "marketing",
+            "mailbox",
+            "channel",
+            "sender",
+            "from@example.test",
+            "address",
+            "to@example.test",
+            "subject",
+            "text",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let expected_legacy = b"marketing\x1fmailbox\x1fchannel\x1fsender\x1ffrom@example.test\x1faddress\x1fto@example.test\x1fsubject\x1ftext\x1f\x1f\x1f\x1f\x1f";
+        assert_eq!(legacy, expected_legacy);
+
+        let with_message_id = payload_preimage(
+            "marketing",
+            "mailbox",
+            "channel",
+            "sender",
+            "from@example.test",
+            "address",
+            "to@example.test",
+            "subject",
+            "text",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("<outbound@example.test>"),
+        );
+        let mut expected = expected_legacy.to_vec();
+        expected.extend_from_slice(b"\x1finternet_message_id\x1f<outbound@example.test>");
+        assert_eq!(with_message_id, expected);
     }
 
     #[test]

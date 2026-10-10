@@ -48,9 +48,9 @@ impl ReviewResult {
 // mail accounts
 // --------------------------------------------------------------------------
 
-/// Mail-account metadata. `allowed_actions` is the caller's grant-derived
-/// action list (B.3.1 `mail.*` strings) — a UI hint only; the server
-/// re-checks the grant on every content-bearing read.
+/// Mail-account metadata. `allowed_actions` is the caller's grant-derived,
+/// principal-filtered action list (B.3.1 `mail.*` strings) — a UI hint only;
+/// the server re-checks the grant on every content-bearing operation.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MailAccountResponse {
     pub id: Uuid,
@@ -128,7 +128,10 @@ pub struct ZohoCallbackQuery {
 pub struct PutGrantRequest {
     pub can_read: bool,
     pub can_compose: bool,
+    /// Mailbox send ACL. For Agent principals this only satisfies the
+    /// approved-submit path; agents cannot use direct submit or `mail.send`.
     pub can_send: bool,
+    /// Human Admin/Manager approver authority. Agents cannot receive it.
     pub can_approve: bool,
     pub can_assign: bool,
 }
@@ -141,7 +144,9 @@ pub struct GrantResponse {
     pub principal_id: Uuid,
     pub can_read: bool,
     pub can_compose: bool,
+    /// Agent grants satisfy approved-submit ACL checks, not direct sending.
     pub can_send: bool,
+    /// Human Admin/Manager approval authority.
     pub can_approve: bool,
     pub can_assign: bool,
     pub version: i64,
@@ -157,7 +162,9 @@ pub struct GrantListItem {
     pub principal_kind: String,
     pub can_read: bool,
     pub can_compose: bool,
+    /// Agent grants satisfy approved-submit ACL checks, not direct sending.
     pub can_send: bool,
+    /// Human Admin/Manager approval authority.
     pub can_approve: bool,
     pub can_assign: bool,
     pub version: i64,

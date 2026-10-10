@@ -39,7 +39,6 @@ struct RenderedStep {
     subject: String,
     body_text: String,
     body_html: Option<String>,
-    payload_hash: [u8; 32],
     unsubscribe_token: String,
 }
 
@@ -210,17 +209,15 @@ async fn reconstruct_requester_ctx(
     })
 }
 
-/// Render every step of the revision for one recipient. Returns the
-/// (step_row, subject, text, html, payload_hash) list in step order, or a
-/// reason string on render failure.
+/// Render every step of the revision for one recipient. Payload hashes are
+/// calculated later, after outbound/thread/message identifiers and optional
+/// engagement links have been frozen.
 fn render_steps(
     steps: &[repo::StepRow],
     templates: &BTreeMap<Uuid, repo::TemplateVersionRow>,
     user_variables: &BTreeMap<String, String>,
     system_variables: &BTreeMap<String, String>,
     public_base_url: &str,
-    from_address: &str,
-    to_address: &str,
 ) -> Result<Vec<RenderedStep>, AppError> {
     let mut out = Vec::with_capacity(steps.len());
     for step in steps {
@@ -270,19 +267,11 @@ fn render_steps(
             rendered.body_html.as_deref(),
             unsubscribe_url,
         );
-        let hash = crypto::sha256_bytes(&d::payload_bytes(
-            from_address,
-            to_address,
-            &subject,
-            &body_text,
-            body_html.as_deref(),
-        ));
         out.push(RenderedStep {
             step: step.clone(),
             subject,
             body_text,
             body_html,
-            payload_hash: hash,
             unsubscribe_token,
         });
     }
@@ -290,6 +279,7 @@ fn render_steps(
 }
 
 /// The freeze job body. `actor` is the workspace system principal.
+#[allow(clippy::too_many_arguments)]
 pub async fn freeze_launch(
     tx: &mut Tx<'_>,
     actor: Uuid,
@@ -297,6 +287,7 @@ pub async fn freeze_launch(
     launch_id: Uuid,
     email_address_ids: &[Uuid],
     user_variables: &BTreeMap<String, String>,
+    tracking_requested: bool,
     requester_snapshot: &serde_json::Value,
 ) -> Result<(), AppError> {
     // 1. Lock launch (A.6.2) — non-building means a previous run committed.
@@ -312,6 +303,10 @@ pub async fn freeze_launch(
     };
     let requester_ctx =
         reconstruct_requester_ctx(tx, launch_id, job_id, requester_snapshot).await?;
+    let source_credential_id = match &requester_ctx.auth {
+        AuthMethod::ServiceCredential { credential_id } => Some(*credential_id),
+        _ => None,
+    };
     super::campaign::require_compose_grant(tx, &requester_ctx, revision.mail_account_id).await?;
     let steps = repo::list_steps(tx, revision.id).await?;
     if steps.is_empty() {
@@ -445,8 +440,6 @@ pub async fn freeze_launch(
             user_variables,
             &system_vars,
             &public_base_url,
-            &from_address,
-            &to_address,
         )?;
 
         let enrollment_id = repo::insert_enrollment(
@@ -460,9 +453,41 @@ pub async fn freeze_launch(
         )
         .await?;
         let mut step_hashes = Vec::with_capacity(rendered.len());
+        // All steps for one recipient belong to one mailbox-local
+        // conversation; each step receives its own stable RFC Message-ID.
+        let thread_id = infrastructure::repo::inbox::create_thread(
+            tx,
+            revision.mail_account_id,
+            None,
+            contact_id,
+        )
+        .await?;
+        let thread_id_string = thread_id.to_string();
         for snapshot in rendered {
-            let outbound_id = repo::insert_step_outbound(
+            let outbound_id = Uuid::new_v4();
+            let internet_message_id =
+                super::super::sending::stable_internet_message_id(outbound_id, &from_address)?;
+            let prepared = crate::engagement::prepare_frozen_outbound_in_tx(
                 tx,
+                outbound_id,
+                *addr_id,
+                &snapshot.body_text,
+                snapshot.body_html.as_deref(),
+                tracking_requested,
+            )
+            .await?;
+            let payload_hash = crypto::sha256_bytes(&d::payload_bytes_with_context(
+                &from_address,
+                &to_address,
+                &snapshot.subject,
+                &prepared.body_text,
+                prepared.body_html.as_deref(),
+                Some(thread_id_string.as_str()),
+                Some(internet_message_id.as_str()),
+            ));
+            let outbound_id = repo::insert_step_outbound_with_context(
+                tx,
+                outbound_id,
                 revision.mail_account_id,
                 revision.delivery_channel_id,
                 channel.sender_identity_id,
@@ -472,15 +497,20 @@ pub async fn freeze_launch(
                 revision.id,
                 enrollment_id,
                 snapshot.step.id,
+                Some(thread_id),
                 launch.requested_by,
+                source_credential_id,
+                Some(&internet_message_id),
                 &from_address,
                 &to_address,
                 &snapshot.subject,
-                &snapshot.body_text,
-                snapshot.body_html.as_deref(),
-                &snapshot.payload_hash,
+                &prepared.body_text,
+                prepared.body_html.as_deref(),
+                &payload_hash,
             )
             .await?;
+            crate::engagement::persist_frozen_outbound_in_tx(tx, outbound_id, *addr_id, &prepared)
+                .await?;
             infrastructure::repo::sending::insert_unsubscribe_token_hash(
                 tx,
                 *addr_id,
@@ -488,7 +518,7 @@ pub async fn freeze_launch(
                 &snapshot.unsubscribe_token,
             )
             .await?;
-            step_hashes.push((snapshot.step.step_order, snapshot.payload_hash));
+            step_hashes.push((snapshot.step.step_order, payload_hash));
         }
         manifest_recipients.push(d::ManifestRecipient {
             email_address_id: *addr_id,

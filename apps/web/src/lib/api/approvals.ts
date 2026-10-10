@@ -127,7 +127,7 @@ export interface ApprovalDecisionResult {
   approval_status?: string;
   decision_id?: string;
   execution_status?: string;
-  job_id?: string;
+  job_id?: string | null;
   provider_accepted_count?: number;
   version?: number;
   [key: string]: unknown;

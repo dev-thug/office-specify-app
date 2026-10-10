@@ -41,6 +41,11 @@ async fn test_db() -> Option<(Db, TestWorld)> {
     Some((db, world))
 }
 
+async fn api_runtime_db() -> Db {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for DB tests");
+    Db::connect(&url, Some(ROLE_API)).await.unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // SQL fixtures — workspace tx (RLS path), same as production code.
 // ---------------------------------------------------------------------------
@@ -235,9 +240,18 @@ async fn email_address(tx: &mut Tx<'_>, local: &str) -> Uuid {
     .unwrap()
 }
 
-/// (thread_id, last_inbound_message_id) with `n` inbound messages.
-async fn thread_with_inbound(tx: &mut Tx<'_>, mail_account_id: Uuid, n: usize) -> (Uuid, Uuid) {
+/// (thread_id, last_inbound_message_id, from_address_id) with `n` inbound messages.
+async fn thread_with_inbound(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    n: usize,
+) -> (Uuid, Uuid, Uuid) {
     let ws = tx.workspace_id().unwrap();
+    let from_address_id = email_address(tx, "inbound-from").await;
+    let (from_address, _) = infrastructure::repo::sending::email_address_row(tx, from_address_id)
+        .await
+        .unwrap()
+        .unwrap();
     let thread: Uuid = sqlx::query_scalar(
         "INSERT INTO email_threads (workspace_id, mail_account_id)
          VALUES ($1,$2) RETURNING id",
@@ -263,6 +277,16 @@ async fn thread_with_inbound(tx: &mut Tx<'_>, mail_account_id: Uuid, n: usize) -
         .fetch_one(tx.conn())
         .await
         .unwrap();
+        infrastructure::repo::inbox::insert_participant(
+            tx,
+            last,
+            "from",
+            &from_address,
+            None,
+            Some(from_address_id),
+        )
+        .await
+        .unwrap();
     }
     sqlx::query(
         "UPDATE email_threads SET last_inbound_message_id = $3
@@ -274,7 +298,59 @@ async fn thread_with_inbound(tx: &mut Tx<'_>, mail_account_id: Uuid, n: usize) -
     .execute(tx.conn())
     .await
     .unwrap();
-    (thread, last)
+    (thread, last, from_address_id)
+}
+
+async fn thread_with_from_participant(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    from_address: &str,
+    from_email_address_id: Option<Uuid>,
+) -> (Uuid, Uuid) {
+    let ws = tx.workspace_id().unwrap();
+    let thread_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_threads (workspace_id, mail_account_id)
+         VALUES ($1,$2) RETURNING id",
+    )
+    .bind(ws)
+    .bind(mail_account_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let message_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_messages
+            (workspace_id, mail_account_id, thread_id, direction,
+             internet_message_id, subject, message_at)
+         VALUES ($1,$2,$3,'inbound',$4,'reply recipient fixture',now()) RETURNING id",
+    )
+    .bind(ws)
+    .bind(mail_account_id)
+    .bind(thread_id)
+    .bind(format!("<reply-{}@test>", Uuid::new_v4().simple()))
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    infrastructure::repo::inbox::insert_participant(
+        tx,
+        message_id,
+        "from",
+        from_address,
+        None,
+        from_email_address_id,
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE email_threads SET last_inbound_message_id=$3
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(ws)
+    .bind(thread_id)
+    .bind(message_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    (thread_id, message_id)
 }
 
 /// `send_basis` at dispatch needs a valid basis for the purpose (a reply
@@ -350,6 +426,7 @@ async fn frozen_outbound(
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -457,6 +534,7 @@ async fn draft_lifecycle_freeze_immutable() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -474,6 +552,7 @@ async fn draft_lifecycle_freeze_immutable() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -538,6 +617,7 @@ async fn freeze_mints_recipient_bound_booking_url_and_denies_foreign_host() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: Some(host_meeting_type),
+            tracking_requested: false,
         },
     )
     .await
@@ -594,10 +674,17 @@ async fn freeze_mints_recipient_bound_booking_url_and_denies_foreign_host() {
         &outbound.subject,
         &outbound.body_text,
         outbound.body_html.as_deref(),
-        None,
-        None,
-        None,
+        outbound.thread_id.map(|id| id.to_string()).as_deref(),
+        outbound
+            .reply_to_message_id
+            .map(|id| id.to_string())
+            .as_deref(),
+        outbound
+            .communication_basis_id
+            .map(|id| id.to_string())
+            .as_deref(),
         Some(&template_version_id_text),
+        outbound.internet_message_id.as_deref(),
     );
     let expected_hash = infrastructure::crypto::sha256_bytes(&preimage);
     assert_eq!(outbound.payload_hash, expected_hash);
@@ -655,6 +742,7 @@ async fn freeze_mints_recipient_bound_booking_url_and_denies_foreign_host() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: Some(foreign_meeting_type),
+            tracking_requested: false,
         },
     )
     .await
@@ -704,6 +792,7 @@ async fn marketing_freeze_mints_confirmation_link_and_adds_only_missing_footers(
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -791,6 +880,7 @@ async fn marketing_freeze_mints_confirmation_link_and_adds_only_missing_footers(
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -908,6 +998,7 @@ async fn preflight_reports_full_chain_nonbinding() {
         "emergency_stop",
         "send_workers_locked",
         "recipient_not_suppressed",
+        "reply_recipient",
         "send_basis",
         "reply_context",
         "sender_verified",
@@ -1197,14 +1288,15 @@ async fn t15_two_users_one_reply_claim() {
     };
     let ws = world.workspace_id;
     enable_sending(&db, ws).await;
-    let (channel, to) = send_fixture(&db, &world, "correspondence", "t15").await;
+    let (channel, _to) = send_fixture(&db, &world, "correspondence", "t15").await;
 
     // A thread with one inbound — both users reply to it.
     let mut tx = db.begin(ws).await.unwrap();
-    let (thread, last) = thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
+    let (thread, last, reply_recipient) =
+        thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
     tx.commit().await.unwrap();
 
-    let req_a = draft_req(&world, to, "correspondence", |r| {
+    let req_a = draft_req(&world, reply_recipient, "correspondence", |r| {
         r.thread_id = Some(thread);
         r.reply_to_message_id = Some(last);
         r.expected_last_inbound_id = Some(last);
@@ -1252,14 +1344,15 @@ async fn t16_new_inbound_during_draft_forces_rereview() {
     };
     let ws = world.workspace_id;
     enable_sending(&db, ws).await;
-    let (channel, to) = send_fixture(&db, &world, "correspondence", "t16").await;
+    let (channel, _to) = send_fixture(&db, &world, "correspondence", "t16").await;
     let ctx = ctx_for(&world, &world.admin, "t16");
 
     let mut tx = db.begin(ws).await.unwrap();
-    let (thread, last1) = thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
+    let (thread, last1, reply_recipient) =
+        thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
     tx.commit().await.unwrap();
 
-    let req = draft_req(&world, to, "correspondence", |r| {
+    let req = draft_req(&world, reply_recipient, "correspondence", |r| {
         r.thread_id = Some(thread);
         r.reply_to_message_id = Some(last1);
         r.expected_last_inbound_id = Some(last1);
@@ -1302,11 +1395,176 @@ async fn t16_new_inbound_during_draft_forces_rereview() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
     .unwrap_err();
     assert_eq!(err.code, ErrorCode::ReplyContextChanged);
+}
+
+#[tokio::test]
+async fn reply_draft_create_rejects_recipient_different_from_inbound_from() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    let (_channel, unrelated_recipient) =
+        send_fixture(&db, &world, "correspondence", "reply-create").await;
+    let (reply_recipient, thread_id, inbound_id, from_address) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let reply_recipient = email_address(&mut tx, "actual-sender").await;
+        valid_basis(
+            &mut tx,
+            reply_recipient,
+            world.admin.principal_id,
+            "correspondence",
+        )
+        .await;
+        let (from_address, _) =
+            infrastructure::repo::sending::email_address_row(&mut tx, reply_recipient)
+                .await
+                .unwrap()
+                .unwrap();
+        let (thread_id, inbound_id) = thread_with_from_participant(
+            &mut tx,
+            world.mail_account_id,
+            &from_address,
+            Some(reply_recipient),
+        )
+        .await;
+        tx.commit().await.unwrap();
+        (reply_recipient, thread_id, inbound_id, from_address)
+    };
+    assert_ne!(reply_recipient, unrelated_recipient);
+
+    let ctx = ctx_for(&world, &world.admin, "reply-create-mismatch");
+    let req = draft_req(&world, unrelated_recipient, "correspondence", |req| {
+        req.thread_id = Some(thread_id);
+        req.reply_to_message_id = Some(inbound_id);
+        req.expected_last_inbound_id = Some(inbound_id);
+    });
+    let error = sending::create_draft(&db, &ctx, &req).await.unwrap_err();
+    assert_eq!(error.code, ErrorCode::ValidationFailed);
+    assert!(
+        error.violations.iter().any(|violation| {
+            violation.field == "to_email_address_id" && violation.code == "REPLY_RECIPIENT_MISMATCH"
+        }),
+        "unexpected violations: {:?}; inbound From was {from_address}",
+        error.violations
+    );
+}
+
+#[tokio::test]
+async fn reply_draft_patch_rejects_retargeting_away_from_inbound_from() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    let (_channel, unrelated_recipient) =
+        send_fixture(&db, &world, "correspondence", "reply-patch").await;
+    let (reply_recipient, thread_id, inbound_id) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let reply_recipient = email_address(&mut tx, "actual-sender-patch").await;
+        valid_basis(
+            &mut tx,
+            reply_recipient,
+            world.admin.principal_id,
+            "correspondence",
+        )
+        .await;
+        let (from_address, _) =
+            infrastructure::repo::sending::email_address_row(&mut tx, reply_recipient)
+                .await
+                .unwrap()
+                .unwrap();
+        let (thread_id, inbound_id) = thread_with_from_participant(
+            &mut tx,
+            world.mail_account_id,
+            &from_address,
+            Some(reply_recipient),
+        )
+        .await;
+        tx.commit().await.unwrap();
+        (reply_recipient, thread_id, inbound_id)
+    };
+    let ctx = ctx_for(&world, &world.admin, "reply-patch-mismatch");
+    let req = draft_req(&world, reply_recipient, "correspondence", |req| {
+        req.thread_id = Some(thread_id);
+        req.reply_to_message_id = Some(inbound_id);
+        req.expected_last_inbound_id = Some(inbound_id);
+    });
+    let draft = sending::create_draft(&db, &ctx, &req).await.unwrap();
+    let patch = PatchMessageDraftRequest {
+        subject: None,
+        body_text: Some("retargeted reply".into()),
+        body_html: None,
+        variables: None,
+        to_email_address_id: Some(unrelated_recipient),
+        expected_last_inbound_id: None,
+        visibility: None,
+    };
+    let error = sending::patch_draft(&db, &ctx, draft.draft_id, draft.version, &patch)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ValidationFailed);
+    assert!(error.violations.iter().any(|violation| {
+        violation.field == "to_email_address_id" && violation.code == "REPLY_RECIPIENT_MISMATCH"
+    }));
+}
+
+#[tokio::test]
+async fn case_normalized_inbound_from_can_be_frozen_as_reply_recipient() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    let (channel, _unrelated) =
+        send_fixture(&db, &world, "correspondence", "reply-normalized").await;
+    let (recipient, thread_id, inbound_id, address_variant) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let recipient = email_address(&mut tx, "mixed-case-sender").await;
+        valid_basis(
+            &mut tx,
+            recipient,
+            world.admin.principal_id,
+            "correspondence",
+        )
+        .await;
+        let (address, _) = infrastructure::repo::sending::email_address_row(&mut tx, recipient)
+            .await
+            .unwrap()
+            .unwrap();
+        let address_variant = address.to_ascii_uppercase();
+        let (thread_id, inbound_id) =
+            thread_with_from_participant(&mut tx, world.mail_account_id, &address_variant, None)
+                .await;
+        tx.commit().await.unwrap();
+        (recipient, thread_id, inbound_id, address_variant)
+    };
+    let ctx = ctx_for(&world, &world.admin, "reply-normalized");
+    let req = draft_req(&world, recipient, "correspondence", |req| {
+        req.thread_id = Some(thread_id);
+        req.reply_to_message_id = Some(inbound_id);
+        req.expected_last_inbound_id = Some(inbound_id);
+    });
+    let draft = sending::create_draft(&db, &ctx, &req).await.unwrap();
+    let frozen = sending::freeze_draft(
+        &db,
+        &ctx,
+        draft.draft_id,
+        draft.version,
+        &FreezeMessageDraftRequest {
+            delivery_channel_id: channel,
+            sender_identity_id: None,
+            meeting_type_id: None,
+            tracking_requested: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!address_variant.is_empty());
+    assert_eq!(frozen.status, "draft");
 }
 
 #[tokio::test]
@@ -1316,13 +1574,14 @@ async fn cancel_queued_releases_job_and_claim() {
     };
     let ws = world.workspace_id;
     enable_sending(&db, ws).await;
-    let (channel, to) = send_fixture(&db, &world, "correspondence", "cancel").await;
+    let (channel, _to) = send_fixture(&db, &world, "correspondence", "cancel").await;
     let ctx = ctx_for(&world, &world.admin, "cancel");
 
     let mut tx = db.begin(ws).await.unwrap();
-    let (thread, last) = thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
+    let (thread, last, reply_recipient) =
+        thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
     tx.commit().await.unwrap();
-    let req = draft_req(&world, to, "correspondence", |r| {
+    let req = draft_req(&world, reply_recipient, "correspondence", |r| {
         r.thread_id = Some(thread);
         r.reply_to_message_id = Some(last);
         r.expected_last_inbound_id = Some(last);
@@ -1331,7 +1590,10 @@ async fn cancel_queued_releases_job_and_claim() {
     let res = submit(&db, &world, &world.admin, outbound, &hash, "k-cancel").await;
 
     // Read-side state while queued (T34 pre-dispatch shape).
-    let dto = sending::get_outbound(&db, &ctx, outbound).await.unwrap();
+    let api_db = api_runtime_db().await;
+    let dto = sending::get_outbound(&api_db, &ctx, outbound)
+        .await
+        .unwrap();
     assert_eq!(dto.status, "queued");
     assert_eq!(dto.delivery_status, "unknown");
     assert_eq!(dto.provider_accepted, None);
@@ -1381,12 +1643,13 @@ async fn thread_filtered_draft_resumes_to_read_authorized_frozen_snapshot() {
     };
     let ws = world.workspace_id;
     enable_sending(&db, ws).await;
-    let (channel, to) = send_fixture(&db, &world, "correspondence", "reply-resume").await;
+    let (channel, _to) = send_fixture(&db, &world, "correspondence", "reply-resume").await;
     let mut tx = db.begin(ws).await.unwrap();
-    let (thread, last_inbound) = thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
+    let (thread, last_inbound, reply_recipient) =
+        thread_with_inbound(&mut tx, world.mail_account_id, 1).await;
     tx.commit().await.unwrap();
     let ctx = ctx_for(&world, &world.admin, "reply-resume");
-    let req = draft_req(&world, to, "correspondence", |r| {
+    let req = draft_req(&world, reply_recipient, "correspondence", |r| {
         r.thread_id = Some(thread);
         r.reply_to_message_id = Some(last_inbound);
         r.expected_last_inbound_id = Some(last_inbound);
@@ -1410,6 +1673,7 @@ async fn thread_filtered_draft_resumes_to_read_authorized_frozen_snapshot() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -1427,7 +1691,8 @@ async fn thread_filtered_draft_resumes_to_read_authorized_frozen_snapshot() {
         Some(frozen.outbound_message_id)
     );
 
-    let outbound = sending::get_outbound(&db, &ctx, frozen.outbound_message_id)
+    let api_db = api_runtime_db().await;
+    let outbound = sending::get_outbound(&api_db, &ctx, frozen.outbound_message_id)
         .await
         .unwrap();
     assert_eq!(outbound.payload_hash, frozen.payload_hash);
@@ -1438,7 +1703,7 @@ async fn thread_filtered_draft_resumes_to_read_authorized_frozen_snapshot() {
     assert_eq!(outbound.body_html, None);
 
     let no_grant = ctx_for(&world, &world.member_b, "reply-resume-no-read");
-    let err = sending::get_outbound(&db, &no_grant, frozen.outbound_message_id)
+    let err = sending::get_outbound(&api_db, &no_grant, frozen.outbound_message_id)
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::MailboxAccessDenied);
@@ -1492,11 +1757,12 @@ async fn cancel_without_mail_read_returns_no_subject_or_recipient() {
 
     let admin_ctx = ctx_for(&world, &world.admin, "cancel-admin-read");
     let manager_ctx = ctx_for(&world, &world.manager, "cancel-manager-read");
-    let admin_version = sending::get_outbound(&db, &admin_ctx, admin_outbound)
+    let api_db = api_runtime_db().await;
+    let admin_version = sending::get_outbound(&api_db, &admin_ctx, admin_outbound)
         .await
         .unwrap()
         .version;
-    let manager_version = sending::get_outbound(&db, &admin_ctx, manager_outbound)
+    let manager_version = sending::get_outbound(&api_db, &admin_ctx, manager_outbound)
         .await
         .unwrap()
         .version;

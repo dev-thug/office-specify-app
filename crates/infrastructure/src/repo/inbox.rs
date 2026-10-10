@@ -59,6 +59,53 @@ pub struct MessageRow {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct OutboundReplyTarget {
+    pub thread_id: Uuid,
+    pub recipient_address: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplyHeaders {
+    pub in_reply_to: String,
+    pub references: Vec<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MessageSearchRow {
+    pub id: Uuid,
+    pub mail_account_id: Uuid,
+    pub thread_id: Uuid,
+    pub direction: String,
+    pub subject: Option<String>,
+    pub snippet: String,
+    pub message_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct OutboundProjectionRow {
+    mail_account_id: Uuid,
+    thread_id: Option<Uuid>,
+    internet_message_id: Option<String>,
+    provider_message_id: Option<String>,
+    to_email_address_id: Uuid,
+    from_address_snapshot: String,
+    to_address_snapshot: String,
+    subject: String,
+    body_text: String,
+    body_html: Option<String>,
+    message_at: DateTime<Utc>,
+    status: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct OutboundReplyRow {
+    inbound_message_id: Uuid,
+    thread_id: Uuid,
+    from_address: String,
+    received_at: DateTime<Utc>,
+}
+
 const MESSAGE_COLS: &str = "id, mail_account_id, thread_id, outbound_message_id, \
      direction, provider_message_id, internet_message_id, in_reply_to, \
      reference_ids, subject, body_text, body_html, message_at, \
@@ -272,6 +319,64 @@ pub async fn list_threads(
         q = q.bind(b);
     }
     q.fetch_all(tx.conn()).await.map_err(map_sqlx)
+}
+
+/// Bounded message search for principals with mailbox read grants. Search
+/// terms are literal substrings (ILIKE wildcards are escaped), and pagination
+/// follows `(message_at, id) DESC`.
+pub async fn search_messages(
+    tx: &mut Tx<'_>,
+    principal_id: Uuid,
+    mail_account_id: Option<Uuid>,
+    query: &str,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<MessageSearchRow>, AppError> {
+    let term = query.trim();
+    if term.is_empty() {
+        return Ok(Vec::new());
+    }
+    let escaped = term
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{escaped}%");
+    // MCP asks for page size + 1 so it can reliably determine has_more at
+    // the public 100-row maximum.
+    let bounded_limit = limit.clamp(1, 101);
+    let (after_at, after_id) = match after {
+        Some((at, id)) => (Some(at), Some(id)),
+        None => (None, None),
+    };
+    sqlx::query_as::<_, MessageSearchRow>(
+        "SELECT m.id, m.mail_account_id, m.thread_id, m.direction, m.subject,
+                left(coalesce(m.body_text, ''), 200) AS snippet, m.message_at
+           FROM email_messages m
+          WHERE m.workspace_id = $1
+            AND EXISTS (
+                SELECT 1 FROM mail_account_grants g
+                 WHERE g.workspace_id = m.workspace_id
+                   AND g.mail_account_id = m.mail_account_id
+                   AND g.principal_id = $2 AND g.can_read
+            )
+            AND ($3::uuid IS NULL OR m.mail_account_id = $3)
+            AND (m.subject ILIKE $4 ESCAPE '\\'
+                 OR m.body_text ILIKE $4 ESCAPE '\\')
+            AND ($5::timestamptz IS NULL
+                 OR (m.message_at, m.id) < ($5, $6::uuid))
+          ORDER BY m.message_at DESC, m.id DESC
+          LIMIT $7",
+    )
+    .bind(tx.workspace_id())
+    .bind(principal_id)
+    .bind(mail_account_id)
+    .bind(pattern)
+    .bind(after_at)
+    .bind(after_id)
+    .bind(bounded_limit)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)
 }
 
 /// Thread row by id — no ACL here (callers decide 404-vs-403 semantics).
@@ -497,6 +602,25 @@ pub async fn upsert_read_state(
     .map_err(map_sqlx)
 }
 
+/// Clear this principal's read mark so the thread becomes unread again.
+pub async fn clear_read_state(
+    tx: &mut Tx<'_>,
+    thread_id: Uuid,
+    principal_id: Uuid,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "DELETE FROM thread_read_states
+          WHERE workspace_id = $1 AND thread_id = $2 AND principal_id = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(thread_id)
+    .bind(principal_id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(())
+}
+
 /// Human review of an inbound classification (§9.4). Records the reviewer
 /// principal — the reason string lives in audit metadata, not the table.
 pub async fn set_classification(
@@ -527,6 +651,7 @@ pub async fn insert_reply_draft(
     tx: &mut Tx<'_>,
     mail_account_id: Uuid,
     owner: Uuid,
+    source_credential_id: Option<Uuid>,
     visibility: &str,
     thread_id: Uuid,
     reply_to_message_id: Option<Uuid>,
@@ -538,10 +663,10 @@ pub async fn insert_reply_draft(
 ) -> Result<DraftRow, AppError> {
     sqlx::query_as::<_, DraftRow>(
         "INSERT INTO message_drafts
-            (workspace_id, mail_account_id, owner_principal_id, visibility,
-             thread_id, reply_to_message_id, expected_last_inbound_id,
+            (workspace_id, mail_account_id, owner_principal_id, source_credential_id,
+             visibility, thread_id, reply_to_message_id, expected_last_inbound_id,
              to_email_address_id, purpose, subject, body_text, body_html)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'correspondence', $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'correspondence', $10, $11, $12)
          RETURNING id, mail_account_id, owner_principal_id, visibility,
                    thread_id, reply_to_message_id, expected_last_inbound_id,
                    to_email_address_id, purpose, subject, body_text, body_html,
@@ -550,6 +675,7 @@ pub async fn insert_reply_draft(
     .bind(tx.workspace_id())
     .bind(mail_account_id)
     .bind(owner)
+    .bind(source_credential_id)
     .bind(visibility)
     .bind(thread_id)
     .bind(reply_to_message_id)
@@ -700,8 +826,8 @@ pub async fn upsert_email_address(
          RETURNING id",
     )
     .bind(tx.workspace_id())
-    .bind(normalized_key)
     .bind(original)
+    .bind(normalized_key)
     .fetch_one(tx.conn())
     .await
     .map_err(map_sqlx)
@@ -743,8 +869,73 @@ pub async fn thread_by_provider_id(
     .map_err(map_sqlx)
 }
 
+/// Resolve a reply against an immutable outbound Message-ID in this exact
+/// workspace and mailbox. In-Reply-To takes priority; otherwise the newest
+/// matching ID in the References chain is used.
+pub async fn outbound_reply_target(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    in_reply_to: Option<&str>,
+    references: &[String],
+) -> Result<Option<OutboundReplyTarget>, AppError> {
+    if let Some(id) = in_reply_to.and_then(crate::providers::mail_headers::parse_single_message_id)
+    {
+        let direct = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT thread_id, to_address_snapshot
+               FROM outbound_messages
+              WHERE workspace_id = $1 AND mail_account_id = $2
+                AND internet_message_id = $3
+                AND thread_id IS NOT NULL AND status IN ('accepted','unknown')",
+        )
+        .bind(tx.workspace_id())
+        .bind(mail_account_id)
+        .bind(id)
+        .fetch_optional(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+        if let Some((thread_id, recipient_address)) = direct {
+            return Ok(Some(OutboundReplyTarget {
+                thread_id,
+                recipient_address,
+            }));
+        }
+    }
+
+    let candidates: Vec<String> = references
+        .iter()
+        .rev()
+        .filter_map(|value| crate::providers::mail_headers::parse_single_message_id(value))
+        .collect();
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let referenced = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT o.thread_id, o.to_address_snapshot
+           FROM unnest($3::text[]) WITH ORDINALITY AS r(message_id, position)
+           JOIN outbound_messages o
+             ON o.workspace_id = $1 AND o.mail_account_id = $2
+            AND o.internet_message_id = r.message_id
+          WHERE o.thread_id IS NOT NULL AND o.status IN ('accepted','unknown')
+          ORDER BY r.position
+          LIMIT 1",
+    )
+    .bind(tx.workspace_id())
+    .bind(mail_account_id)
+    .bind(candidates)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(
+        referenced.map(|(thread_id, recipient_address)| OutboundReplyTarget {
+            thread_id,
+            recipient_address,
+        }),
+    )
+}
+
 /// Thread matching step 2: `In-Reply-To` / `References` headers resolve to a
-/// known `internet_message_id` in the same mailbox.
+/// known inbound `internet_message_id` in the same mailbox. Outbound IDs
+/// must pass the stricter recipient check in `outbound_reply_target`.
 pub async fn thread_by_references(
     tx: &mut Tx<'_>,
     mail_account_id: Uuid,
@@ -754,10 +945,14 @@ pub async fn thread_by_references(
         return Ok(None);
     }
     sqlx::query_scalar(
-        "SELECT thread_id FROM email_messages
-          WHERE workspace_id = $1 AND mail_account_id = $2
-            AND internet_message_id = ANY($3)
-          ORDER BY message_at DESC LIMIT 1",
+        "SELECT m.thread_id
+           FROM unnest($3::text[]) WITH ORDINALITY AS r(message_id, position)
+           JOIN email_messages m
+             ON m.workspace_id = $1 AND m.mail_account_id = $2
+            AND m.internet_message_id = r.message_id
+          WHERE m.direction = 'inbound'
+          ORDER BY r.position
+          LIMIT 1",
     )
     .bind(tx.workspace_id())
     .bind(mail_account_id)
@@ -765,6 +960,100 @@ pub async fn thread_by_references(
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)
+}
+
+/// RFC reply headers for an existing inbound message in this mailbox. The
+/// In-Reply-To target is the message's validated Internet Message-ID, and
+/// References carries its stored ancestry followed by that target.
+pub async fn reply_headers_for_message(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    message_id: Uuid,
+) -> Result<Option<ReplyHeaders>, AppError> {
+    let row: Option<(Option<String>, Vec<String>)> = sqlx::query_as(
+        "SELECT internet_message_id, reference_ids
+           FROM email_messages
+          WHERE workspace_id = $1 AND mail_account_id = $2
+            AND id = $3 AND direction = 'inbound'",
+    )
+    .bind(tx.workspace_id())
+    .bind(mail_account_id)
+    .bind(message_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let Some((Some(in_reply_to), references)) = row else {
+        return Ok(None);
+    };
+    let Some(in_reply_to) = crate::providers::mail_headers::parse_single_message_id(&in_reply_to)
+    else {
+        return Ok(None);
+    };
+    let mut chain = Vec::new();
+    for reference in references {
+        if let Some(reference) = crate::providers::mail_headers::parse_single_message_id(&reference)
+            && !chain.contains(&reference)
+        {
+            chain.push(reference);
+        }
+    }
+    if !chain.contains(&in_reply_to) {
+        chain.push(in_reply_to.clone());
+    }
+    Ok(Some(ReplyHeaders {
+        in_reply_to,
+        references: chain,
+    }))
+}
+
+/// Reply references shown in outbound status are exact, mailbox-scoped
+/// Message-ID matches whose normalized From address equals the outbound
+/// recipient. This is attribution from provider-observed fields; it does not
+/// authenticate the message body or claim cryptographic sender proof.
+pub async fn list_outbound_replies(
+    tx: &mut Tx<'_>,
+    outbound_message_id: Uuid,
+) -> Result<Vec<contracts::sending::OutboundReplyReference>, AppError> {
+    let rows = sqlx::query_as::<_, OutboundReplyRow>(
+        "SELECT DISTINCT m.id AS inbound_message_id, m.thread_id,
+                p.address AS from_address, m.message_at AS received_at
+           FROM outbound_messages o
+           JOIN email_messages m
+             ON m.workspace_id = o.workspace_id
+            AND m.mail_account_id = o.mail_account_id
+            AND m.thread_id = o.thread_id
+           JOIN message_participants p
+             ON p.workspace_id = m.workspace_id
+            AND p.email_message_id = m.id AND p.role = 'from'
+           JOIN email_addresses sender
+             ON sender.workspace_id = p.workspace_id AND sender.id = p.email_address_id
+           JOIN email_addresses recipient
+             ON recipient.workspace_id = o.workspace_id
+            AND recipient.id = o.to_email_address_id
+          WHERE o.workspace_id = $1 AND o.id = $2
+            AND o.status IN ('accepted','unknown')
+            AND o.internet_message_id IS NOT NULL
+            AND m.direction = 'inbound'
+            AND sender.normalized_key = recipient.normalized_key
+            AND (m.in_reply_to = o.internet_message_id
+                 OR o.internet_message_id = ANY(m.reference_ids))
+          ORDER BY m.message_at, m.id
+          LIMIT 100",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound_message_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| contracts::sending::OutboundReplyReference {
+            inbound_message_id: row.inbound_message_id,
+            thread_id: row.thread_id,
+            from_address: row.from_address,
+            received_at: row.received_at,
+        })
+        .collect())
 }
 
 pub async fn create_thread(
@@ -829,6 +1118,136 @@ pub async fn insert_message_if_new(
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)
+}
+
+/// Project an accepted or uncertain outbound into its local thread. Called
+/// in the dispatch outcome transaction, never at freeze, so an unsent draft
+/// cannot appear as sent. Repeated outcome handling is safe.
+pub async fn record_sent_outbound(
+    tx: &mut Tx<'_>,
+    outbound_message_id: Uuid,
+) -> Result<Option<Uuid>, AppError> {
+    let outbound = sqlx::query_as::<_, OutboundProjectionRow>(
+        "SELECT mail_account_id, thread_id, internet_message_id,
+                provider_message_id, to_email_address_id, from_address_snapshot,
+                to_address_snapshot, subject, body_text, body_html,
+                COALESCE(accepted_at, created_at) AS message_at, status
+           FROM outbound_messages
+          WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound_message_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let Some(outbound) = outbound else {
+        return Ok(None);
+    };
+    if !matches!(outbound.status.as_str(), "accepted" | "unknown") {
+        return Ok(None);
+    }
+    let (Some(thread_id), Some(raw_message_id)) =
+        (outbound.thread_id, outbound.internet_message_id.as_deref())
+    else {
+        // Legacy snapshots predate reply correlation and stay readable.
+        return Ok(None);
+    };
+    let internet_message_id =
+        crate::providers::mail_headers::parse_single_message_id(raw_message_id)
+            .ok_or_else(|| AppError::internal("outbound Message-ID is invalid"))?;
+    if let Some(existing) = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM email_messages
+          WHERE workspace_id = $1 AND mail_account_id = $2
+            AND outbound_message_id = $3 AND direction = 'outbound'",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound.mail_account_id)
+    .bind(outbound_message_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?
+    {
+        return Ok(Some(existing));
+    }
+
+    let message_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO email_messages
+            (workspace_id, mail_account_id, thread_id, outbound_message_id,
+             direction, provider_message_id, internet_message_id, subject,
+             body_text, body_html, message_at, classification)
+         VALUES ($1, $2, $3, $4, 'outbound', $5, $6, $7, $8, $9, $10, 'unknown')
+         ON CONFLICT (workspace_id, outbound_message_id)
+             WHERE direction = 'outbound' AND outbound_message_id IS NOT NULL
+         DO NOTHING
+         RETURNING id",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound.mail_account_id)
+    .bind(thread_id)
+    .bind(outbound_message_id)
+    .bind(&outbound.provider_message_id)
+    .bind(&internet_message_id)
+    .bind(&outbound.subject)
+    .bind(&outbound.body_text)
+    .bind(&outbound.body_html)
+    .bind(outbound.message_at)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    let Some(message_id) = message_id else {
+        let existing = sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM email_messages
+              WHERE workspace_id = $1 AND mail_account_id = $2
+                AND outbound_message_id = $3 AND direction = 'outbound'",
+        )
+        .bind(tx.workspace_id())
+        .bind(outbound.mail_account_id)
+        .bind(outbound_message_id)
+        .fetch_optional(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+        return Ok(existing);
+    };
+
+    let from_address_id = match domain::email_address::normalize(
+        &outbound.from_address_snapshot,
+        domain::email_address::LocalPartPolicy::Lowercase,
+    ) {
+        Ok(address) => {
+            Some(upsert_email_address(tx, &address.normalized_key, &address.original).await?)
+        }
+        Err(_) => None,
+    };
+    insert_participant(
+        tx,
+        message_id,
+        "from",
+        &outbound.from_address_snapshot,
+        None,
+        from_address_id,
+    )
+    .await?;
+    insert_participant(
+        tx,
+        message_id,
+        "to",
+        &outbound.to_address_snapshot,
+        None,
+        Some(outbound.to_email_address_id),
+    )
+    .await?;
+    sqlx::query(
+        "UPDATE email_threads
+            SET version = version + 1, updated_at = now()
+          WHERE workspace_id = $1 AND mail_account_id = $2 AND id = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound.mail_account_id)
+    .bind(thread_id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(Some(message_id))
 }
 
 /// Message whose provider id is already recorded.

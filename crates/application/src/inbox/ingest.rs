@@ -3,10 +3,10 @@
 //! transaction; dedupe anchors on `(mail_account_id, provider_message_id)`
 //! so webhook/sync/replay overlap never duplicates a message (T14).
 //!
-//! Thread match order (§9.2): verified provider thread id →
-//! `In-Reply-To`/`References` against stored `internet_message_id`s → a new
-//! thread linked to the sender's CRM contact (explicit address link only —
-//! never subject similarity).
+//! Thread match order: exact mailbox-local outbound Message-ID plus
+//! normalized sender/recipient match → provider thread ID → exact ID reference
+//! to a stored inbound message → a new thread linked to an explicit CRM
+//! address association. Subject similarity is never used.
 //!
 //! `body_html` is stored sanitized — the raw provider payload is never
 //! persisted (§15.1; T26 sanitization also runs at DTO build so stored
@@ -36,9 +36,32 @@ pub async fn ingest_provider_message(
     mail_account_id: Uuid,
     msg: &ProviderMessage,
 ) -> Result<IngestOutcome, AppError> {
+    // Provider adapters parse RFC headers, but normalize them again at the
+    // ingest boundary so malformed or non-canonical IDs never become a
+    // correlation key even when a new adapter is added later.
+    let mut normalized_msg = msg.clone();
+    normalized_msg.internet_message_id = msg
+        .internet_message_id
+        .as_deref()
+        .and_then(infrastructure::providers::mail_headers::parse_single_message_id);
+    normalized_msg.in_reply_to = msg
+        .in_reply_to
+        .as_deref()
+        .and_then(infrastructure::providers::mail_headers::parse_single_message_id);
+    normalized_msg.references.clear();
+    for reference in &msg.references {
+        if let Some(reference) =
+            infrastructure::providers::mail_headers::parse_single_message_id(reference)
+            && !normalized_msg.references.contains(&reference)
+        {
+            normalized_msg.references.push(reference);
+        }
+    }
+
     // Dedupe first — replayed webhook/sync overlaps are free no-ops.
     if let Some(existing) =
-        repo::message_by_provider_id(tx, mail_account_id, &msg.provider_message_id).await?
+        repo::message_by_provider_id(tx, mail_account_id, &normalized_msg.provider_message_id)
+            .await?
     {
         return Ok(IngestOutcome {
             message_id: None,
@@ -51,7 +74,7 @@ pub async fn ingest_provider_message(
     // Sender address row (§6.3 normalization) — feeds thread contact link,
     // the `from` participant, `message.received` and pause jobs.
     let from_norm = domain::email_address::normalize(
-        &msg.from,
+        &normalized_msg.from,
         domain::email_address::LocalPartPolicy::Lowercase,
     );
     let from_address_id = match &from_norm {
@@ -64,15 +87,35 @@ pub async fn ingest_provider_message(
     };
 
     // Thread resolution (§9.2 order).
-    let thread_id = if let Some(pt) = msg.provider_thread_id.as_deref() {
+    let outbound_target = repo::outbound_reply_target(
+        tx,
+        mail_account_id,
+        normalized_msg.in_reply_to.as_deref(),
+        &normalized_msg.references,
+    )
+    .await?;
+    let thread_id = if let Some(target) = outbound_target {
+        if same_email_address(&normalized_msg.from, &target.recipient_address) {
+            target.thread_id
+        } else {
+            // A forged or unexpected From must not fall through to a provider
+            // thread id or an ancestor in References.
+            repo::create_thread(tx, mail_account_id, None, contact_id).await?
+        }
+    } else if let Some(pt) = normalized_msg.provider_thread_id.as_deref() {
         match repo::thread_by_provider_id(tx, mail_account_id, pt).await? {
             Some(t) => t,
             None => repo::create_thread(tx, mail_account_id, Some(pt), contact_id).await?,
         }
     } else {
-        let mut refs = msg.references.clone();
-        if let Some(irt) = &msg.in_reply_to {
+        // In-Reply-To is the exact target; absent that, the most recent
+        // validated References entry is considered.
+        let mut refs = Vec::new();
+        if let Some(irt) = &normalized_msg.in_reply_to {
             refs.push(irt.clone());
+            refs.extend(normalized_msg.references.iter().cloned());
+        } else {
+            refs.extend(normalized_msg.references.iter().rev().cloned());
         }
         match repo::thread_by_references(tx, mail_account_id, &refs).await? {
             Some(t) => t,
@@ -81,9 +124,9 @@ pub async fn ingest_provider_message(
     };
 
     let classification = domain::inbox::classify_inbound(
-        msg.subject.as_deref(),
-        msg.body_text.as_deref(),
-        &msg.from,
+        normalized_msg.subject.as_deref(),
+        normalized_msg.body_text.as_deref(),
+        &normalized_msg.from,
     );
 
     let inserted = repo::insert_message_if_new(
@@ -91,7 +134,7 @@ pub async fn ingest_provider_message(
         mail_account_id,
         thread_id,
         "inbound",
-        msg,
+        &normalized_msg,
         classification.as_str(),
     )
     .await?;
@@ -111,8 +154,16 @@ pub async fn ingest_provider_message(
 
     // Participants: from + to (+reply_to when present), each linked to its
     // normalized address row where the address parses.
-    repo::insert_participant(tx, message_id, "from", &msg.from, None, from_address_id).await?;
-    for to in &msg.to {
+    repo::insert_participant(
+        tx,
+        message_id,
+        "from",
+        &normalized_msg.from,
+        None,
+        from_address_id,
+    )
+    .await?;
+    for to in &normalized_msg.to {
         let addr_id = match domain::email_address::normalize(
             to,
             domain::email_address::LocalPartPolicy::Lowercase,
@@ -123,7 +174,7 @@ pub async fn ingest_provider_message(
         repo::insert_participant(tx, message_id, "to", to, None, addr_id).await?;
     }
 
-    repo::advance_last_inbound(tx, thread_id, message_id, msg.message_at).await?;
+    repo::advance_last_inbound(tx, thread_id, message_id, normalized_msg.message_at).await?;
 
     outbox::emit(
         tx,
@@ -185,4 +236,15 @@ pub async fn ingest_provider_message(
         thread_id,
         classification,
     })
+}
+
+fn same_email_address(left: &str, right: &str) -> bool {
+    let policy = domain::email_address::LocalPartPolicy::Lowercase;
+    let Ok(left) = domain::email_address::normalize(left, policy) else {
+        return false;
+    };
+    let Ok(right) = domain::email_address::normalize(right, policy) else {
+        return false;
+    };
+    left.normalized_key == right.normalized_key
 }

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { CampaignLaunchExecutionControl } from "@/features/campaigns/campaign-detail";
 import { ConfirmIrreversible } from "@/components/patterns/confirm-irreversible";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { ErrorState } from "@/components/patterns/error-state";
@@ -277,8 +278,23 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
       {/* 종결·차단 상태 배너 */}
       {stateKey && req.status !== "pending" ? (
         <Alert variant={req.status === "approved" ? "success" : req.status === "rejected" || req.status === "revoked" ? "warning" : "info"}>
-          <AlertDescription>{t(stateKey)}</AlertDescription>
+          <AlertDescription>
+            {req.status === "approved"
+              ? t(
+                  req.action_type === "campaign_launch"
+                    ? "stateApprovedCampaign"
+                    : req.action_type === "message_submit"
+                      ? "stateApprovedMessage"
+                      : "stateApproved"
+                )
+              : t(stateKey)}
+          </AlertDescription>
         </Alert>
+      ) : null}
+      {req.action_type === "campaign_launch" &&
+      req.status === "approved" &&
+      targetId ? (
+        <CampaignLaunchExecutionControl launchId={targetId} />
       ) : null}
       {req.status === "pending" && expired ? (
         <Alert variant="warning">
@@ -631,7 +647,7 @@ function ApproveDialog({
   async function confirm() {
     setPending(true);
     try {
-      const res = await postApprovalDecision(
+      await postApprovalDecision(
         request.id,
         {
           decision: "approved",
@@ -640,10 +656,6 @@ function ApproveDialog({
         { etag: etag(), idempotencyKey: idem.key() }
       );
       idem.settle();
-      // execution_status 는 비동기 실행 — 발송 완료가 아니다(B.3.9).
-      if (res.data.execution_status) {
-        toast.message(t("executionQueued"));
-      }
       onDone();
     } catch (err) {
       idem.settle(err);

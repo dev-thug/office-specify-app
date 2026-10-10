@@ -52,6 +52,7 @@ impl Role {
             TemplatesWrite,
             MailRead,
             MailCompose,
+            MailManage,
             MailSend,
             MailApprove,
             MailAssign,
@@ -77,6 +78,7 @@ impl Role {
                 TemplatesWrite,
                 MailRead,
                 MailCompose,
+                MailManage,
                 MailSend,
                 MailApprove,
                 MailAssign,
@@ -101,6 +103,7 @@ impl Role {
                 TemplatesRead,
                 MailRead,
                 MailCompose,
+                MailManage,
                 MailSend,
                 CampaignCompose,
                 CampaignPause,
@@ -116,7 +119,7 @@ impl Role {
 }
 
 /// Bearer-credential scopes (spec §4.6). Agents never receive approve/grant/
-/// send scopes; service credentials carry explicit subsets.
+/// unrestricted-send scopes; approved-submit is a separate explicit scope.
 #[derive(
     Debug,
     Clone,
@@ -153,6 +156,10 @@ pub enum Scope {
     MailRead,
     #[serde(rename = "mail.compose")]
     MailCompose,
+    #[serde(rename = "mail.manage")]
+    MailManage,
+    #[serde(rename = "mail.submit_approved")]
+    MailSubmitApproved,
     #[serde(rename = "mail.send")]
     MailSend,
     #[serde(rename = "mail.approve")]
@@ -161,6 +168,8 @@ pub enum Scope {
     MailAssign,
     #[serde(rename = "campaign.compose")]
     CampaignCompose,
+    #[serde(rename = "campaign.submit_approved")]
+    CampaignSubmitApproved,
     #[serde(rename = "campaign.pause")]
     CampaignPause,
     #[serde(rename = "booking.read")]
@@ -190,10 +199,13 @@ impl Scope {
             TemplatesWrite => "templates.write",
             MailRead => "mail.read",
             MailCompose => "mail.compose",
+            MailManage => "mail.manage",
+            MailSubmitApproved => "mail.submit_approved",
             MailSend => "mail.send",
             MailApprove => "mail.approve",
             MailAssign => "mail.assign",
             CampaignCompose => "campaign.compose",
+            CampaignSubmitApproved => "campaign.submit_approved",
             CampaignPause => "campaign.pause",
             BookingRead => "booking.read",
             BookingPropose => "booking.propose",
@@ -217,10 +229,13 @@ impl Scope {
             "templates.write" => TemplatesWrite,
             "mail.read" => MailRead,
             "mail.compose" => MailCompose,
+            "mail.manage" => MailManage,
+            "mail.submit_approved" => MailSubmitApproved,
             "mail.send" => MailSend,
             "mail.approve" => MailApprove,
             "mail.assign" => MailAssign,
             "campaign.compose" => CampaignCompose,
+            "campaign.submit_approved" => CampaignSubmitApproved,
             "campaign.pause" => CampaignPause,
             "booking.read" => BookingRead,
             "booking.propose" => BookingPropose,
@@ -346,6 +361,7 @@ mod tests {
                     TemplatesWrite,
                     MailRead,
                     MailCompose,
+                    MailManage,
                     MailSend,
                     MailApprove,
                     MailAssign,
@@ -372,6 +388,7 @@ mod tests {
                     TemplatesWrite,
                     MailRead,
                     MailCompose,
+                    MailManage,
                     MailSend,
                     MailApprove,
                     MailAssign,
@@ -393,6 +410,7 @@ mod tests {
                     TemplatesRead,
                     MailRead,
                     MailCompose,
+                    MailManage,
                     MailSend,
                     CampaignCompose,
                     CampaignPause,
@@ -430,5 +448,12 @@ mod tests {
                 "{role:?} has implied scopes"
             );
         }
+    }
+
+    #[test]
+    fn mail_manage_scope_round_trips() {
+        assert_eq!(Scope::parse("mail.manage"), Some(Scope::MailManage));
+        assert_eq!(Scope::MailManage.as_str(), "mail.manage");
+        assert!(!Scope::AGENT_FORBIDDEN.contains(&Scope::MailManage));
     }
 }

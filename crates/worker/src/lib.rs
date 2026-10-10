@@ -36,6 +36,9 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct WorkerContext {
     pub db: Db,
+    /// Server-only integration settings used by provider-backed worker
+    /// handlers. This object is never serialized or logged.
+    pub config: Arc<Config>,
     pub mail: Arc<dyn MailProvider>,
     pub delivery: Arc<dyn DeliveryProvider>,
     pub calendar: Arc<dyn CalendarProvider>,
@@ -91,6 +94,7 @@ impl WorkerContext {
             };
         Self {
             db,
+            config: Arc::new(config.clone()),
             mail,
             delivery,
             calendar,
@@ -176,6 +180,7 @@ pub fn registry() -> JobRegistry {
     register_context_free_handlers(&mut r);
     handlers::booking::register(&mut r);
     handlers::inbox::register(&mut r);
+    handlers::smtp_inbox::register(&mut r);
     handlers::sending::register(&mut r);
     r
 }
@@ -188,6 +193,7 @@ pub fn registry_with_context(context: &WorkerContext) -> JobRegistry {
     register_context_free_handlers(&mut r);
     handlers::booking::register_with_context(&mut r, context);
     handlers::inbox::register_with_context(&mut r, context);
+    handlers::smtp_inbox::register_with_context(&mut r, context);
     handlers::sending::register_with_context(&mut r, context);
     r
 }

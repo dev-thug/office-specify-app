@@ -3,7 +3,7 @@
 /**
  * 메일함 grant 편집 시트 — §5.4 권한 표 + B.3.2 낙관적 잠금.
  * - compose→read, send→compose, approve→send, assign→read 의존을 UI에서 강제한다.
- * - 에이전트/비관리 역할에는 부여 불가 스위치를 비활성화한다.
+ * - 에이전트는 can_send 를 사람이 승인한 메일에만 사용할 수 있고, can_approve 는 부여할 수 없다.
  * - 기존 행 PUT If-Match:"<version>", 신규 행 PUT If-None-Match:* — 412 는
  *   갱신 후 충돌 안내로 표면에 올린다.
  */
@@ -287,7 +287,9 @@ function GrantToggles({
               }
             />
             <Label htmlFor={`${idPrefix}-${key}`} className="text-xs font-normal">
-              {t(`keys.${key}`)}
+              {principal?.kind === "agent" && key === "can_send"
+                ? t("keys.agentCanSend")
+                : t(`keys.${key}`)}
             </Label>
           </span>
         );

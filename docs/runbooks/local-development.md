@@ -117,6 +117,11 @@ Changing the setting affects links created afterward. A previously issued
 booking, unsubscribe, or invitation URL already contains its original origin;
 recreate it after changing origins. Treat booking and unsubscribe capability
 URLs as private. A loopback link only works from the computer running Office.
+Local engagement tests use the same HTTP origin and need no public tunnel;
+Gmail's image proxy cannot fetch a pixel from loopback. On a deployed origin,
+proxy and scanner image or link requests may count as engagement requests, not
+as proof that a person read the message. Use a reachable HTTPS origin such as
+`https://office.specify.app` when testing recipient-facing links.
 
 ## Apply migrations and create the first admin
 
@@ -191,8 +196,12 @@ credentials rather than OAuth discovery. Create a scoped credential through
 Office's agent/account settings and grant only the required tools and mailbox
 scope. The default MCP browser-origin allowlist is empty. MCP agents can prepare
 drafts and workflow requests; Office permissions and human approvals still
-apply, and the MCP catalog has no direct arbitrary-email submit or approval
-decision tool.
+apply. A human must approve the exact sales-message snapshot before a separate
+explicit `mail_submit_approved` call with `mail.submit_approved` can queue it.
+An approved campaign also needs a separate `campaign_submit_approved` call with
+`campaign.submit_approved`; approval alone leaves no execution job. MCP has no
+general `mail.send` or approval-decision tool. See the
+[agent guide](mcp-agent-guide.md) for the current tool catalog and workflow.
 
 ## Configure an eventual hosted origin
 
@@ -208,6 +217,14 @@ SMTP in a fresh workspace, first provision an Office mail account through
 workspace has no mailbox and SMTP relay credentials do not create one. The
 current repository has no standalone SMTP-only mailbox-creation route. See the
 [SMTP runbook](smtp.md) for the active-account and `can_send` requirements.
+
+The optional SMTP-profile IMAP monitor does not require Zoho Mail OAuth for its
+IMAP login, but it uses an SMTP profile already bound to an Office
+`mail_account_id`. It stays disabled until an Admin explicitly turns on **Inbox
+sync**. The monitor reads all mail from fixed `INBOX` over TLS on port 993,
+tracks UID/UIDVALIDITY incrementally, and uses `BODY.PEEK[]` so remote read flags
+remain unchanged. See the [IMAP inbox synchronization section](smtp.md#optional-imap-inbox-synchronization)
+for bounded paging and disable behavior.
 
 If you connect Zoho Mail, register the exact full callback URI used by Office
 in the Zoho client and set the matching server value. With the example domain,

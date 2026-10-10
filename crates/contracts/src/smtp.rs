@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+fn default_create_purpose() -> Option<String> {
+    Some("marketing".to_owned())
+}
+
 /// `POST /smtp-connections` — credential is accepted on write only.
 ///
 /// Deliberately does not implement `Debug`: request bodies can contain a
@@ -15,6 +19,8 @@ use uuid::Uuid;
 pub struct CreateSmtpConnectionRequest {
     pub name: String,
     pub mail_account_id: Uuid,
+    #[serde(default = "default_create_purpose")]
+    pub purpose: Option<String>,
     pub host: String,
     pub port: u16,
     /// `tls` or `starttls`.
@@ -38,6 +44,7 @@ pub struct SmtpConnectionResponse {
     pub id: Uuid,
     pub name: String,
     pub mail_account_id: Uuid,
+    pub purpose: String,
     pub host: String,
     pub port: u16,
     /// `tls` or `starttls`.
@@ -83,16 +90,30 @@ mod tests {
     }
 
     #[test]
+    fn create_request_accepts_correspondence_purpose() {
+        let mut body = create_json();
+        body["purpose"] = serde_json::json!("correspondence");
+
+        let request = serde_json::from_value::<CreateSmtpConnectionRequest>(body)
+            .expect("correspondence purpose is accepted");
+        assert_eq!(request.purpose.as_deref(), Some("correspondence"));
+    }
+
+    #[test]
     fn response_never_contains_the_password() {
         let secret = "write-only-secret";
         let request: CreateSmtpConnectionRequest =
             serde_json::from_value(create_json()).expect("valid request");
         assert_eq!(request.password, secret);
+        assert_eq!(request.purpose.as_deref(), Some("marketing"));
 
         let response = SmtpConnectionResponse {
             id: Uuid::new_v4(),
             name: "Office SMTP".into(),
             mail_account_id: request.mail_account_id,
+            purpose: request
+                .purpose
+                .expect("missing purpose defaults to marketing"),
             host: request.host,
             port: request.port,
             security: request.security,

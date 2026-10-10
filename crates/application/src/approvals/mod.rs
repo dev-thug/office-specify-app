@@ -865,35 +865,14 @@ pub async fn decide(
                     ],
                 )
                 .await?;
-                job_id = Some(
-                    infrastructure::jobs::enqueue(
-                        tx,
-                        "campaigns.activate_launch",
-                        1,
-                        serde_json::json!({
-                            "campaign_launch_id": target_id,
-                            "approval_request_id": id,
-                        }),
-                        Utc::now(),
-                        Some(&format!("activate_launch:{target_id}")),
-                    )
-                    .await?,
-                );
+                // Approval binds the exact launch manifest but does not
+                // activate the campaign. A separate explicit execution
+                // action creates the activation job.
             }
-            d::action_type::MESSAGE_SUBMIT => {
-                repo::set_outbound_status(tx, target_id, "queued", &["draft"]).await?;
-                job_id = Some(
-                    infrastructure::jobs::enqueue(
-                        tx,
-                        "sending.dispatch_outbound",
-                        1,
-                        serde_json::json!({"outbound_message_id": target_id}),
-                        Utc::now(),
-                        Some(&format!("dispatch:{target_id}")),
-                    )
-                    .await?,
-                );
-            }
+            // A message approval records authorization for this immutable
+            // snapshot only. A human or narrowly scoped approved-submit
+            // caller must explicitly create the dispatch job later.
+            d::action_type::MESSAGE_SUBMIT => {}
             d::action_type::BOOKING_CHANGE => {
                 job_id = Some(
                     infrastructure::jobs::enqueue(
@@ -1091,23 +1070,39 @@ pub async fn revoke(
                     .await?;
             }
             d::action_type::MESSAGE_SUBMIT => {
-                repo::set_outbound_status(tx, target_id, "canceled", &["queued"])
-                    .await
-                    .and_then(|n| {
-                        if n == 1 {
-                            Ok(())
-                        } else {
-                            Err(AppError::conflict(
-                                "outbound already submitted — it can no longer be revoked",
-                            ))
-                        }
-                    })?;
-                repo::cancel_queued_job(
-                    tx,
-                    "sending.dispatch_outbound",
-                    &format!("dispatch:{target_id}"),
-                )
-                .await?;
+                let Some((status, _, _, _)) = repo::outbound_state(tx, target_id).await? else {
+                    return Err(AppError::conflict("outbound message no longer exists"));
+                };
+                match status.as_str() {
+                    // Approval alone leaves the immutable outbound draft
+                    // intact. Revoking it removes the authorization; a fresh
+                    // independent approval can still be requested later.
+                    "draft" => {}
+                    "queued" => {
+                        repo::set_outbound_status(tx, target_id, "canceled", &["queued"])
+                            .await
+                            .and_then(|n| {
+                                if n == 1 {
+                                    Ok(())
+                                } else {
+                                    Err(AppError::conflict(
+                                        "outbound already submitted — it can no longer be revoked",
+                                    ))
+                                }
+                            })?;
+                        repo::cancel_queued_job(
+                            tx,
+                            "sending.dispatch_outbound",
+                            &format!("dispatch:{target_id}"),
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        return Err(AppError::conflict(
+                            "outbound already submitted — it can no longer be revoked",
+                        ));
+                    }
+                }
             }
             d::action_type::BOOKING_CHANGE => {
                 if repo::job_ran(

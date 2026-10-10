@@ -2,7 +2,7 @@
  * 메일함 grant 의존 규칙 (§5.4 + DDL CHECK).
  * compose→read, send→compose, approve→send, assign→read.
  * 켜기는 조상을 자동으로 켜고, 끄기는 자손을 자동으로 끈다.
- * 에이전트는 can_send·can_approve 를 절대 가질 수 없다(B.3.2 정책 위반).
+ * 에이전트의 can_send 는 사람이 승인한 메일에만 쓸 수 있고, can_approve 는 부여할 수 없다.
  */
 import type { GrantBooleans, Principal } from "@/lib/api/settings";
 
@@ -68,7 +68,7 @@ export function grantBlockReason(
   key: GrantKey
 ): "agent" | "role" | null {
   if (principal.kind === "agent") {
-    return key === "can_send" || key === "can_approve" ? "agent" : null;
+    return key === "can_approve" ? "agent" : null;
   }
   if (key === "can_approve") {
     return principal.role === "admin" || principal.role === "manager" ? null : "role";

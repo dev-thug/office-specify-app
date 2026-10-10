@@ -1,8 +1,9 @@
 //! `GET /me` (B.3.1): principal identity + mailbox list with per-mailbox
-//! allowed_actions (grants only — no implicit mailbox access, A.7).
+//! effective allowed_actions (grants plus principal-kind restrictions — no
+//! implicit mailbox access, A.7).
 
-use contracts::AppError;
 use contracts::org::{MeMailAccount, MeResponse};
+use contracts::{AppError, PrincipalKind};
 use infrastructure::db::Db;
 use infrastructure::error::map_sqlx;
 use infrastructure::repo::auth::PrincipalRow;
@@ -25,6 +26,7 @@ pub async fn me_for_principal(db: &Db, principal: &PrincipalRow) -> Result<MeRes
     .map_err(map_sqlx)?;
     tx.commit().await?;
 
+    let is_agent = principal.principal_kind() == PrincipalKind::Agent;
     let mail_accounts = rows
         .into_iter()
         .map(|(id, address, r, c, s, a, asg)| MeMailAccount {
@@ -39,7 +41,9 @@ pub async fn me_for_principal(db: &Db, principal: &PrincipalRow) -> Result<MeRes
                 (asg, "mail.assign"),
             ]
             .into_iter()
-            .filter(|(ok, _)| *ok)
+            .filter(|(ok, name)| {
+                *ok && (!is_agent || (*name != "mail.send" && *name != "mail.approve"))
+            })
             .map(|(_, name)| name.to_string())
             .collect(),
         })

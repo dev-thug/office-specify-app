@@ -29,34 +29,72 @@ async fn cancel_pending_sends(tx: &mut Tx<'_>, enrollment_ids: &[Uuid]) -> Resul
     Ok(())
 }
 
-/// Queue the frozen step-1 outbound + its dispatch job for one activated
-/// enrollment.
+/// Queue the frozen outbound for one activated enrollment. Only the
+/// activation path supplies explicit_submission_at; legacy scheduling keeps
+/// the dispatch gate closed.
 async fn queue_step_dispatch(
     tx: &mut Tx<'_>,
     enrollment_id: Uuid,
     step_id: Uuid,
     send_at: DateTime<Utc>,
+    explicit_submission_at: Option<DateTime<Utc>>,
 ) -> Result<(), AppError> {
-    if let Some(ob) = repo::outbound_for_enrollment_step(tx, enrollment_id, step_id).await?
-        && repo::queue_outbound_at(tx, ob.id, send_at).await?
-    {
-        repo::enqueue_dedup(
-            tx,
-            "sending.dispatch_outbound",
-            serde_json::json!({"outbound_message_id": ob.id}),
-            send_at,
-            &repo::dispatch_dedupe_key(ob.id),
-        )
-        .await?;
+    if let Some(ob) = repo::outbound_for_enrollment_step(tx, enrollment_id, step_id).await? {
+        let queued = match explicit_submission_at.as_ref() {
+            Some(at) => repo::queue_outbound_at_explicit(tx, ob.id, send_at, *at).await?,
+            None => repo::queue_outbound_at(tx, ob.id, send_at).await?,
+        };
+        if queued {
+            let mut payload = serde_json::json!({"outbound_message_id": ob.id});
+            if let Some(at) = explicit_submission_at.as_ref() {
+                payload["explicit_submission_at"] = serde_json::json!(at);
+            }
+            repo::enqueue_dedup(
+                tx,
+                "sending.dispatch_outbound",
+                payload,
+                send_at,
+                &repo::dispatch_dedupe_key(ob.id),
+            )
+            .await?;
+        }
     }
     Ok(())
 }
 
-/// `campaigns.activate_launch` — fires after a launch approval. Re-verifies
-/// approval state at send-arm time (A.6.3: revocation between decision and
-/// execution must stop the launch), re-checks suppression/basis per
-/// recipient, activates enrollments with per-window staggering and enqueues
-/// the first-step dispatch jobs.
+async fn validated_launch_submission_at(
+    tx: &mut Tx<'_>,
+    launch: &repo::LaunchRow,
+    revision: &repo::RevisionRow,
+) -> Result<Option<DateTime<Utc>>, AppError> {
+    let Some(job) = repo::launch_activation_job(tx, launch.id).await? else {
+        return Ok(None);
+    };
+    if job.dedupe_key != format!("explicit_activate_launch:{}", launch.id) {
+        return Ok(None);
+    }
+    let (Some(approval_request_id), Some(explicit_submission_at)) = (
+        job.approval_request_id
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id).ok()),
+        job.explicit_submission_at,
+    ) else {
+        return Ok(None);
+    };
+    let campaign = repo::get_campaign(tx, revision.campaign_id)
+        .await?
+        .ok_or_else(|| AppError::internal("launch campaign missing"))?;
+    if !super::launch::validate_activation_executor(tx, &campaign, &job).await? {
+        return Ok(None);
+    }
+    super::launch::validate_approved_launch(tx, launch, Some(approval_request_id)).await?;
+    Ok(Some(explicit_submission_at))
+}
+
+/// `campaigns.activate_launch` — fires after an explicit approved-launch
+/// execution request. Re-verifies executor, approval, requester credentials,
+/// and grants before activation, then re-checks suppression/basis per
+/// recipient and enqueues the first-step dispatch jobs.
 pub async fn activate_launch(
     tx: &mut Tx<'_>,
     actor: Uuid,
@@ -67,34 +105,35 @@ pub async fn activate_launch(
     let Some(launch) = repo::get_launch_for_update(tx, launch_id).await? else {
         return Err(AppError::not_found("campaign launch not found"));
     };
-    let channel = repo::get_channel(tx, launch.delivery_channel_id).await?;
-    if !channel.as_ref().is_some_and(|channel| {
-        channel.provider == "delivery_provider" && channel.purpose == "marketing"
-    }) {
-        // A replayed approval job for a retired or unsupported channel must
-        // never arm individual outbound jobs.
-        if launch.status == d::launch_status::APPROVED {
-            repo::transition_launch(
-                tx,
-                launch_id,
-                d::launch_status::CANCELED,
-                Some(launch.version),
-            )
-            .await?;
-            let enrollment_ids =
-                repo::stop_launch_enrollments(tx, launch_id, "unsupported_channel").await?;
-            cancel_pending_sends(tx, &enrollment_ids).await?;
-            if let Some(revision) = repo::get_revision(tx, launch.revision_id).await? {
-                repo::sync_campaign_status(tx, revision.campaign_id).await?;
-            }
-        }
+    // Approval alone is not an execution authorization. Old jobs created by
+    // the prior approval path have no explicit executor and finish as no-ops.
+    if launch.status != d::launch_status::APPROVED {
         return Ok(());
     }
-    match launch.status.as_str() {
-        d::launch_status::APPROVED => {}
-        // running/completed/canceled/paused — nothing to (re)do.
-        _ => return Ok(()),
+    let Some(activation_job) = repo::launch_activation_job(tx, launch_id).await? else {
+        return Ok(());
+    };
+    if activation_job.id != job_id
+        || activation_job.dedupe_key != format!("explicit_activate_launch:{launch_id}")
+        || activation_job
+            .approval_request_id
+            .as_deref()
+            .and_then(|value| Uuid::parse_str(value).ok())
+            != Some(approval_request_id)
+    {
+        return Ok(());
     }
+
+    let Some(revision) = repo::get_revision(tx, launch.revision_id).await? else {
+        return Err(AppError::internal("launch revision missing"));
+    };
+    let campaign = repo::get_campaign(tx, revision.campaign_id)
+        .await?
+        .ok_or_else(|| AppError::internal("launch campaign missing"))?;
+    if !super::launch::validate_activation_executor(tx, &campaign, &activation_job).await? {
+        return Ok(());
+    }
+
     // Re-verify the approval is still live + pins this manifest.
     let Some(req) = approvals_repo::get_request_for_update(tx, approval_request_id).await? else {
         return Err(AppError::internal("approval request missing"));
@@ -116,22 +155,30 @@ pub async fn activate_launch(
         .await?;
         return Ok(());
     }
-    if req.expires_at <= Utc::now() {
+    if req.expires_at <= Utc::now() || launch.expires_at <= Utc::now() {
         repo::transition_launch(tx, launch_id, d::launch_status::CANCELED, None).await?;
         return Ok(());
     }
-    let manifest = launch.manifest_hash.clone().unwrap_or_default();
-    if manifest != req.snapshot_hash {
-        // Frozen rows make this unreachable; treat as integrity failure.
-        return Err(AppError::new(
-            contracts::ErrorCode::SnapshotMismatch,
-            "approval snapshot does not match launch manifest",
-        ));
+    super::launch::validate_approved_launch(tx, &launch, Some(approval_request_id)).await?;
+
+    let channel = repo::get_channel(tx, launch.delivery_channel_id).await?;
+    if !channel.as_ref().is_some_and(|channel| {
+        channel.provider == "delivery_provider" && channel.purpose == "marketing"
+    }) {
+        repo::transition_launch(
+            tx,
+            launch_id,
+            d::launch_status::CANCELED,
+            Some(launch.version),
+        )
+        .await?;
+        let enrollment_ids =
+            repo::stop_launch_enrollments(tx, launch_id, "unsupported_channel").await?;
+        cancel_pending_sends(tx, &enrollment_ids).await?;
+        repo::sync_campaign_status(tx, revision.campaign_id).await?;
+        return Ok(());
     }
 
-    let revision = repo::get_revision(tx, launch.revision_id)
-        .await?
-        .ok_or_else(|| AppError::internal("launch revision missing"))?;
     let rules = d::ScheduleRules::from_json(&revision.schedule_rules)
         .map_err(|e| AppError::internal(format!("stored schedule_rules invalid: {e}")))?;
     let tz = d::parse_timezone(&revision.timezone)
@@ -143,6 +190,9 @@ pub async fn activate_launch(
 
     // Arm the channel? Global policy is re-verified by the send-time chain
     // in the sending module (§8.4); activation only schedules.
+    let explicit_submission_at = activation_job.explicit_submission_at.ok_or_else(|| {
+        AppError::conflict("explicit activation job is missing its submission timestamp")
+    })?;
     let enrollments = repo::list_enrollments(tx, launch_id).await?;
     let mut activated = 0u64;
     for (i, e) in enrollments
@@ -209,7 +259,7 @@ pub async fn activate_launch(
             continue;
         }
         if repo::activate_enrollment(tx, e.id, step1.id, send_at).await? {
-            queue_step_dispatch(tx, e.id, step1.id, send_at).await?;
+            queue_step_dispatch(tx, e.id, step1.id, send_at, Some(explicit_submission_at)).await?;
             activated += 1;
         } else {
             // RECIPIENT_ACTIVE_ELSEWHERE — the partial unique index fired.
@@ -376,6 +426,7 @@ pub async fn schedule_next_step(
     let revision = repo::get_revision(tx, e.revision_id)
         .await?
         .ok_or_else(|| AppError::internal("enrollment revision missing"))?;
+    let explicit_submission_at = validated_launch_submission_at(tx, &launch, &revision).await?;
     let rules = d::ScheduleRules::from_json(&revision.schedule_rules)
         .map_err(|e| AppError::internal(format!("stored schedule_rules invalid: {e}")))?;
     let tz = d::parse_timezone(&revision.timezone)
@@ -391,7 +442,7 @@ pub async fn schedule_next_step(
                 None,
             )
             .await?;
-            queue_step_dispatch(tx, enrollment_id, next.id, t).await?;
+            queue_step_dispatch(tx, enrollment_id, next.id, t, explicit_submission_at).await?;
             audit::record(
                 tx,
                 audited_system(

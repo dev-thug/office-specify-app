@@ -35,6 +35,15 @@ export type LaunchStatus =
   | "completed"
   | "canceled";
 
+export type CampaignLaunchExecutionStatus =
+  | "not_ready"
+  | "ready"
+  | "queued"
+  | "running"
+  | "activated"
+  | "failed"
+  | "canceled";
+
 export type EnrollmentStatus =
   | "pending"
   | "active"
@@ -120,6 +129,8 @@ export interface CampaignLaunch {
   recipients_count?: number;
   steps_count?: number;
   job_id?: string;
+  execution_status?: CampaignLaunchExecutionStatus;
+  activation_job_id?: string | null;
   allowed_actions?: string[];
   [key: string]: unknown;
 }
@@ -193,6 +204,7 @@ export interface PreflightResult {
 export interface CreateLaunchInput {
   revision_id: string;
   email_address_ids: string[];
+  tracking_requested?: boolean;
   personalization?: Record<string, Record<string, unknown>>;
 }
 
@@ -286,6 +298,20 @@ export interface LaunchApprovalRequestResult {
   version?: number;
   launch_id?: string;
   [key: string]: unknown;
+}
+
+export interface ExecuteCampaignLaunchInput {
+  expected_manifest_hash: string;
+  expected_version: number;
+}
+
+export interface ExecuteCampaignLaunchResult {
+  launch_id: string;
+  launch_status: "approved";
+  execution_status: "queued";
+  job_id: string;
+  version: number;
+  manifest_hash: string;
 }
 
 // ── 보조 리소스 (문서화 경로, 최소 타입) ─────────────────────────────
@@ -419,6 +445,18 @@ export function requestLaunchApproval(
 }
 
 /** launch 일시정지 — 이유 + If-Match(버전) 필요 (B.2). */
+export function executeCampaignLaunch(
+  launchId: string,
+  input: ExecuteCampaignLaunchInput,
+  options: { idempotencyKey: string }
+): Promise<ApiResult<ExecuteCampaignLaunchResult>> {
+  return mutate<ExecuteCampaignLaunchResult>(
+    `/api/v1/campaign-launches/${encodeURIComponent(launchId)}/execute`,
+    { method: "POST", json: input },
+    { idempotencyKey: options.idempotencyKey }
+  );
+}
+
 export function pauseLaunch(
   launchId: string,
   input: { reason?: string },

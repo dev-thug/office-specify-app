@@ -70,6 +70,8 @@ async fn t36_erases_contact_owned_content_keeps_suppression_and_preserves_other_
         shared_contact_id,
         shared_email_id,
         outbound_id,
+        engagement_token,
+        engagement_capability_id,
         booking_link_id,
         booking_id,
         message_id,
@@ -161,6 +163,33 @@ async fn t36_erases_contact_owned_content_keeps_suppression_and_preserves_other_
             world.connection_id,
             world.admin.principal_id,
             email_id,
+        )
+        .await
+        .unwrap();
+        let engagement_token = infrastructure::crypto::generate_token();
+        infrastructure::repo::engagement::insert_capability(
+            &mut tx,
+            outbound_id,
+            email_id,
+            "click",
+            &engagement_token,
+            Some("https://private.example.test/person?email=t36@example.test"),
+        )
+        .await
+        .unwrap();
+        let engagement_capability_id: Uuid = sqlx::query_scalar(
+            "SELECT id FROM outbound_engagement_capabilities
+              WHERE workspace_id = $1 AND token_hash = $2",
+        )
+        .bind(world.workspace_id)
+        .bind(infrastructure::crypto::sha256_bytes(engagement_token.as_bytes()).to_vec())
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        infrastructure::repo::engagement::record_request(
+            &mut tx,
+            engagement_capability_id,
+            "click",
         )
         .await
         .unwrap();
@@ -329,6 +358,8 @@ async fn t36_erases_contact_owned_content_keeps_suppression_and_preserves_other_
             shared_contact_id,
             shared_email_id,
             outbound_id,
+            engagement_token,
+            engagement_capability_id,
             booking_link_id,
             booking_id,
             message_id,
@@ -386,6 +417,36 @@ async fn t36_erases_contact_owned_content_keeps_suppression_and_preserves_other_
     );
 
     let mut tx = api_db.begin(world.workspace_id).await.unwrap();
+    assert!(
+        infrastructure::repo::engagement::resolve_token(&api_db, &engagement_token)
+            .await
+            .unwrap()
+            .is_none(),
+        "erasure must revoke the old click capability"
+    );
+    let capability_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbound_engagement_capabilities
+          WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(engagement_capability_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let request_bucket_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbound_engagement_request_buckets
+          WHERE workspace_id = $1 AND capability_id = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(engagement_capability_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(capability_count, 0);
+    assert_eq!(
+        request_bucket_count, 0,
+        "capability events cascade on erasure"
+    );
     let contact_count: i64 = sqlx::query_scalar("SELECT count(*) FROM contacts WHERE id = $1")
         .bind(contact_id)
         .fetch_one(tx.conn())

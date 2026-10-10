@@ -117,7 +117,8 @@ fn perm_scope(perm: MailboxPerm) -> Scope {
 }
 
 /// §5.4 role/kind clause: `can_approve` additionally requires an
-/// Admin/Manager human; `can_send` is never held by an agent.
+/// Admin/Manager human; agents cannot use the direct MailboxPerm::Send
+/// path. The explicit approved-submit service checks can_send separately.
 fn perm_role_ok(ctx: &Ctx, perm: MailboxPerm) -> bool {
     match perm {
         MailboxPerm::Approve => {

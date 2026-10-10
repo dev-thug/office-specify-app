@@ -36,9 +36,12 @@ async fn setup() -> Option<SmtpTestApp> {
         .split('?')
         .next()
         .unwrap_or_default();
-    assert_eq!(
-        database, "outreach_smtp_backend",
-        "SMTP API tests must use the isolated outreach_smtp_backend database"
+    assert!(
+        matches!(
+            database,
+            "outreach_smtp_backend" | "outreach_smtp_correspondence_verify"
+        ),
+        "SMTP API tests must use an isolated SMTP test database"
     );
     let owner = Db::connect(&url, None).await.unwrap();
     owner.migrate().await.unwrap();
@@ -267,6 +270,7 @@ async fn smtp_setup_is_admin_session_gated_idempotent_and_write_only() {
     let profile = created_json["data"].clone();
     let profile_id = profile["id"].as_str().unwrap();
     assert_eq!(profile["status"], "pending");
+    assert_eq!(profile["purpose"], "marketing");
     assert_eq!(profile["has_password"], true);
     assert!(created_json.to_string().find(&password).is_none());
     assert!(profile.get("password").is_none());
@@ -411,6 +415,7 @@ async fn smtp_setup_is_admin_session_gated_idempotent_and_write_only() {
     assert_eq!(disabled.status(), StatusCode::OK);
     let disabled = disabled.json::<Value>().await.unwrap()["data"].clone();
     assert_eq!(disabled["status"], "disabled");
+    assert_eq!(disabled["purpose"], "marketing");
     assert_eq!(disabled["has_password"], false);
     assert!(
         !std::fs::read_to_string(test.secrets.path().join("smtp-secrets.json"))
@@ -443,6 +448,93 @@ async fn smtp_setup_is_admin_session_gated_idempotent_and_write_only() {
     assert_eq!(integration_status, "disabled");
     assert_ne!(channel_id, Uuid::nil());
     tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn smtp_correspondence_profiles_keep_channel_purpose_in_summary() {
+    let Some(test) = setup().await else { return };
+    let csrf = login(&test.app, &test.world.admin).await;
+    let mut body = create_body(
+        test.world.mail_account_id,
+        &Uuid::new_v4().simple().to_string(),
+    );
+    body["purpose"] = json!("correspondence");
+
+    let created = post_idempotent(
+        &test.app,
+        "/api/v1/smtp-connections",
+        &body,
+        &csrf,
+        "smtp-create-correspondence",
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let profile = created.json::<Value>().await.unwrap()["data"].clone();
+    assert_eq!(profile["purpose"], "correspondence");
+
+    let profile_id = Uuid::parse_str(profile["id"].as_str().unwrap()).unwrap();
+    let channel_id = Uuid::parse_str(profile["channel_id"].as_str().unwrap()).unwrap();
+    let mut tx = test
+        .app
+        .state
+        .db
+        .begin(test.world.workspace_id)
+        .await
+        .unwrap();
+    let bound_purpose: String = sqlx::query_scalar(
+        "SELECT dc.purpose FROM smtp_connections sc
+           JOIN delivery_channels dc ON dc.workspace_id = sc.workspace_id
+                AND dc.id = sc.channel_id
+          WHERE sc.workspace_id = $1 AND sc.id = $2 AND dc.id = $3",
+    )
+    .bind(test.world.workspace_id)
+    .bind(profile_id)
+    .bind(channel_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(bound_purpose, "correspondence");
+    let repurpose_result = sqlx::query(
+        "UPDATE delivery_channels SET purpose = 'marketing'
+          WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(test.world.workspace_id)
+    .bind(channel_id)
+    .execute(tx.conn())
+    .await;
+    assert!(
+        repurpose_result.is_err(),
+        "an SMTP-bound channel purpose must stay immutable"
+    );
+    tx.rollback().await.unwrap();
+
+    let listed = TestApp::data(test.app.get("/api/v1/smtp-connections").await).await;
+    let listed_profile = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == profile["id"])
+        .expect("created correspondence profile should be listed");
+    assert_eq!(listed_profile["purpose"], "correspondence");
+
+    let mut unsupported_body = create_body(
+        test.world.mail_account_id,
+        &Uuid::new_v4().simple().to_string(),
+    );
+    unsupported_body["purpose"] = json!("transactional");
+    let unsupported = post_idempotent(
+        &test.app,
+        "/api/v1/smtp-connections",
+        &unsupported_body,
+        &csrf,
+        "smtp-create-transactional-rejected",
+    )
+    .await;
+    assert_eq!(unsupported.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        count_smtp_profiles(&test.app.state.db, test.world.workspace_id).await,
+        1
+    );
 }
 
 #[tokio::test]

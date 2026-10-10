@@ -706,6 +706,17 @@ impl MailProvider for BoundZohoMailProvider {
                     "Zoho Mail returned an invalid message location",
                 ));
             }
+            let headers = match self
+                .client
+                .message_headers(&self.account_id, folder_id, &summary.message_id)
+                .await
+            {
+                Ok(headers) => headers.header_content,
+                Err(error) => {
+                    self.mark_reauth_after_client_error(&error).await;
+                    return Err(map_mail_client_error(error));
+                }
+            };
             let content = match self
                 .client
                 .message_content(&self.account_id, folder_id, &summary.message_id)
@@ -718,7 +729,7 @@ impl MailProvider for BoundZohoMailProvider {
                 }
             };
             locations.push((summary.message_id.clone(), folder_id.to_owned()));
-            messages.push(normalize_message(&summary, content)?);
+            messages.push(normalize_message(&summary, content, &headers)?);
         }
         let mut tx = self
             .db
@@ -787,7 +798,18 @@ impl MailProvider for BoundZohoMailProvider {
                 return Err(map_mail_client_error(error));
             }
         };
-        normalize_message(&details, content)
+        let headers = match self
+            .client
+            .message_headers(&self.account_id, &folder_id, provider_message_id)
+            .await
+        {
+            Ok(headers) => headers.header_content,
+            Err(error) => {
+                self.mark_reauth_after_client_error(&error).await;
+                return Err(map_mail_client_error(error));
+            }
+        };
+        normalize_message(&details, content, &headers)
     }
 
     async fn send(&self, request: SendRequest) -> Result<SendOutcome, ProviderError> {
@@ -963,6 +985,7 @@ fn provider_headers_supported(headers: &[(String, String)], correlation_id: &str
 fn normalize_message(
     summary: &infrastructure::providers::zoho_mail_client::ZohoMessageSummary,
     content: String,
+    raw_headers: &str,
 ) -> Result<ProviderMessage, ProviderError> {
     if !valid_zoho_id(&summary.message_id) {
         return Err(ProviderError::unavailable(
@@ -992,12 +1015,14 @@ fn normalize_message(
         .as_deref()
         .map(extract_addresses)
         .unwrap_or_default();
+    let parsed_headers =
+        infrastructure::providers::mail_headers::parse_message_headers(raw_headers);
     Ok(ProviderMessage {
         provider_message_id: summary.message_id.clone(),
         provider_thread_id: summary.thread_id.clone(),
-        internet_message_id: None,
-        in_reply_to: None,
-        references: Vec::new(),
+        internet_message_id: parsed_headers.internet_message_id,
+        in_reply_to: parsed_headers.in_reply_to,
+        references: parsed_headers.references,
         from,
         to,
         subject: summary.subject.clone(),
@@ -1371,7 +1396,9 @@ mod tests {
             subject: "test".into(),
             body_text: Some("test".into()),
             body_html: None,
+            internet_message_id: None,
             in_reply_to: None,
+            references: vec![],
             headers: vec![],
         };
         assert!(matches!(
@@ -1417,7 +1444,12 @@ mod tests {
             sent_date_in_gmt: None,
             has_attachment: Some("0".into()),
         };
-        let normalized = normalize_message(&summary, "<p>Full content</p>".into()).unwrap();
+        let normalized = normalize_message(
+            &summary,
+            "<p>Full content</p>".into(),
+            "Message-ID: <reply@sender.example>\r\nIn-Reply-To: <sent@office.example>\r\nReferences: <root@office.example> <sent@office.example>\r\n\r\n",
+        )
+        .unwrap();
         assert_eq!(normalized.provider_message_id, "123456789");
         assert_eq!(normalized.provider_thread_id.as_deref(), Some("222"));
         assert_eq!(normalized.from, "alice@example.test");
@@ -1428,9 +1460,18 @@ mod tests {
                 "carol@example.test".to_owned()
             ]
         );
-        assert!(normalized.internet_message_id.is_none());
-        assert!(normalized.in_reply_to.is_none());
-        assert!(normalized.references.is_empty());
+        assert_eq!(
+            normalized.internet_message_id.as_deref(),
+            Some("<reply@sender.example>")
+        );
+        assert_eq!(
+            normalized.in_reply_to.as_deref(),
+            Some("<sent@office.example>")
+        );
+        assert_eq!(
+            normalized.references,
+            vec!["<root@office.example>", "<sent@office.example>"]
+        );
         assert_eq!(normalized.body_html.as_deref(), Some("<p>Full content</p>"));
         assert_eq!(normalized.body_text.as_deref(), Some("Snippet"));
         assert_eq!(normalized.message_at.timestamp_millis(), 1_700_000_000_000);

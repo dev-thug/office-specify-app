@@ -93,14 +93,16 @@ pub struct ApprovalRequestDetail {
     pub manifest_hash: String,
 }
 
-/// `POST /approvals/{id}/decisions` response (B.3.9). `execution_status` is
-/// `queued` when a follow-up job was enqueued — never "sent" or "done".
+/// `POST /approvals/{id}/decisions` response (B.3.9). An approval records
+/// permission only; outbound message execution must be explicitly submitted.
+/// Other approval types may still enqueue their follow-up job.
 #[derive(Debug, Clone, Serialize, ToSchema, Deserialize)]
 pub struct DecisionResponse {
     pub approval_request_id: Uuid,
     pub approval_status: String,
     pub decision_id: Uuid,
-    /// `queued` (approved) | `none` (rejected — nothing to execute).
+    /// `ready` when approval waits for explicit execution, `queued` when an
+    /// approval type enqueues its own follow-up, or `none` when rejected.
     pub execution_status: String,
     pub job_id: Option<Uuid>,
     /// Always 0 — a decision never means provider acceptance (B.3.9).

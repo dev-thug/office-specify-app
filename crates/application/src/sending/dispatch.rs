@@ -231,6 +231,7 @@ struct Armed {
     attempt_id: Uuid,
     attempt_no: i32,
     in_reply_to: Option<String>,
+    references: Vec<String>,
 }
 
 /// `sending.dispatch_outbound` — payload `{outbound_message_id}`.
@@ -337,6 +338,59 @@ async fn dispatch_phase_a(
             return Ok(PhaseA::Done);
         }
         _ => {}
+    }
+
+    // Old approval-created jobs do not contain this marker. A legacy
+    // running job must also be unable to consume a later explicit submit:
+    // its marker will be absent or differ from the new row marker.
+    let payload: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM jobs
+          WHERE workspace_id = $1 AND id = $2 AND kind = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(job.job_id)
+    .bind(DISPATCH_KIND)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(infrastructure::error::map_sqlx)?;
+    let payload_outbound = payload
+        .as_ref()
+        .and_then(|value| value.get("outbound_message_id"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok());
+    if payload_outbound != Some(o.id) {
+        return Ok(PhaseA::Done);
+    }
+    let payload_marker = payload
+        .as_ref()
+        .and_then(|value| value.get("explicit_submission_at"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Utc));
+    match (o.explicit_submission_at, payload_marker) {
+        (Some(row_marker), Some(job_marker))
+            if row_marker.timestamp_micros() == job_marker.timestamp_micros() => {}
+        (None, _) => {
+            if sending::return_legacy_queue_to_draft(tx, o.id).await? {
+                audit::record(
+                    tx,
+                    audit_system(
+                        "send.legacy_queue_requires_explicit",
+                        "outbound_message",
+                        Some(o.id),
+                        Some(o.requested_by),
+                        job.job_id,
+                        serde_json::json!({"dispatch_job_id": job.job_id}),
+                    ),
+                )
+                .await?;
+            }
+            return Ok(PhaseA::Done);
+        }
+        // A stale/malformed job is a no-op when the row already belongs to
+        // another explicit submission. In particular, never reset or send
+        // the new queue entry from an old running job.
+        _ => return Ok(PhaseA::Done),
     }
 
     // Campaigns now contain one immediate message only. A queued legacy
@@ -476,8 +530,15 @@ async fn dispatch_phase_a(
     )
     .await?;
 
-    let in_reply_to = match o.reply_to_message_id {
-        Some(m) => sending::message_internet_id(tx, m).await?,
+    let reply_headers = match o.reply_to_message_id {
+        Some(message_id) => {
+            infrastructure::repo::inbox::reply_headers_for_message(
+                tx,
+                o.mail_account_id,
+                message_id,
+            )
+            .await?
+        }
         None => None,
     };
 
@@ -486,7 +547,10 @@ async fn dispatch_phase_a(
         outbound: o,
         attempt_id,
         attempt_no,
-        in_reply_to,
+        in_reply_to: reply_headers
+            .as_ref()
+            .map(|headers| headers.in_reply_to.clone()),
+        references: reply_headers.map_or_else(Vec::new, |headers| headers.references),
     })))
 }
 
@@ -604,7 +668,10 @@ async fn defer(
         tx,
         DISPATCH_KIND,
         1,
-        serde_json::json!({"outbound_message_id": o.id}),
+        serde_json::json!({
+            "outbound_message_id": o.id,
+            "explicit_submission_at": o.explicit_submission_at,
+        }),
         until,
         &format!("dispatch_rearm:{}:{bucket}", o.id),
     )
@@ -665,7 +732,9 @@ async fn build_request(db: &Db, _job: &JobCtx, armed: &Armed) -> Result<SendRequ
         subject: o.subject.clone(),
         body_text: Some(o.body_text.clone()),
         body_html: o.body_html.clone(),
+        internet_message_id: o.internet_message_id.clone(),
         in_reply_to: armed.in_reply_to.clone(),
+        references: armed.references.clone(),
         headers,
     })
 }
@@ -765,6 +834,7 @@ async fn dispatch_phase_c(
             )
             .await?;
             sending::mark_accepted(tx, o.id, provider_message_id, Utc::now()).await?;
+            infrastructure::repo::inbox::record_sent_outbound(tx, o.id).await?;
             sending::transition_claim(tx, o.id, &["submitted", "reserved"], "accepted").await?;
             // Provider-confirmed acceptance — never "delivered" (T34).
             sending::insert_delivery_event(
@@ -856,6 +926,7 @@ async fn dispatch_phase_c(
                 Some("PROVIDER_SUBMISSION_OUTCOME_UNKNOWN"),
             )
             .await?;
+            infrastructure::repo::inbox::record_sent_outbound(tx, o.id).await?;
             outbox::emit(
                 tx,
                 EV_OUTBOUND_UNKNOWN,

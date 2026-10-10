@@ -452,6 +452,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/campaign-launches/{id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["execute_launch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaign-launches/{id}/pause": {
         parameters: {
             query?: never;
@@ -1860,6 +1876,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/smtp-connections/{id}/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_inbox_sync"];
+        put: operations["put_inbox_sync"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/smtp-connections/{id}/inbox/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["request_inbox_sync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/smtp-connections/{id}/verify": {
         parameters: {
             query?: never;
@@ -2078,6 +2126,47 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["reschedule_public_booking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/v1/engagement/click/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The route accepts no redirect destination. Its only Location value comes
+         *     from the immutable target stored with this token at freeze time.
+         */
+        get: operations["click_redirect"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/v1/engagement/open/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public requests are intentionally indistinguishable for active and
+         *     unknown capabilities. Counts describe proxy/scanner-sensitive requests,
+         *     never proof that a person read or received a message.
+         */
+        get: operations["open_pixel"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3075,6 +3164,11 @@ export interface components {
             /** Format: uuid */
             revision_id: string;
             /**
+             * @description Add recipient-bound request tracking capabilities when the workspace
+             *     has engagement tracking enabled. False by default at immutable freeze.
+             */
+            tracking_requested?: boolean;
+            /**
              * @description Allowed personalization values — applied to every recipient unless a
              *     system-resolved variable of the same name exists (system wins).
              */
@@ -3232,6 +3326,7 @@ export interface components {
             password: string;
             /** Format: int32 */
             port: number;
+            purpose?: string | null;
             reply_to?: string | null;
             /** @description `tls` or `starttls`. */
             security: string;
@@ -3427,8 +3522,9 @@ export interface components {
          */
         DecisionKind: "accept" | "reject";
         /**
-         * @description `POST /approvals/{id}/decisions` response (B.3.9). `execution_status` is
-         *     `queued` when a follow-up job was enqueued — never "sent" or "done".
+         * @description `POST /approvals/{id}/decisions` response (B.3.9). An approval records
+         *     permission only; outbound message execution must be explicitly submitted.
+         *     Other approval types may still enqueue their follow-up job.
          */
         DecisionResponse: {
             /** Format: uuid */
@@ -3436,7 +3532,10 @@ export interface components {
             approval_status: string;
             /** Format: uuid */
             decision_id: string;
-            /** @description `queued` (approved) | `none` (rejected — nothing to execute). */
+            /**
+             * @description `ready` when approval waits for explicit execution, `queued` when an
+             *     approval type enqueues its own follow-up, or `none` when rejected.
+             */
             execution_status: string;
             /** Format: uuid */
             job_id?: string | null;
@@ -3660,6 +3759,30 @@ export interface components {
          * @enum {string}
          */
         EvidenceType: "observed" | "inferred";
+        /**
+         * @description `POST /campaign-launches/{id}/execute` body — authorizes one explicit
+         *     execution of the approved frozen manifest using launch-version CAS.
+         */
+        ExecuteLaunchRequest: {
+            expected_manifest_hash: string;
+            /** Format: int64 */
+            expected_version: number;
+        };
+        /**
+         * @description Explicit campaign execution acceptance. The launch remains `approved`
+         *     until the worker activates it; authorization and activation each bump version.
+         */
+        ExecuteLaunchResponse: {
+            execution_status: string;
+            /** Format: uuid */
+            job_id: string;
+            /** Format: uuid */
+            launch_id: string;
+            launch_status: string;
+            manifest_hash: string;
+            /** Format: int64 */
+            version: number;
+        };
         /** @description `POST /exports` filters (B.2: 필터·필드 → 202). */
         ExportFilters: {
             company_ids?: string[] | null;
@@ -3691,6 +3814,11 @@ export interface components {
              *     (fk_060 pins the sender to the channel).
              */
             sender_identity_id?: string | null;
+            /**
+             * @description Explicitly request recipient-bound open/click request tracking.
+             *     Workspace settings can disable tracking regardless of this value.
+             */
+            tracking_requested?: boolean;
         };
         FreezeMessageDraftResponse: {
             /** Format: uuid */
@@ -3705,10 +3833,12 @@ export interface components {
             version: number;
         };
         GrantListItem: {
+            /** @description Human Admin/Manager approval authority. */
             can_approve: boolean;
             can_assign: boolean;
             can_compose: boolean;
             can_read: boolean;
+            /** @description Agent grants satisfy approved-submit ACL checks, not direct sending. */
             can_send: boolean;
             /** Format: uuid */
             principal_id: string;
@@ -3722,10 +3852,12 @@ export interface components {
          *     is the target principal's bumped cache-invalidation counter (§5.5).
          */
         GrantResponse: {
+            /** @description Human Admin/Manager approval authority. */
             can_approve: boolean;
             can_assign: boolean;
             can_compose: boolean;
             can_read: boolean;
+            /** @description Agent grants satisfy approved-submit ACL checks, not direct sending. */
             can_send: boolean;
             /** Format: uuid */
             mail_account_id: string;
@@ -3800,6 +3932,36 @@ export interface components {
          * @enum {string}
          */
         ImportStatus: "uploaded" | "validating" | "ready" | "committing" | "completed" | "failed" | "canceled";
+        InboxSyncQueuedResponse: {
+            /** Format: uuid */
+            job_id: string;
+            state: string;
+        };
+        InboxSyncResponse: {
+            /** Format: uuid */
+            active_job_id?: string | null;
+            /** Format: int32 */
+            cursor_uid: number;
+            /** Format: int32 */
+            cursor_uidvalidity?: number | null;
+            enabled: boolean;
+            folder: string;
+            /** @description Empty until an administrator explicitly configures the IMAP host. */
+            imap_host: string;
+            /** Format: int32 */
+            imap_port: number;
+            /** Format: int64 */
+            imported_messages: number;
+            last_error_code?: string | null;
+            /** Format: date-time */
+            last_success_at?: string | null;
+            /** Format: uuid */
+            mail_account_id: string;
+            /** Format: date-time */
+            next_sync_at?: string | null;
+            /** Format: uuid */
+            smtp_connection_id: string;
+        };
         /**
          * @description How `imports.commit` treats rows still `invalid` after validation
          *     (B.3.13: `invalid_row_policy=skip` or `reject`).
@@ -3951,9 +4113,18 @@ export interface components {
             version: number;
         };
         LaunchDetail: components["schemas"]["LaunchSummary"] & {
+            /**
+             * Format: uuid
+             * @description Retained for status and deduplication after explicit execution.
+             */
+            activation_job_id?: string | null;
+            /** @description UI hint only; every execution is authorized again by the service. */
+            allowed_actions: string[];
             /** Format: uuid */
             campaign_id: string;
             enrollments: components["schemas"]["EnrollmentSummary"];
+            /** @description Execution of the approved manifest, separate from launch lifecycle state. */
+            execution_status: string;
             /** Format: uuid */
             mail_account_id: string;
             /** @description Frozen per-step outbound snapshots (B.3.8) — cursor-paginated. */
@@ -4109,9 +4280,9 @@ export interface components {
             password: string;
         };
         /**
-         * @description Mail-account metadata. `allowed_actions` is the caller's grant-derived
-         *     action list (B.3.1 `mail.*` strings) — a UI hint only; the server
-         *     re-checks the grant on every content-bearing read.
+         * @description Mail-account metadata. `allowed_actions` is the caller's grant-derived,
+         *     principal-filtered action list (B.3.1 `mail.*` strings) — a UI hint only;
+         *     the server re-checks the grant on every content-bearing operation.
          */
         MailAccountResponse: {
             allowed_actions: string[];
@@ -4399,6 +4570,23 @@ export interface components {
             started_at: string;
             status: string;
         };
+        OutboundEngagementSummary: {
+            /**
+             * Format: int64
+             * @description Capability requests, not proof of a person following a link.
+             */
+            click_request_count: number;
+            /**
+             * Format: int64
+             * @description Capability requests, not proof of a person opening the message.
+             */
+            open_request_count: number;
+            /**
+             * @description False means tracking was disabled by either this freeze request or
+             *     workspace policy; zero counts alone do not imply that tracking ran.
+             */
+            tracking_enabled: boolean;
+        };
         /**
          * @description `GET /api/v1/outbound-messages/{id}` (B.3.11). `delivery_status` is built
          *     only from provider-confirmed delivery_events — `accepted` never implies
@@ -4407,6 +4595,17 @@ export interface components {
         OutboundMessageResponse: {
             /** Format: date-time */
             accepted_at?: string | null;
+            /** Format: date-time */
+            approval_expires_at?: string | null;
+            /** @description Whether the latest approval was issued for this exact frozen hash. */
+            approval_snapshot_matches: boolean;
+            /** @description Latest request state; null means no approval request exists. */
+            approval_status?: string | null;
+            /**
+             * @description Current decision, expiry, snapshot, and human approver permission all
+             *     remain valid for the immutable outbound snapshot.
+             */
+            approval_valid: boolean;
             /** @description ADR-006: unknown outcomes are never resubmitted automatically. */
             automatic_resubmit_allowed: boolean;
             body_html?: string | null;
@@ -4419,9 +4618,11 @@ export interface components {
              *     provider evidence only.
              */
             delivery_status: string;
+            engagement: components["schemas"]["OutboundEngagementSummary"];
             failure_code?: string | null;
             /** @description Frozen sender identity shown in the submit confirmation preview. */
             from_address: string;
+            known_replies: components["schemas"]["OutboundReplyReference"][];
             last_attempt?: null | components["schemas"]["OutboundAttemptInfo"];
             next_action: string;
             /** Format: date-time */
@@ -4438,6 +4639,11 @@ export interface components {
             purpose: string;
             status: string;
             subject: string;
+            /**
+             * Format: uuid
+             * @description Mailbox-local thread containing the sent message and verified replies.
+             */
+            thread_id?: string | null;
             to_address: string;
             /** Format: int64 */
             version: number;
@@ -4460,6 +4666,15 @@ export interface components {
             global_blocking_reasons: string[];
             /** @description Never `true` — policy evaluation is not an execution authorization. */
             is_execution_authorization: boolean;
+        };
+        OutboundReplyReference: {
+            from_address: string;
+            /** Format: uuid */
+            inbound_message_id: string;
+            /** Format: date-time */
+            received_at: string;
+            /** Format: uuid */
+            thread_id: string;
         };
         ParticipantDto: {
             address: string;
@@ -4679,10 +4894,15 @@ export interface components {
         Purpose: "correspondence" | "marketing" | "transactional";
         /** @description `PUT /mail-accounts/{id}/grants/{principal_id}` — full flag replace. */
         PutGrantRequest: {
+            /** @description Human Admin/Manager approver authority. Agents cannot receive it. */
             can_approve: boolean;
             can_assign: boolean;
             can_compose: boolean;
             can_read: boolean;
+            /**
+             * @description Mailbox send ACL. For Agent principals this only satisfies the
+             *     approved-submit path; agents cannot use direct submit or `mail.send`.
+             */
             can_send: boolean;
         };
         /** @description 비율 KPI: 분모가 0이면 `value`는 null(UI01의 N/A 표시). 분자·분모는 항상 표시. */
@@ -4871,6 +5091,11 @@ export interface components {
         SendWorkersLockResponse: {
             send_workers_locked: boolean;
         };
+        SetInboxSyncRequest: {
+            enabled: boolean;
+            /** @description Public IMAP hostname; IMAP TLS port 993 and INBOX are server-fixed. */
+            imap_host: string;
+        };
         /** @description `PUT /contacts/{id}/primary-email`. */
         SetPrimaryEmailRequest: {
             /** Format: uuid */
@@ -4907,6 +5132,7 @@ export interface components {
             name: string;
             /** Format: int32 */
             port: number;
+            purpose: string;
             reply_to?: string | null;
             /** @description `tls` or `starttls`. */
             security: string;
@@ -5043,6 +5269,11 @@ export interface components {
             created_at: string;
             /** Format: uuid */
             id: string;
+            /**
+             * Format: uuid
+             * @description Authoritative last inbound pointer used to fence reply drafts, including timestamp ties.
+             */
+            last_inbound_message_id?: string | null;
             /** Format: uuid */
             mail_account_id: string;
             messages: components["schemas"]["EmailMessageDto"][];
@@ -5775,7 +6006,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Decision recorded; side effect queued when approved */
+            /** @description Decision recorded; approval may require a separate explicit execution action */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6868,6 +7099,87 @@ export interface operations {
             };
             /** @description If-Match required */
             428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    execute_launch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Campaign launch id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecuteLaunchRequest"];
+            };
+        };
+        responses: {
+            /** @description Approved launch activation queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ExecuteLaunchResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Human principal or campaign mailbox grant required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Launch not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Approval/snapshot/state mismatch or idempotency key reused */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Launch version mismatch */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Approval expired or policy blocked */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10805,7 +11117,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description AGENT_FORBIDDEN — agents cannot hold send/approve */
+            /** @description Invalid grant dependency chain or can_approve role */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -12947,7 +13259,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Pending Office SMTP profile and disabled marketing channel */
+            /** @description Pending Office SMTP profile and disabled purpose-scoped delivery channel */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -13063,6 +13375,217 @@ export interface operations {
                 };
             };
             /** @description Idempotency key reused */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_inbox_sync: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Inbox sync configuration and cursor */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["InboxSyncResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human administrator session and mailbox permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP connection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_inbox_sync: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stable request key */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetInboxSyncRequest"];
+            };
+        };
+        responses: {
+            /** @description Inbox sync configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["InboxSyncResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid idempotency key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human administrator session and mailbox permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP connection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP profile or mailbox is not available */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description IMAP host is invalid or resolves to a non-public address */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_inbox_sync: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stable request key */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded inbox page job queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["InboxSyncQueuedResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid idempotency key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human administrator session and mailbox permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP connection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Enable inbox sync before requesting a poll */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13880,6 +14403,66 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    click_redirect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque outbound-bound tracking capability */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the frozen HTTP(S) destination */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown or invalid capability */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Public request rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    open_pixel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Opaque outbound-bound tracking capability */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No-cache one-pixel image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/gif": unknown;
                 };
             };
         };

@@ -404,11 +404,122 @@ async fn frozen_outbound_for(
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
     .unwrap();
     (frozen.outbound_message_id, frozen.payload_hash, to, channel)
+}
+
+async fn frozen_reply_outbound_for(
+    db: &Db,
+    world: &TestWorld,
+    author: &TestPrincipal,
+    local: &str,
+) -> (Uuid, String, Uuid, Uuid, Uuid) {
+    let ws = world.workspace_id;
+    let ctx = ctx_for(world, author, "reply-fixture");
+    let mut tx = db.begin(ws).await.unwrap();
+    let (_, channel) = sender_and_channel(
+        &mut tx,
+        world.mail_account_id,
+        world.connection_id,
+        "correspondence",
+    )
+    .await;
+    let recipient = email_address(&mut tx, local).await;
+    valid_basis(
+        &mut tx,
+        recipient,
+        world.admin.principal_id,
+        "correspondence",
+    )
+    .await;
+    let (from_address, _) = infrastructure::repo::sending::email_address_row(&mut tx, recipient)
+        .await
+        .unwrap()
+        .unwrap();
+    let thread_id =
+        infrastructure::repo::inbox::create_thread(&mut tx, world.mail_account_id, None, None)
+            .await
+            .unwrap();
+    let inbound_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_messages
+            (workspace_id, mail_account_id, thread_id, direction,
+             internet_message_id, subject, message_at)
+         VALUES ($1,$2,$3,'inbound',$4,'reply fixture',now()) RETURNING id",
+    )
+    .bind(ws)
+    .bind(world.mail_account_id)
+    .bind(thread_id)
+    .bind(format!("<reply-{}@test>", Uuid::new_v4().simple()))
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    infrastructure::repo::inbox::insert_participant(
+        &mut tx,
+        inbound_id,
+        "from",
+        &from_address,
+        None,
+        Some(recipient),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE email_threads SET last_inbound_message_id=$3
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(ws)
+    .bind(thread_id)
+    .bind(inbound_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let draft = sending::create_draft(
+        db,
+        &ctx,
+        &CreateMessageDraftRequest {
+            mail_account_id: world.mail_account_id,
+            to_email_address_id: recipient,
+            purpose: "correspondence".into(),
+            subject: "Re: reply fixture".into(),
+            body_text: "A reply".into(),
+            body_html: None,
+            template_version_id: None,
+            variables: None,
+            thread_id: Some(thread_id),
+            reply_to_message_id: Some(inbound_id),
+            expected_last_inbound_id: Some(inbound_id),
+            visibility: None,
+        },
+    )
+    .await
+    .unwrap();
+    let frozen = sending::freeze_draft(
+        db,
+        &ctx,
+        draft.draft_id,
+        draft.version,
+        &FreezeMessageDraftRequest {
+            delivery_channel_id: channel,
+            sender_identity_id: None,
+            meeting_type_id: None,
+            tracking_requested: false,
+        },
+    )
+    .await
+    .unwrap();
+    (
+        frozen.outbound_message_id,
+        frozen.payload_hash,
+        recipient,
+        thread_id,
+        inbound_id,
+    )
 }
 
 async fn submit_now(
@@ -703,6 +814,7 @@ async fn marketing_unsubscribe_headers(smtp_bound: bool, public_origin: &str) {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -950,6 +1062,375 @@ async fn dispatch_rejected_permanent_fails() {
     .await
     .unwrap();
     assert_eq!(att, "definitive_failed");
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn legacy_reply_queue_reset_releases_only_reserved_claim_for_one_explicit_resubmit() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    enable_sending(&db, ws).await;
+    let (outbound, hash, _recipient, thread_id, inbound_id) =
+        frozen_reply_outbound_for(&db, &world, &world.admin, "legacy-reply-reset").await;
+    {
+        let mut tx = db.begin(ws).await.unwrap();
+        infrastructure::repo::sending::insert_reply_claim(
+            &mut tx,
+            world.mail_account_id,
+            thread_id,
+            inbound_id,
+            outbound,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE outbound_messages SET status='queued'
+              WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(ws)
+        .bind(outbound)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        jobs::enqueue(
+            &mut tx,
+            DISPATCH_KIND,
+            1,
+            serde_json::json!({"outbound_message_id": outbound}),
+            chrono::Utc::now(),
+            Some(&format!("legacy_dispatch:{outbound}:reply-reset")),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    let mail = Arc::new(StubMail::default());
+    let providers = providers(mail.clone(), Arc::new(StubDelivery::default()));
+    run_claimed_jobs(&db, ws, &providers).await;
+    assert_eq!(mail.send_calls(), 0, "legacy queued reply is not sent");
+    assert_eq!(outbound_status(&db, ws, outbound).await.0, "draft");
+    {
+        let mut tx = db.begin(ws).await.unwrap();
+        let claim_state: String = sqlx::query_scalar(
+            "SELECT state FROM reply_claims
+              WHERE workspace_id=$1 AND inbound_message_id=$2 AND outbound_message_id=$3",
+        )
+        .bind(ws)
+        .bind(inbound_id)
+        .bind(outbound)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        assert_eq!(claim_state, "released");
+        tx.rollback().await.unwrap();
+    }
+
+    submit_now(&db, &world, &world.admin, outbound, &hash).await;
+    run_claimed_jobs(&db, ws, &providers).await;
+    assert_eq!(outbound_status(&db, ws, outbound).await.0, "accepted");
+    run_claimed_jobs(&db, ws, &providers).await;
+    assert_eq!(mail.send_calls(), 1, "explicit resubmit sends once");
+}
+
+#[tokio::test]
+async fn legacy_frozen_reply_with_retargeted_recipient_is_denied_at_dispatch() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    enable_sending(&db, ws).await;
+    let outbound_id = Uuid::new_v4();
+    {
+        let mut tx = db.begin(ws).await.unwrap();
+        let (sender_identity_id, channel_id) = sender_and_channel(
+            &mut tx,
+            world.mail_account_id,
+            world.connection_id,
+            "correspondence",
+        )
+        .await;
+        let to_id = email_address(&mut tx, "legacy-retargeted-to").await;
+        let from_id = email_address(&mut tx, "legacy-real-from").await;
+        let (from_address, _) = infrastructure::repo::sending::email_address_row(&mut tx, from_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let (to_address, _) = infrastructure::repo::sending::email_address_row(&mut tx, to_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let (sender_address, _) = sqlx::query_as::<_, (String, String)>(
+            "SELECT si.address, dc.provider FROM sender_identities si
+              JOIN delivery_channels dc
+                ON dc.workspace_id=si.workspace_id AND dc.sender_identity_id=si.id
+             WHERE si.workspace_id=$1 AND dc.id=$2",
+        )
+        .bind(ws)
+        .bind(channel_id)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        let thread_id =
+            infrastructure::repo::inbox::create_thread(&mut tx, world.mail_account_id, None, None)
+                .await
+                .unwrap();
+        let inbound_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO email_messages
+                (workspace_id, mail_account_id, thread_id, direction,
+                 internet_message_id, subject, message_at)
+             VALUES ($1,$2,$3,'inbound',$4,'legacy reply',now()) RETURNING id",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(thread_id)
+        .bind(format!("<legacy-{}@test>", Uuid::new_v4().simple()))
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        infrastructure::repo::inbox::insert_participant(
+            &mut tx,
+            inbound_id,
+            "from",
+            &from_address,
+            None,
+            Some(from_id),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE email_threads SET last_inbound_message_id=$3
+              WHERE workspace_id=$1 AND id=$2",
+        )
+        .bind(ws)
+        .bind(thread_id)
+        .bind(inbound_id)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        let outbound = infrastructure::repo::sending::NewOutbound {
+            id: outbound_id,
+            mail_account_id: world.mail_account_id,
+            delivery_channel_id: channel_id,
+            sender_identity_id,
+            to_email_address_id: to_id,
+            communication_basis_id: None,
+            source_draft_id: None,
+            thread_id: Some(thread_id),
+            reply_to_message_id: Some(inbound_id),
+            requested_by: world.admin.principal_id,
+            source_credential_id: None,
+            internet_message_id: None,
+            purpose: "correspondence".into(),
+            from_address_snapshot: sender_address,
+            to_address_snapshot: to_address,
+            subject: "legacy retargeted reply".into(),
+            body_text: "must not send".into(),
+            body_html: None,
+            payload_hash: [7_u8; 32],
+        };
+        infrastructure::repo::sending::insert_outbound(&mut tx, &outbound)
+            .await
+            .unwrap();
+        let marker: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT date_trunc('microseconds', now())")
+                .fetch_one(tx.conn())
+                .await
+                .unwrap();
+        infrastructure::repo::sending::set_queued(&mut tx, outbound_id, None, marker)
+            .await
+            .unwrap();
+        jobs::enqueue(
+            &mut tx,
+            DISPATCH_KIND,
+            1,
+            serde_json::json!({
+                "outbound_message_id": outbound_id,
+                "explicit_submission_at": marker,
+            }),
+            chrono::Utc::now(),
+            Some(&format!("dispatch:{outbound_id}")),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    let mail = Arc::new(StubMail::default());
+    run_claimed_jobs(
+        &db,
+        ws,
+        &providers(mail.clone(), Arc::new(StubDelivery::default())),
+    )
+    .await;
+    assert_eq!(
+        mail.send_calls(),
+        0,
+        "legacy reply cannot send to a retargeted recipient"
+    );
+    let (status, code) = outbound_status(&db, ws, outbound_id).await;
+    assert_eq!(status, "canceled");
+    assert_eq!(code.as_deref(), Some("REPLY_RECIPIENT_MISMATCH"));
+}
+
+#[tokio::test]
+async fn legacy_queue_repair_leaves_unknown_submitting_and_accepted_claims_unchanged() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    let cases = [
+        ("unknown", "submitted", "unknown-claim"),
+        ("submitting", "reserved", "submitting-claim"),
+        ("accepted", "accepted", "accepted-claim"),
+    ];
+    let mut fixtures = Vec::new();
+    for (status, claim_state, local) in cases {
+        let (outbound, _hash, _recipient, thread_id, inbound_id) =
+            frozen_reply_outbound_for(&db, &world, &world.admin, local).await;
+        let mut tx = db.begin(ws).await.unwrap();
+        sqlx::query("UPDATE outbound_messages SET status=$3 WHERE workspace_id=$1 AND id=$2")
+            .bind(ws)
+            .bind(outbound)
+            .bind(status)
+            .execute(tx.conn())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO reply_claims
+                (workspace_id, mail_account_id, thread_id, inbound_message_id,
+                 outbound_message_id, state)
+             VALUES ($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(thread_id)
+        .bind(inbound_id)
+        .bind(outbound)
+        .bind(claim_state)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        assert!(
+            !infrastructure::repo::sending::return_legacy_queue_to_draft(&mut tx, outbound)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        fixtures.push((outbound, status, claim_state));
+    }
+
+    let mut tx = db.begin(ws).await.unwrap();
+    for (outbound, expected_status, expected_claim) in fixtures {
+        let (status, claim): (String, String) = sqlx::query_as(
+            "SELECT o.status, rc.state FROM outbound_messages o
+              JOIN reply_claims rc
+                ON rc.workspace_id=o.workspace_id AND rc.outbound_message_id=o.id
+             WHERE o.workspace_id=$1 AND o.id=$2",
+        )
+        .bind(ws)
+        .bind(outbound)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        assert_eq!(status, expected_status);
+        assert_eq!(claim, expected_claim);
+    }
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn migration_0041_releases_only_proven_unsent_legacy_reply_claims() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    let cases = [
+        ("draft", "reserved", "legacy-claim-release", true),
+        ("unknown", "submitted", "unknown-claim-keep", false),
+        ("submitting", "reserved", "submitting-claim-keep", false),
+        ("accepted", "accepted", "accepted-claim-keep", false),
+    ];
+    let mut fixtures = Vec::new();
+    for (status, claim_state, local, should_release) in cases {
+        let (outbound, _hash, _recipient, thread_id, inbound_id) =
+            frozen_reply_outbound_for(&db, &world, &world.admin, local).await;
+        let mut tx = db.begin(ws).await.unwrap();
+        if status != "draft" {
+            sqlx::query("UPDATE outbound_messages SET status=$3 WHERE workspace_id=$1 AND id=$2")
+                .bind(ws)
+                .bind(outbound)
+                .bind(status)
+                .execute(tx.conn())
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO reply_claims
+                (workspace_id, mail_account_id, thread_id, inbound_message_id,
+                 outbound_message_id, state)
+             VALUES ($1,$2,$3,$4,$5,$6)",
+        )
+        .bind(ws)
+        .bind(world.mail_account_id)
+        .bind(thread_id)
+        .bind(inbound_id)
+        .bind(outbound)
+        .bind(claim_state)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        jobs::enqueue(
+            &mut tx,
+            DISPATCH_KIND,
+            1,
+            serde_json::json!({"outbound_message_id": outbound}),
+            chrono::Utc::now(),
+            Some(&format!("legacy_dispatch:{outbound}:migration-test")),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        fixtures.push((outbound, status, claim_state, should_release));
+    }
+
+    // The real forward migration is idempotent and runs only on this
+    // isolated verification database; reapply it to exercise the upgrade
+    // predicate against rows created after the database reached 0041.
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let owner = Db::connect(&database_url, None).await.unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../migrations/0041_release_unsubmitted_legacy_reply_claims.sql"
+    ))
+    .execute(owner.pool())
+    .await
+    .unwrap();
+
+    let mut tx = db.begin(ws).await.unwrap();
+    for (outbound, expected_status, old_claim_state, should_release) in fixtures {
+        let (status, claim_state): (String, String) = sqlx::query_as(
+            "SELECT o.status, rc.state FROM outbound_messages o
+              JOIN reply_claims rc
+                ON rc.workspace_id=o.workspace_id AND rc.outbound_message_id=o.id
+             WHERE o.workspace_id=$1 AND o.id=$2",
+        )
+        .bind(ws)
+        .bind(outbound)
+        .fetch_one(tx.conn())
+        .await
+        .unwrap();
+        assert_eq!(status, expected_status);
+        assert_eq!(
+            claim_state,
+            if should_release {
+                "released"
+            } else {
+                old_claim_state
+            }
+        );
+    }
     tx.rollback().await.unwrap();
 }
 
@@ -1586,17 +2067,26 @@ async fn queued_legacy_campaign_follow_up_is_canceled_before_provider_send() {
         )
         .await
         .unwrap();
-        infrastructure::repo::campaigns::queue_outbound_at(
+        let explicit_submission_at: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT date_trunc('microseconds', now())")
+                .fetch_one(tx.conn())
+                .await
+                .unwrap();
+        infrastructure::repo::campaigns::queue_outbound_at_explicit(
             &mut tx,
             outbound_id,
             chrono::Utc::now(),
+            explicit_submission_at,
         )
         .await
         .unwrap();
         let job_id = infrastructure::repo::campaigns::enqueue_dedup(
             &mut tx,
             DISPATCH_KIND,
-            serde_json::json!({"outbound_message_id": outbound_id}),
+            serde_json::json!({
+                "outbound_message_id": outbound_id,
+                "explicit_submission_at": explicit_submission_at,
+            }),
             chrono::Utc::now(),
             &infrastructure::repo::campaigns::dispatch_dedupe_key(outbound_id),
         )
@@ -1773,6 +2263,7 @@ async fn t10_revoked_source_credential_cancels_before_provider_call() {
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -1972,6 +2463,7 @@ async fn t11_suppression_denies_at_dispatch_and_submit() {
             delivery_channel_id: channel2,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -2065,6 +2557,7 @@ async fn t12_suppression_during_inflight_is_recorded() {
             delivery_channel_id: channel2,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -2195,7 +2688,11 @@ async fn t34_accepted_is_not_delivered() {
     .await;
 
     let ctx = ctx_for(&world, &world.admin, "t34-get");
-    let dto = sending::get_outbound(&db, &ctx, outbound).await.unwrap();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let api_db = Db::connect(&database_url, Some(ROLE_API)).await.unwrap();
+    let dto = sending::get_outbound(&api_db, &ctx, outbound)
+        .await
+        .unwrap();
     assert_eq!(dto.status, "accepted");
     assert_eq!(dto.payload_hash.len(), 64);
     assert!(dto.payload_hash.chars().all(|c| c.is_ascii_hexdigit()));
@@ -2220,6 +2717,192 @@ async fn t34_accepted_is_not_delivered() {
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    let dto = sending::get_outbound(&db, &ctx, outbound).await.unwrap();
+    let dto = sending::get_outbound(&api_db, &ctx, outbound)
+        .await
+        .unwrap();
     assert_eq!(dto.delivery_status, "delivered");
+}
+
+#[tokio::test]
+async fn legacy_approved_queue_without_explicit_submission_never_reaches_provider() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    enable_sending(&db, ws).await;
+    let (outbound, hash, _recipient, _channel) = frozen_outbound_for(
+        &db,
+        &world,
+        &world.member_a,
+        "correspondence",
+        "legacy-approval",
+    )
+    .await;
+    let requester_ctx = ctx_for(&world, &world.member_a, "legacy-approval-request");
+    let approval = sending::create_approval_request(
+        &db,
+        &requester_ctx,
+        outbound,
+        &CreateOutboundApprovalRequest {
+            reason: "legacy approved dispatch regression".into(),
+            expected_payload_hash: hash.clone(),
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    {
+        let mut tx = db.begin(ws).await.unwrap();
+        sqlx::query(
+            "INSERT INTO approval_decisions
+                (workspace_id, approval_request_id, decided_by, decision,
+                 snapshot_hash, version_at_decision)
+             VALUES ($1,$2,$3,'approved',$4,1)",
+        )
+        .bind(ws)
+        .bind(approval.approval_request_id)
+        .bind(world.manager.principal_id)
+        .bind(hex_bytes(&hash))
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE approval_requests SET status = 'approved'
+              WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(approval.approval_request_id)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+
+        // Simulate an old approval worker that left an unmarked dispatch
+        // job in the queue before explicit submission became mandatory.
+        sqlx::query(
+            "UPDATE outbound_messages SET status = 'queued'
+              WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(outbound)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        jobs::enqueue(
+            &mut tx,
+            DISPATCH_KIND,
+            1,
+            serde_json::json!({"outbound_message_id": outbound}),
+            chrono::Utc::now(),
+            Some(&format!("dispatch:{outbound}")),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    let mail = Arc::new(StubMail::default());
+    let providers = providers(mail.clone(), Arc::new(StubDelivery::default()));
+    run_claimed_jobs(&db, ws, &providers).await;
+
+    assert_eq!(mail.send_calls(), 0, "legacy approval job must not send");
+    assert_eq!(outbound_status(&db, ws, outbound).await.0, "draft");
+    assert_eq!(
+        audit_count(&db, ws, "send.legacy_queue_requires_explicit", outbound).await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn old_running_dispatch_cannot_consume_a_later_explicit_submission() {
+    let Some((db, world)) = test_db().await else {
+        return;
+    };
+    let ws = world.workspace_id;
+    enable_sending(&db, ws).await;
+    let (outbound, hash, _recipient, _channel) =
+        frozen_outbound_for(&db, &world, &world.member_a, "correspondence", "stale-job").await;
+    let (old_job_id, old_lease) = {
+        let mut tx = db.begin(ws).await.unwrap();
+        let old_lease = Uuid::new_v4();
+        let old_job_id = jobs::enqueue(
+            &mut tx,
+            DISPATCH_KIND,
+            1,
+            serde_json::json!({"outbound_message_id": outbound}),
+            chrono::Utc::now(),
+            Some(&format!("legacy_dispatch:{outbound}:stale")),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE jobs SET state = 'running', lease_owner = 'old-worker',
+                    lease_token = $3, lease_expires_at = now() + interval '60 seconds'
+              WHERE workspace_id = $1 AND id = $2",
+        )
+        .bind(ws)
+        .bind(old_job_id)
+        .bind(old_lease)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        (old_job_id, old_lease)
+    };
+
+    // This creates a new dispatch job and marker after the old worker has
+    // already claimed its marker-less legacy job.
+    submit_now(&db, &world, &world.member_a, outbound, &hash).await;
+    let mail = Arc::new(StubMail::default());
+    let providers = providers(mail.clone(), Arc::new(StubDelivery::default()));
+    run_dispatch(
+        &db,
+        &providers,
+        &JobCtx {
+            job_id: old_job_id,
+            workspace_id: ws,
+            lease_token: old_lease,
+            attempt_count: 1,
+            lease_owner: "old-worker".into(),
+        },
+        outbound,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(mail.send_calls(), 0, "stale legacy job must not send");
+    assert_eq!(outbound_status(&db, ws, outbound).await.0, "queued");
+    let mut tx = db.begin(ws).await.unwrap();
+    let (marker, queued_dispatches, matching_dispatches): (
+        Option<chrono::DateTime<chrono::Utc>>,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT o.explicit_submission_at,
+                    (SELECT count(*) FROM jobs j
+                      WHERE j.workspace_id = o.workspace_id
+                        AND j.kind = $3 AND j.state IN ('queued','retry_wait')
+                        AND j.payload->>'outbound_message_id' = o.id::text),
+                    (SELECT count(*) FROM jobs j
+                      WHERE j.workspace_id = o.workspace_id
+                        AND j.kind = $3 AND j.state IN ('queued','retry_wait')
+                        AND j.payload->>'outbound_message_id' = o.id::text
+                        AND (j.payload->>'explicit_submission_at')::timestamptz = o.explicit_submission_at)
+               FROM outbound_messages o WHERE o.workspace_id = $1 AND o.id = $2",
+    )
+    .bind(ws)
+    .bind(outbound)
+    .bind(DISPATCH_KIND)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert!(
+        marker.is_some(),
+        "new explicit submission marker remains set"
+    );
+    assert_eq!(queued_dispatches, 1, "new dispatch job remains runnable");
+    assert_eq!(
+        matching_dispatches, 1,
+        "new job carries the exact row marker"
+    );
+    tx.rollback().await.unwrap();
 }

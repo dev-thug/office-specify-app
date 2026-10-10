@@ -343,6 +343,21 @@ pub async fn erase_contact(
     .await
     .map_err(map_sqlx)?;
 
+    // Remove recipient-bound public capabilities before the immutable
+    // outbounds are scrubbed. Cascading deletes remove their aggregate
+    // request buckets, so old email URLs can neither redirect nor count.
+    if !outbound_ids.is_empty() {
+        sqlx::query(
+            "DELETE FROM outbound_engagement_capabilities
+              WHERE workspace_id = $1 AND outbound_message_id = ANY($2)",
+        )
+        .bind(request.workspace_id)
+        .bind(&outbound_ids)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+    }
+
     // Redact any native Campaigns export whose frozen recipient map contains
     // an exclusively erased address or an outbound scrubbed above. The export
     // rows are already locked ahead of the email-address locks; read their

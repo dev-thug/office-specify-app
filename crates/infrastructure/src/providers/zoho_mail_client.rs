@@ -212,6 +212,23 @@ impl ZohoMailClient {
         .await
     }
 
+    /// Retrieve the RFC headers of one message. Zoho's documented endpoint
+    /// defaults to raw mode; request it explicitly because the normalized
+    /// response is the header block consumed by the strict ID parser.
+    pub async fn message_headers(
+        &self,
+        account_id: &str,
+        folder_id: &str,
+        message_id: &str,
+    ) -> Result<ZohoMessageHeaders, ZohoMailClientError> {
+        validate_message_path(account_id, folder_id, message_id)?;
+        self.get_json(
+            &format!("accounts/{account_id}/folders/{folder_id}/messages/{message_id}/header"),
+            &[("raw", "true".to_owned())],
+        )
+        .await
+    }
+
     /// Retrieve HTML or plain text content for a message.
     pub async fn message_content(
         &self,
@@ -668,6 +685,15 @@ pub struct ZohoMessageSummary {
 /// Message details use Zoho's `/details` endpoint and include the summary
 /// fields returned by its list endpoint.
 pub type ZohoMessageDetails = ZohoMessageSummary;
+
+/// Raw Internet header block returned by Zoho's `/header?raw=true` endpoint.
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ZohoMessageHeaders {
+    pub header_content: String,
+    #[serde(default, deserialize_with = "deserialize_optional_id")]
+    pub message_id: Option<String>,
+}
 
 /// The message body returned by Zoho's `/content` endpoint.
 #[derive(Clone, Deserialize, PartialEq)]

@@ -1,8 +1,11 @@
-//! Sending module MCP tools (B.6): draft creation is internal-only and never
-//! submits mail. Provider submission remains a separately approved workflow.
+//! Sending module MCP tools (B.6): drafts stay internal-only. An approved
+//! snapshot can be explicitly queued through its narrow approval-bound path.
 
 use crate::{ToolDef, arguments, result, tool_with_db};
-use contracts::{AppError, PrincipalKind, Violation, sending::CreateMessageDraftRequest};
+use contracts::{
+    AppError, PrincipalKind, Violation,
+    sending::{CreateMessageDraftRequest, OutboundMessageResponse, SubmitOutboundResponse},
+};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -52,9 +55,29 @@ struct MailCreateDraftOutput {
     approval_required: bool,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MailSubmitApprovedInput {
+    /// Stable ASCII caller key, 16..=128 characters.
+    idempotency_key: String,
+    outbound_message_id: uuid::Uuid,
+    /// Must equal the frozen hash reviewed by the independent human approver.
+    expected_payload_hash: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MailGetOutboundInput {
+    outbound_message_id: uuid::Uuid,
+}
+
+fn valid_approved_submit_key(key: &str) -> bool {
+    key.is_ascii() && (16..=128).contains(&key.len())
+}
+
 /// Tools this module exposes over MCP.
 pub fn tools() -> Vec<ToolDef> {
-    vec![tool_with_db(
+    let mut tools = vec![tool_with_db(
         "mail_create_draft",
         "Create a mailbox-scoped email draft using a stable 16..=128 character idempotency_key. This never submits or schedules mail; agent-created drafts require human approval before sending.",
         serde_json::to_value(schemars::schema_for!(MailCreateDraftInput))
@@ -113,7 +136,51 @@ pub fn tools() -> Vec<ToolDef> {
                 approval_required,
             })
         },
-    )]
+    )];
+    tools.push(tool_with_db(
+        "mail_submit_approved",
+        "Explicitly queue one frozen outbound snapshot after a current, unexpired independent human approval. Requires mail.submit_approved, a current mailbox can_send grant, and the active source credential that created the snapshot. This never approves mail or accepts an arbitrary outbound.",
+        serde_json::to_value(schemars::schema_for!(MailSubmitApprovedInput))
+            .expect("schema serializes"),
+        serde_json::to_value(schemars::schema_for!(SubmitOutboundResponse))
+            .expect("schema serializes"),
+        true,
+        |db, ctx, value| async move {
+            let input = arguments::<MailSubmitApprovedInput>(value)?;
+            if !valid_approved_submit_key(&input.idempotency_key) {
+                return Err(AppError::validation(
+                    "idempotency_key must be 16..=128 ASCII characters",
+                    vec![Violation {
+                        field: "idempotency_key".into(),
+                        code: "LENGTH".into(),
+                    }],
+                ));
+            }
+            let submitted = application::sending::submit_approved(
+                &db,
+                &ctx,
+                input.outbound_message_id,
+                &input.expected_payload_hash,
+                &input.idempotency_key,
+            )
+            .await?;
+            result(submitted.body)
+        },
+    ));
+    tools.push(tool_with_db(
+        "mail_get_outbound",
+        "Read the current submission and provider-confirmed delivery status for one outbound. Requires mail.read and a mailbox read grant. Linked replies and request-based engagement are included when available; accepted does not mean delivered or read.",
+        serde_json::to_value(schemars::schema_for!(MailGetOutboundInput))
+            .expect("schema serializes"),
+        serde_json::to_value(schemars::schema_for!(OutboundMessageResponse))
+            .expect("schema serializes"),
+        false,
+        |db, ctx, value| async move {
+            let input = arguments::<MailGetOutboundInput>(value)?;
+            result(application::sending::get_outbound(&db, &ctx, input.outbound_message_id).await?)
+        },
+    ));
+    tools
 }
 
 #[cfg(test)]
@@ -122,7 +189,7 @@ mod tests {
 
     #[test]
     fn mail_create_draft_requires_idempotency_key_and_rejects_unknown_fields() {
-        let tool = tools().pop().unwrap();
+        let tool = tools().remove(0);
         let required = tool.input_schema["required"].as_array().unwrap();
         assert!(required.iter().any(|name| name == "idempotency_key"));
 
@@ -155,6 +222,58 @@ mod tests {
                 "unknown": true,
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn approved_submit_requires_hash_and_idempotency_key_and_rejects_unknown_fields() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool.name == "mail_submit_approved")
+            .unwrap();
+        let required = tool.input_schema["required"].as_array().unwrap();
+        for field in [
+            "idempotency_key",
+            "outbound_message_id",
+            "expected_payload_hash",
+        ] {
+            assert!(required.iter().any(|name| name == field), "missing {field}");
+        }
+        assert!(tool.external_effect);
+        let input = serde_json::json!({
+            "idempotency_key": "approved-send-key-001",
+            "outbound_message_id": uuid::Uuid::new_v4(),
+            "expected_payload_hash": "ab".repeat(32)
+        });
+        assert!(arguments::<MailSubmitApprovedInput>(input.clone()).is_ok());
+        assert!(
+            arguments::<MailSubmitApprovedInput>(serde_json::json!({
+                "idempotency_key": "approved-send-key-001",
+                "outbound_message_id": uuid::Uuid::new_v4(),
+                "expected_payload_hash": "ab".repeat(32),
+                "status": "queued"
+            }))
+            .is_err()
+        );
+        assert!(valid_approved_submit_key("approved-send-key-001"));
+        assert!(!valid_approved_submit_key("abcdefghé1234567"));
+        assert!(!valid_approved_submit_key("short"));
+    }
+
+    #[test]
+    fn outbound_status_tool_requires_an_outbound_id_and_is_read_only() {
+        let tool = tools()
+            .into_iter()
+            .find(|tool| tool.name == "mail_get_outbound")
+            .unwrap();
+        assert!(!tool.external_effect);
+        let required = tool.input_schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|name| name == "outbound_message_id"));
+        assert!(
+            arguments::<MailGetOutboundInput>(serde_json::json!({
+                "outbound_message_id": uuid::Uuid::new_v4()
+            }))
+            .is_ok()
         );
     }
 }

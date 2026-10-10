@@ -10,6 +10,7 @@ pub mod booking;
 pub mod campaigns;
 pub mod compliance;
 pub mod crm;
+pub mod engagement;
 pub mod imports;
 pub mod inbox;
 pub mod mailboxes;
@@ -19,6 +20,7 @@ pub mod org;
 pub mod research;
 pub mod sending;
 pub mod smtp;
+pub mod smtp_inbox;
 pub mod templates;
 
 pub use contracts::AppError;

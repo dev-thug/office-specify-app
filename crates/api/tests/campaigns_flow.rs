@@ -348,6 +348,10 @@ async fn run_freeze(db: &Db, world: &TestWorld, job_id: Uuid) {
         .map(|v| serde_json::from_value(v).unwrap())
         .unwrap_or_default();
     let requester_context = payload["requester_context"].clone();
+    let tracking_requested = payload
+        .get("tracking_requested")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     application::campaigns::freeze_launch(
         &mut tx,
         world.system.principal_id,
@@ -355,6 +359,7 @@ async fn run_freeze(db: &Db, world: &TestWorld, job_id: Uuid) {
         launch_id,
         &ids,
         &vars,
+        tracking_requested,
         &requester_context,
     )
     .await
@@ -524,6 +529,36 @@ async fn freeze(db: &Db, job_id: Uuid, world: &TestWorld, launch_id: Uuid) -> St
     row.0.unwrap().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Explicitly queue activation of an approved manifest through the human REST path.
+async fn execute_campaign_launch(
+    app: &TestApp,
+    client: &reqwest::Client,
+    csrf: &str,
+    launch: Uuid,
+    manifest_hash: &str,
+    expected_version: i64,
+    idem: &str,
+) -> Uuid {
+    let res = post(
+        app,
+        client,
+        csrf,
+        &format!("/api/v1/campaign-launches/{launch}/execute"),
+        json!({
+            "expected_manifest_hash": manifest_hash,
+            "expected_version": expected_version,
+        }),
+        Some(idem),
+        None,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    let data = TestApp::data(res).await;
+    assert_eq!(data["launch_status"], "approved");
+    assert_eq!(data["execution_status"], "queued");
+    data["job_id"].as_str().unwrap().parse().unwrap()
+}
+
 // ------------------------------------------------------------------ tests
 
 #[tokio::test]
@@ -668,7 +703,7 @@ async fn campaign_create_preflight_launch_freeze_approve_activate() {
     let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
     assert_eq!(p["code"], "SELF_APPROVAL_FORBIDDEN");
 
-    // 6. manager approves — launch → approved + activate job enqueued.
+    // 6. manager approves — launch becomes approved, without queuing activation.
     let res = post(
         &app,
         &manager,
@@ -681,16 +716,272 @@ async fn campaign_create_preflight_launch_freeze_approve_activate() {
     .await;
     let data = TestApp::data(res).await;
     assert_eq!(data["approval_status"], "approved");
-    assert_eq!(data["execution_status"], "queued");
-    let activate_job: Uuid = data["job_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(data["execution_status"], "ready");
+    assert!(data["job_id"].is_null());
+    let activation_jobs_before: i64 = sql_scalar(
+        db,
+        world.workspace_id,
+        "SELECT count(*) FROM jobs WHERE workspace_id=$1 AND kind='campaigns.activate_launch' AND payload->>'campaign_launch_id'=$2::uuid::text",
+        launch,
+    )
+    .await;
+    assert_eq!(
+        activation_jobs_before, 0,
+        "approval must not activate a launch"
+    );
+    let marked_before_execute: i64 = sql_scalar(
+        db,
+        world.workspace_id,
+        "SELECT count(*) FROM outbound_messages WHERE workspace_id=$1 AND launch_id=$2 AND explicit_submission_at IS NOT NULL",
+        launch,
+    )
+    .await;
+    assert_eq!(marked_before_execute, 0);
 
-    // 7. activation — launch runs, enrollments active, step-1 outbound queued.
+    // 7. A human explicitly executes the approved manifest. Repeating the
+    // same request or using another key returns the one activation job.
+    let approved =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await)
+            .await;
+    assert_eq!(approved["status"], "approved");
+    assert_eq!(approved["execution_status"], "ready");
+    assert!(approved["activation_job_id"].is_null());
+    assert!(
+        approved["allowed_actions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("execute_launch"))
+    );
+    let approved_version = approved["version"].as_i64().unwrap();
+    let execute_body = json!({
+        "expected_manifest_hash": manifest_hex,
+        "expected_version": approved_version,
+    });
+    // Simulate an approval-only activation job left over from an earlier
+    // deployment. It has no executor attribution and cannot activate yet.
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let legacy_activation_job = infrastructure::repo::campaigns::enqueue_dedup(
+        &mut tx,
+        "campaigns.activate_launch",
+        json!({
+            "campaign_launch_id": launch,
+            "approval_request_id": request_id,
+        }),
+        chrono::Utc::now(),
+        &format!("activate_launch:{launch}"),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE jobs
+            SET state='running', lease_owner='test-worker', lease_token=gen_random_uuid(),
+                lease_expires_at=now() + interval '1 minute'
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(legacy_activation_job)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    // A worker that picks up the old approval-only job before a human
+    // executes it must leave the launch untouched. The job is already
+    // running so execute must queue a fresh explicitly authorized job.
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    application::campaigns::activate_launch(
+        &mut tx,
+        world.system.principal_id,
+        legacy_activation_job,
+        launch,
+        request_id,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let before_execute =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await)
+            .await;
+    assert_eq!(before_execute["status"], "approved");
+    assert_eq!(before_execute["execution_status"], "ready");
+    assert_eq!(before_execute["enrollments"]["pending"], 2);
+    assert_eq!(before_execute["enrollments"]["active"], 0);
+
+    let execute_path = format!("/api/v1/campaign-launches/{launch}/execute");
+
+    let bad_manifest = post(
+        &app,
+        &admin,
+        &acsrf,
+        &execute_path,
+        json!({
+            "expected_manifest_hash": "00".repeat(32),
+            "expected_version": approved_version,
+        }),
+        Some("execute-bad-manifest"),
+        None,
+    )
+    .await;
+    let p = TestApp::problem(bad_manifest, StatusCode::CONFLICT).await;
+    assert_eq!(p["code"], "SNAPSHOT_MISMATCH");
+
+    let stale_version = post(
+        &app,
+        &admin,
+        &acsrf,
+        &execute_path,
+        json!({
+            "expected_manifest_hash": manifest_hex,
+            "expected_version": approved_version - 1,
+        }),
+        Some("execute-stale-version"),
+        None,
+    )
+    .await;
+    let p = TestApp::problem(stale_version, StatusCode::PRECONDITION_FAILED).await;
+    assert_eq!(p["code"], "VERSION_MISMATCH");
+
+    let res = post(
+        &app,
+        &admin,
+        &acsrf,
+        &execute_path,
+        execute_body.clone(),
+        Some("execute-1"),
+        None,
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::ACCEPTED);
+    assert!(res.headers().get("location").is_some());
+    assert_eq!(
+        res.headers().get("etag").unwrap().to_str().unwrap(),
+        format!("\"{}\"", approved_version + 1)
+    );
+    let execution = TestApp::data(res).await;
+    assert_eq!(execution["launch_status"], "approved");
+    assert_eq!(execution["execution_status"], "queued");
+    assert_eq!(execution["manifest_hash"], manifest_hex);
+    assert_eq!(execution["version"], approved_version + 1);
+    let activate_job: Uuid = execution["job_id"].as_str().unwrap().parse().unwrap();
+    assert_ne!(
+        activate_job, legacy_activation_job,
+        "a claimed legacy job must not be retagged after it may have already no-op'd"
+    );
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE jobs SET state='completed', finished_at=now(), lease_owner=NULL, lease_token=NULL, lease_expires_at=NULL WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(legacy_activation_job)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let repeated = post(
+        &app,
+        &admin,
+        &acsrf,
+        &execute_path,
+        execute_body.clone(),
+        Some("execute-1"),
+        None,
+    )
+    .await;
+    assert_eq!(repeated.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        TestApp::data(repeated).await["job_id"],
+        activate_job.to_string()
+    );
+
+    let queued =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await)
+            .await;
+    assert_eq!(queued["status"], "approved");
+    assert_eq!(queued["execution_status"], "queued");
+    assert_eq!(queued["activation_job_id"], activate_job.to_string());
+    let queued_version = queued["version"].as_i64().unwrap();
+    assert_eq!(queued_version, approved_version + 1);
+    let second_key = post(
+        &app,
+        &admin,
+        &acsrf,
+        &execute_path,
+        json!({
+            "expected_manifest_hash": manifest_hex,
+            "expected_version": queued_version,
+        }),
+        Some("execute-2"),
+        None,
+    )
+    .await;
+    assert_eq!(second_key.status(), StatusCode::ACCEPTED);
+    let second_execution = TestApp::data(second_key).await;
+    assert_eq!(second_execution["job_id"], activate_job.to_string());
+    assert_eq!(second_execution["version"], queued_version);
+
+    let activation_jobs_after: i64 = sql_scalar(
+        db,
+        world.workspace_id,
+        "SELECT count(*) FROM jobs WHERE workspace_id=$1 AND kind='campaigns.activate_launch' AND dedupe_key='explicit_activate_launch:' || $2::uuid::text",
+        launch,
+    )
+    .await;
+    assert_eq!(
+        activation_jobs_after, 1,
+        "execution must queue activation once"
+    );
+
+    // 8. activation — launch runs, enrollments active, step-1 outbound queued.
     run_activate(db, &world, activate_job).await;
     let res = get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await;
     let detail = TestApp::data(res).await;
     assert_eq!(detail["status"], "running");
+    assert_eq!(detail["execution_status"], "activated");
+    assert_eq!(detail["activation_job_id"], activate_job.to_string());
     assert_eq!(detail["enrollments"]["active"], 2);
+
+    let repeated_after_activation = post(
+        &app,
+        &admin,
+        &acsrf,
+        &execute_path,
+        json!({
+            "expected_manifest_hash": manifest_hex,
+            "expected_version": approved_version,
+        }),
+        Some("execute-after-activation"),
+        None,
+    )
+    .await;
+    let p = TestApp::problem(repeated_after_activation, StatusCode::PRECONDITION_FAILED).await;
+    assert_eq!(p["code"], "VERSION_MISMATCH");
     assert_eq!(detail["enrollments"]["pending"], 0);
+    let marked_after_activation: i64 = sql_scalar(
+        db,
+        world.workspace_id,
+        "SELECT count(*) FROM outbound_messages WHERE workspace_id=$1 AND launch_id=$2 AND explicit_submission_at IS NOT NULL",
+        launch,
+    )
+    .await;
+    assert_eq!(marked_after_activation, 2);
+    let matched_dispatch_markers: i64 = sql_scalar(
+        db,
+        world.workspace_id,
+        "SELECT count(*) FROM jobs j
+           JOIN outbound_messages o
+             ON o.workspace_id=j.workspace_id
+            AND j.payload->>'outbound_message_id'=o.id::text
+          WHERE j.workspace_id=$1 AND o.launch_id=$2
+            AND j.kind='sending.dispatch_outbound'
+            AND NULLIF(j.payload->>'explicit_submission_at','')::timestamptz
+                = o.explicit_submission_at",
+        launch,
+    )
+    .await;
+    assert_eq!(matched_dispatch_markers, 2);
     let msgs = detail["messages"]["items"].as_array().unwrap();
     assert_eq!(msgs.len(), 2, "one frozen outbound per enrolled recipient");
     assert!(msgs.iter().all(|m| m["status"] == "queued"));
@@ -699,7 +990,7 @@ async fn campaign_create_preflight_launch_freeze_approve_activate() {
     let dispatch_jobs: i64 = sql_scalar(
         db,
         world.workspace_id,
-        "SELECT count(*) FROM jobs WHERE workspace_id=$1 AND kind='sending.dispatch_outbound' AND state='queued'",
+        "SELECT count(*) FROM jobs WHERE workspace_id=$1 AND workspace_id=$2 AND kind='sending.dispatch_outbound' AND state='queued'",
         world.workspace_id,
     )
     .await;
@@ -755,6 +1046,119 @@ async fn t31_one_address_two_contacts_single_enrollment() {
         n_outbound, 1,
         "one frozen outbound for the single enrollment's step"
     );
+}
+
+#[tokio::test]
+async fn campaign_launch_freeze_request_carries_tracking_opt_in() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (_identity, channel) = marketing_channel(db, &world).await;
+    let template = template_version_with_html(
+        db,
+        &world,
+        "Offer",
+        "Read more at https://example.test/offer",
+        Some("<p><a href=\"https://example.test/offer\">Read more</a></p>"),
+        json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+    )
+    .await;
+    let recipient = recipient(db, &world, "tracking-opt-in", true).await;
+    let (campaign_id, revision_id) = create_campaign(
+        &app,
+        &admin,
+        &csrf,
+        &world,
+        channel,
+        template,
+        "tracking-opt-in-campaign",
+    )
+    .await;
+
+    let response = post(
+        &app,
+        &admin,
+        &csrf,
+        &format!("/api/v1/campaigns/{campaign_id}/launches"),
+        json!({
+            "revision_id": revision_id,
+            "email_address_ids": [recipient],
+            "tracking_requested": true,
+        }),
+        Some("tracking-opt-in-launch"),
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let data = TestApp::data(response).await;
+    let job_id: Uuid = data["job_id"].as_str().unwrap().parse().unwrap();
+    let launch_id: Uuid = data["launch_id"].as_str().unwrap().parse().unwrap();
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let payload: Value =
+        sqlx::query_scalar("SELECT payload FROM jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(world.workspace_id)
+            .bind(job_id)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(payload["tracking_requested"], true);
+
+    run_freeze(db, &world, job_id).await;
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    #[allow(clippy::type_complexity)]
+    let outbound: (
+        Uuid,
+        Option<Uuid>,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Vec<u8>,
+    ) = sqlx::query_as(
+        "SELECT id, thread_id, internet_message_id, from_address_snapshot,
+                    to_address_snapshot, body_text, body_html, payload_hash
+               FROM outbound_messages WHERE workspace_id=$1 AND launch_id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(launch_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let tracking_capabilities: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbound_engagement_capabilities
+          WHERE workspace_id=$1 AND outbound_message_id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(outbound.0)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+
+    let thread_id = outbound.1.expect("campaign outbound has a local thread");
+    let message_id = outbound.2.expect("campaign outbound has stable RFC ID");
+    let body_text = outbound.5.expect("campaign outbound stores body text");
+    assert!(body_text.contains("/public/v1/engagement/click/"));
+    assert!(body_text.contains("/public/unsubscribe/"));
+    assert_eq!(
+        tracking_capabilities, 2,
+        "one click and one open capability"
+    );
+    let expected_payload_hash =
+        infrastructure::crypto::sha256_bytes(&domain::campaigns::payload_bytes_with_context(
+            &outbound.3,
+            &outbound.4,
+            "Offer",
+            &body_text,
+            outbound.6.as_deref(),
+            Some(&thread_id.to_string()),
+            Some(&message_id),
+        ));
+    assert_eq!(outbound.7, expected_payload_hash);
 }
 
 #[tokio::test]
@@ -851,7 +1255,7 @@ async fn campaign_freeze_mints_recipient_bound_booking_and_unsubscribe_links() {
     assert_eq!(
         frozen_message["body_html"],
         format!(
-            "<p>&lt;b&gt;A&amp;B&lt;/b&gt;</p><a href=\"{}\">book</a>\n<p><a href=\"{}\">Unsubscribe</a></p>",
+            "<p>&lt;b&gt;A&amp;B&lt;/b&gt;</p><a href=\"{}\" rel=\"noopener noreferrer\">book</a>\n<p><a href=\"{}\">Unsubscribe</a></p>",
             body_parts[2], unsubscribe_url
         )
     );
@@ -1004,6 +1408,7 @@ async fn revoked_agent_credential_blocks_booking_link_creation_during_freeze() {
         &contracts::campaigns::CreateLaunchRequest {
             revision_id: campaign.revision_id,
             email_address_ids: vec![email_address_id],
+            tracking_requested: false,
             variables: Default::default(),
         },
     )
@@ -1035,6 +1440,7 @@ async fn revoked_agent_credential_blocks_booking_link_creation_during_freeze() {
         launch.launch_id,
         &[email_address_id],
         &BTreeMap::new(),
+        false,
         &payload["requester_context"],
     )
     .await
@@ -1103,6 +1509,7 @@ async fn campaign_freeze_rejects_user_supplied_meeting_booking_url() {
         &contracts::campaigns::CreateLaunchRequest {
             revision_id,
             email_address_ids: vec![email_address_id],
+            tracking_requested: false,
             variables: BTreeMap::from([(
                 "meeting.booking_url".into(),
                 "https://attacker.example/collect".into(),
@@ -1131,6 +1538,7 @@ async fn campaign_freeze_rejects_user_supplied_meeting_booking_url() {
             "meeting.booking_url".into(),
             "https://attacker.example/collect".into(),
         )]),
+        false,
         &payload["requester_context"],
     )
     .await
@@ -1947,8 +2355,23 @@ async fn launch_approval_request_and_pause_cancel_flow() {
         Some(1),
     )
     .await;
+    assert_eq!(res.status(), StatusCode::OK);
     let data = TestApp::data(res).await;
-    let job: Uuid = data["job_id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(data["execution_status"], "ready");
+    assert!(data["job_id"].is_null());
+    let approved =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await)
+            .await;
+    let job = execute_campaign_launch(
+        &app,
+        &admin,
+        &acsrf,
+        launch,
+        &manifest_hex,
+        approved["version"].as_i64().unwrap(),
+        "pc-execute",
+    )
+    .await;
     run_activate(db, &world, job).await;
     let res = get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await;
     let etag_v: i64 = res_etag(&res).await;
@@ -2266,11 +2689,22 @@ async fn campaign_dispatch_rechecks_launch_approval_membership_and_approver_perm
     )
     .await;
     assert_eq!(decision.status(), StatusCode::OK);
-    let activation_job: Uuid = TestApp::data(decision).await["job_id"]
-        .as_str()
-        .unwrap()
-        .parse()
-        .unwrap();
+    let decision_data = TestApp::data(decision).await;
+    assert_eq!(decision_data["execution_status"], "ready");
+    assert!(decision_data["job_id"].is_null());
+    let approved =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await)
+            .await;
+    let activation_job = execute_campaign_launch(
+        &app,
+        &admin,
+        &admin_csrf,
+        launch,
+        &manifest_hash,
+        approved["version"].as_i64().unwrap(),
+        "campaign-approval-execute",
+    )
+    .await;
     run_activate(db, &world, activation_job).await;
 
     let mut tx = db.begin(world.workspace_id).await.unwrap();
@@ -2563,6 +2997,22 @@ async fn approved_retired_provider_approval_is_read_only_history() {
     )
     .await;
     assert_eq!(decision.status(), StatusCode::OK);
+    let approval = TestApp::data(decision).await;
+    assert_eq!(approval["execution_status"], "ready");
+    assert!(approval["job_id"].is_null());
+    let approved =
+        TestApp::data(get(&app, &admin, &format!("/api/v1/campaign-launches/{launch}")).await)
+            .await;
+    let _activation_job = execute_campaign_launch(
+        &app,
+        &admin,
+        &acsrf,
+        launch,
+        &manifest_hash,
+        approved["version"].as_i64().unwrap(),
+        "retired-history-execute",
+    )
+    .await;
 
     // Simulate the retained post-upgrade state: connection/channel disabled,
     // launch canceled, and the approval decision preserved as history.
@@ -2617,7 +3067,7 @@ async fn approved_retired_provider_approval_is_read_only_history() {
         "UPDATE jobs
             SET state='canceled', last_error_code='PROVIDER_RETIRED', finished_at=now()
           WHERE workspace_id=$1 AND kind='campaigns.activate_launch'
-            AND payload->>'campaign_launch_id'=$2",
+            AND payload->>'campaign_launch_id'=$2::uuid::text",
     )
     .bind(world.workspace_id)
     .bind(launch.to_string())
@@ -2666,7 +3116,7 @@ async fn approved_retired_provider_approval_is_read_only_history() {
         let state = sqlx::query_scalar(
             "SELECT state FROM jobs
               WHERE workspace_id=$1 AND kind='campaigns.activate_launch'
-                AND payload->>'campaign_launch_id'=$2",
+                AND payload->>'campaign_launch_id'=$2::uuid::text",
         )
         .bind(world.workspace_id)
         .bind(launch.to_string())

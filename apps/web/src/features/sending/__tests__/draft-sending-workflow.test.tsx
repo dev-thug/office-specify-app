@@ -58,6 +58,17 @@ const outbound = (
   failure_code: null,
   provider_accepted: status === "accepted" ? true : null,
   delivery_status: "unknown",
+  thread_id: null,
+  approval_status: null,
+  approval_valid: false,
+  approval_snapshot_matches: true,
+  approval_expires_at: null,
+  engagement: {
+    tracking_enabled: false,
+    open_request_count: 0,
+    click_request_count: 0,
+  },
+  known_replies: [],
   automatic_resubmit_allowed: false,
   next_action: status === "unknown" ? "reconcile_with_provider" : "none",
   purpose: "correspondence",
@@ -343,6 +354,7 @@ describe("DraftSendingWorkflow", () => {
       expect(JSON.parse(String(freeze.init.body))).toEqual({
         delivery_channel_id: "channel-1",
         meeting_type_id: "meeting-1",
+        tracking_requested: false,
       });
     }
     expect(
@@ -377,6 +389,7 @@ describe("DraftSendingWorkflow", () => {
     const freeze = calls.find((call) => call.url.endsWith("/freeze"))!;
     expect(JSON.parse(String(freeze.init.body))).toEqual({
       delivery_channel_id: "channel-marketing",
+      tracking_requested: false,
     });
   });
 
@@ -398,7 +411,7 @@ describe("DraftSendingWorkflow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Check send policy" }));
 
     expect(await screen.findByText(/BASIS_UNVERIFIED/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     expect(calls.some((call) => call.url.endsWith("/submit"))).toBe(false);
   });
 
@@ -417,8 +430,8 @@ describe("DraftSendingWorkflow", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Check send policy" }));
 
-    expect(await screen.findByText(/all current policy checks passed/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit message" })).toBeDisabled();
+    expect(await screen.findByText(/current policy checks passed/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     expect(calls.some((call) => call.url.endsWith("/submit"))).toBe(false);
   });
 
@@ -435,7 +448,7 @@ describe("DraftSendingWorkflow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Check send policy" }));
 
     expect(await screen.findByText(/has not granted you permission to send messages/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit message" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
     expect(calls.some((call) => call.url.endsWith("/submit"))).toBe(false);
   });
 
@@ -449,9 +462,9 @@ describe("DraftSendingWorkflow", () => {
       <DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />
     );
     fireEvent.click(await screen.findByRole("button", { name: "Check send policy" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Submit message" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send message" }));
 
-    const confirm = await screen.findByRole("button", { name: "Queue this message" });
+    const confirm = await screen.findByRole("button", { name: "Confirm send" });
     expect(confirm).toBeDisabled();
     expect(screen.getAllByText("team@example.test").length).toBeGreaterThan(0);
     expect(screen.getAllByText("person@example.test").length).toBeGreaterThan(0);
@@ -463,16 +476,18 @@ describe("DraftSendingWorkflow", () => {
     fireEvent.change(screen.getByLabelText(/type.*SEND/i), {
       target: { value: "SEND" },
     });
-    expect(screen.getByRole("button", { name: "Queue this message" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Queue this message" }));
+    expect(screen.getByRole("button", { name: "Confirm send" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm send" }));
     await waitFor(() => expect(calls.filter((call) => call.url.endsWith("/submit"))).toHaveLength(1));
 
-    fireEvent.click(await screen.findByRole("button", { name: "Submit message" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Send message" }));
     fireEvent.change(screen.getByLabelText(/type.*SEND/i), {
       target: { value: "SEND" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Queue this message" }));
-    await screen.findByText(/queued/i);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm send" }));
+    await screen.findByText("Message queued for dispatch. Provider acceptance and delivery are still unconfirmed.");
+    expect(screen.getByText("Submission status: Queued")).toBeInTheDocument();
+    expect(screen.getByText("Provider evidence status: Unknown")).toBeInTheDocument();
 
     const submits = calls.filter((call) => call.url.endsWith("/submit"));
     expect(submits).toHaveLength(2);
@@ -505,7 +520,7 @@ describe("DraftSendingWorkflow", () => {
     await waitFor(() =>
       expect(calls.filter((call) => call.url === "/api/v1/outbound-messages/outbound-1")).toHaveLength(2)
     );
-    expect(screen.queryByRole("button", { name: "Submit message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
     expect(calls.some((call) => call.url.endsWith("/submit"))).toBe(false);
   });
 
@@ -563,7 +578,7 @@ describe("DraftSendingWorkflow", () => {
         )
       ).toHaveLength(2)
     );
-    expect(screen.getByRole("button", { name: "Submit message" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 
   it("cancels a queued message only after exact confirmation and with If-Match", async () => {
@@ -591,5 +606,133 @@ describe("DraftSendingWorkflow", () => {
     const headers = new Headers(cancelCall.init.headers);
     expect(headers.get("If-Match")).toBe('"6"');
     expect(headers.get("Idempotency-Key")).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("offers only a correspondence channel when freezing an inbox reply", async () => {
+    const calls = mockSendingApi({
+      draft: draft({ purpose: "correspondence" }),
+    });
+    renderWorkflow(
+      <DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />
+    );
+
+    const channelSelect = await screen.findByLabelText("Delivery channel");
+    const optionValues = Array.from(
+      (channelSelect as HTMLSelectElement).options
+    ).map((option) => option.value);
+    expect(optionValues).toContain("channel-1");
+    expect(optionValues).not.toContain("channel-marketing");
+
+    fireEvent.change(channelSelect, { target: { value: "channel-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(true)
+    );
+    const freeze = calls.find((call) => call.url.endsWith("/freeze"))!;
+    expect(JSON.parse(String(freeze.init.body))).toEqual({
+      delivery_channel_id: "channel-1",
+      tracking_requested: false,
+    });
+  });
+
+  it("opts into engagement requests only when selected before freezing", async () => {
+    const calls = mockSendingApi({});
+    renderWorkflow(
+      <DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />
+    );
+
+    const tracking = await screen.findByRole("checkbox", {
+      name: "Request engagement tracking",
+    });
+    expect(tracking).not.toBeChecked();
+    fireEvent.click(tracking);
+    fireEvent.change(await screen.findByLabelText("Delivery channel"), {
+      target: { value: "channel-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+
+    await waitFor(() => {
+      const freeze = calls.find((call) => call.url.endsWith("/freeze"));
+      expect(freeze).toBeDefined();
+      expect(JSON.parse(String(freeze!.init.body))).toEqual({
+        delivery_channel_id: "channel-1",
+        tracking_requested: true,
+      });
+    });
+  });
+
+  it("shows approval, submission, provider, engagement, and linked reply status independently", async () => {
+    const outboundStatus = {
+      ...outbound("draft"),
+      approval_status: "approved",
+      approval_valid: true,
+      approval_snapshot_matches: true,
+      approval_expires_at: "2026-10-16T00:00:00Z",
+      thread_id: "thread-1",
+      engagement: {
+        tracking_enabled: true,
+        open_request_count: 4,
+        click_request_count: 2,
+      },
+      known_replies: [
+        {
+          inbound_message_id: "inbound-1",
+          thread_id: "thread-1",
+          from_address: "person@example.test",
+          received_at: "2026-10-10T10:00:00Z",
+        },
+      ],
+    };
+    const calls = mockSendingApi({
+      draft: draft({ status: "frozen", outbound_message_id: "outbound-1" }),
+      outbound: outboundStatus,
+    });
+    renderWorkflow(
+      <DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />
+    );
+
+    expect(await screen.findByText(/approval is valid for this frozen snapshot/i)).toBeInTheDocument();
+    expect(screen.getByText("Submission status: Draft")).toBeInTheDocument();
+    expect(screen.getByText("Provider evidence status: Unknown")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open conversation" })).toHaveAttribute(
+      "href",
+      "/app/inbox/thread-1"
+    );
+    expect(screen.getByText("Open requests: 4")).toBeInTheDocument();
+    expect(screen.getByText("Link click requests: 2")).toBeInTheDocument();
+    expect(screen.getByText(/mail proxies or security scanners/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reply from person@example.test" })).toHaveAttribute(
+      "href",
+      "/app/inbox/thread-1"
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check send policy" }));
+    expect(await screen.findByText(/current policy checks passed/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(await screen.findByRole("button", { name: "Confirm send" })).toBeInTheDocument();
+    expect(calls.some((call) => call.url.endsWith("/submit"))).toBe(false);
+  });
+
+  it("blocks human send when the approved snapshot is no longer valid", async () => {
+    const outboundStatus = {
+      ...outbound("draft"),
+      approval_status: "approved",
+      approval_valid: false,
+      approval_snapshot_matches: false,
+      approval_expires_at: "2026-10-16T00:00:00Z",
+    };
+    const calls = mockSendingApi({
+      draft: draft({ status: "frozen", outbound_message_id: "outbound-1" }),
+      outbound: outboundStatus,
+      preflight: passingPreflight,
+    });
+    renderWorkflow(
+      <DraftSendingWorkflow draftId="draft-1" mailAccountId="mailbox-1" />
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Check send policy" }));
+    await screen.findByText(/does not match the current frozen snapshot/i);
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(calls.some((call) => call.url.endsWith("/submit"))).toBe(false);
   });
 });

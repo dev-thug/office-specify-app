@@ -180,6 +180,7 @@ async fn freeze_draft(
             delivery_channel_id: channel_id,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await

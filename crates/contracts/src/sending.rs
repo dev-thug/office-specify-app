@@ -101,6 +101,10 @@ pub struct FreezeMessageDraftRequest {
     /// the selected template requires `meeting.booking_url`.
     #[serde(default)]
     pub meeting_type_id: Option<Uuid>,
+    /// Explicitly request recipient-bound open/click request tracking.
+    /// Workspace settings can disable tracking regardless of this value.
+    #[serde(default)]
+    pub tracking_requested: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -167,7 +171,7 @@ pub struct SubmitOutboundRequest {
 /// B.3.10 response: `{outbound_message_id, status, job_id,
 /// provider_accepted}` — accepted is `false` because provider acceptance is
 /// only confirmed asynchronously.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, schemars::JsonSchema)]
 pub struct SubmitOutboundResponse {
     pub outbound_message_id: Uuid,
     pub status: String,
@@ -193,12 +197,33 @@ pub struct CancelOutboundResponse {
     pub version: i64,
 }
 
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
+pub struct OutboundReplyReference {
+    pub inbound_message_id: Uuid,
+    pub thread_id: Uuid,
+    pub from_address: String,
+    pub received_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
+pub struct OutboundEngagementSummary {
+    /// False means tracking was disabled by either this freeze request or
+    /// workspace policy; zero counts alone do not imply that tracking ran.
+    pub tracking_enabled: bool,
+    /// Capability requests, not proof of a person opening the message.
+    pub open_request_count: i64,
+    /// Capability requests, not proof of a person following a link.
+    pub click_request_count: i64,
+}
+
 /// `GET /api/v1/outbound-messages/{id}` (B.3.11). `delivery_status` is built
 /// only from provider-confirmed delivery_events — `accepted` never implies
 /// delivered/read (T34).
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct OutboundMessageResponse {
     pub outbound_message_id: Uuid,
+    /// Mailbox-local thread containing the sent message and verified replies.
+    pub thread_id: Option<Uuid>,
     pub status: String,
     /// SHA-256 of the immutable frozen snapshot, required on submit/approval.
     pub payload_hash: String,
@@ -213,6 +238,16 @@ pub struct OutboundMessageResponse {
     pub automatic_resubmit_allowed: bool,
     pub next_action: String,
     pub last_attempt: Option<OutboundAttemptInfo>,
+    /// Latest request state; null means no approval request exists.
+    pub approval_status: Option<String>,
+    /// Current decision, expiry, snapshot, and human approver permission all
+    /// remain valid for the immutable outbound snapshot.
+    pub approval_valid: bool,
+    /// Whether the latest approval was issued for this exact frozen hash.
+    pub approval_snapshot_matches: bool,
+    pub approval_expires_at: Option<DateTime<Utc>>,
+    pub known_replies: Vec<OutboundReplyReference>,
+    pub engagement: OutboundEngagementSummary,
     pub purpose: String,
     /// Frozen sender identity shown in the submit confirmation preview.
     pub from_address: String,
@@ -227,7 +262,7 @@ pub struct OutboundMessageResponse {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema, schemars::JsonSchema)]
 pub struct OutboundAttemptInfo {
     pub attempt_no: i64,
     pub status: String,

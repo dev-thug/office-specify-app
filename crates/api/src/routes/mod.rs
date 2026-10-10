@@ -8,6 +8,7 @@ pub mod booking;
 pub mod campaigns;
 pub mod compliance;
 pub mod crm;
+pub mod engagement;
 pub mod imports;
 pub mod inbox;
 pub mod mailboxes;
@@ -16,6 +17,7 @@ pub mod org;
 pub mod research;
 pub mod sending;
 pub mod smtp;
+pub mod smtp_inbox;
 pub mod templates;
 
 use utoipa_axum::router::OpenApiRouter;
@@ -35,6 +37,7 @@ pub fn api_router() -> OpenApiRouter<AppState> {
         .merge(approvals::router())
         .merge(sending::router())
         .merge(smtp::router())
+        .merge(smtp_inbox::router())
         .merge(inbox::router())
         .merge(booking::router())
         .merge(compliance::router())
@@ -48,6 +51,7 @@ pub fn public_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(booking::public_router())
         .merge(compliance::public_router())
+        .merge(engagement::public_router())
 }
 
 /// `/webhooks/v1` — provider webhook ingress (inbox/sending workers fill).

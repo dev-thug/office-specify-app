@@ -18,6 +18,7 @@ thiserror.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 sqlx.workspace = true
+ammonia.workspace = true
 
 [dev-dependencies]
 # Enable the fixture module for integration tests only (R2).

@@ -4,6 +4,7 @@ import {
   createCampaign,
   createLaunch,
   createRevision,
+  executeCampaignLaunch,
   pauseLaunch,
   cancelLaunch,
   requestLaunchApproval,
@@ -137,6 +138,39 @@ describe("campaigns API", () => {
     );
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.expected_manifest_hash).toBe("ab".repeat(32));
+  });
+
+  it("executeCampaignLaunch — POST approved launch with exact manifest, version, and idempotency key", async () => {
+    const calls = mockFetch(202, {
+      data: {
+        launch_id: "l1",
+        launch_status: "approved",
+        execution_status: "queued",
+        job_id: "job-1",
+        version: 8,
+        manifest_hash: "ab".repeat(32),
+      },
+    });
+    const result = await executeCampaignLaunch(
+      "l1",
+      { expected_manifest_hash: "ab".repeat(32), expected_version: 7 },
+      { idempotencyKey: "execute-key" }
+    );
+
+    expect(calls[0]!.url).toBe("/api/v1/campaign-launches/l1/execute");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      expected_manifest_hash: "ab".repeat(32),
+      expected_version: 7,
+    });
+    expect(new Headers(calls[0]!.init.headers).get("Idempotency-Key")).toBe(
+      "execute-key"
+    );
+    expect(result.data).toMatchObject({
+      launch_status: "approved",
+      execution_status: "queued",
+      job_id: "job-1",
+    });
   });
 
   it("pauseLaunch/cancelLaunch — If-Match 헤더로 버전 검사", async () => {

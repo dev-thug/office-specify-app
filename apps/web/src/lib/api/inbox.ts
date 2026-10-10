@@ -185,6 +185,26 @@ export interface EmailThread {
   [key: string]: unknown;
 }
 
+/** Current GET /email-threads/{id} wire response — flat ThreadDetail DTO. */
+export interface FlatEmailThreadDetailData {
+  id: string;
+  mail_account_id: string;
+  contact_id?: string | null;
+  assigned_principal_id?: string | null;
+  assigned_principal_name?: string | null;
+  last_inbound_message_id?: string | null;
+  status: ThreadStatus;
+  subject?: string | null;
+  version: number;
+  updated_at: string;
+  created_at: string;
+  messages: EmailMessage[];
+  crm?: ThreadCrmContext | null;
+  mail_account?: ThreadMailAccount | null;
+  allowed_actions?: string[];
+  [key: string]: unknown;
+}
+
 export interface EmailThreadDetailData {
   thread: EmailThread;
   messages: EmailMessage[];
@@ -193,6 +213,49 @@ export interface EmailThreadDetailData {
   /** UI 힌트 — 서버가 최종 검사한다 (§12.2). */
   allowed_actions?: string[];
   [key: string]: unknown;
+}
+
+/**
+ * Keep the view model stable while accepting the flat ThreadDetail returned by
+ * GET /email-threads/{id}. The latest inbound anchor is derived from messages
+ * when it is not present in the wire DTO.
+ */
+export function normalizeEmailThreadDetail(
+  response: EmailThreadDetailData | FlatEmailThreadDetailData
+): EmailThreadDetailData {
+  if ("thread" in response && response.thread) {
+    return response as EmailThreadDetailData;
+  }
+
+  const flat = response as FlatEmailThreadDetailData;
+  const messages = flat.messages ?? [];
+  const sortedMessages = [...messages].sort((a, b) => {
+    if (a.message_at === b.message_at) return a.id.localeCompare(b.id);
+    return a.message_at < b.message_at ? -1 : 1;
+  });
+  const lastInbound = sortedMessages
+    .filter((message) => message.direction === "inbound")
+    .at(-1);
+  const latestSubject = [...sortedMessages]
+    .reverse()
+    .find((message) => message.subject != null)?.subject ?? null;
+
+  const thread: EmailThread = {
+    id: flat.id,
+    mail_account_id: flat.mail_account_id,
+    contact_id: flat.contact_id ?? null,
+    assigned_principal_id: flat.assigned_principal_id ?? null,
+    assigned_principal_name: flat.assigned_principal_name ?? null,
+    last_inbound_message_id:
+      flat.last_inbound_message_id ?? lastInbound?.id ?? null,
+    status: flat.status,
+    subject: flat.subject ?? latestSubject,
+    version: flat.version,
+    updated_at: flat.updated_at,
+    created_at: flat.created_at,
+  };
+
+  return { ...flat, thread, messages };
 }
 
 /** GET /mail-accounts 행 — 접근 가능한 메일함 메타데이터. */
@@ -308,9 +371,12 @@ export function useEmailThreads(filters: EmailThreadFilters) {
 export function getEmailThread(
   threadId: string
 ): Promise<ApiResult<EmailThreadDetailData>> {
-  return apiFetch<EmailThreadDetailData>(
+  return apiFetch<EmailThreadDetailData | FlatEmailThreadDetailData>(
     `${API}/email-threads/${encodeURIComponent(threadId)}`
-  );
+  ).then((result) => ({
+    ...result,
+    data: normalizeEmailThreadDetail(result.data),
+  }));
 }
 
 export function useEmailThread(

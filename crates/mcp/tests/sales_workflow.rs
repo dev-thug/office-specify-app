@@ -1,5 +1,5 @@
 //! Real MCP research/draft workflow plus human REST review on an isolated DB.
-//! Research URLs are inert fixtures; no browser fetch or provider dispatch is performed.
+//! Research URLs are inert fixtures; outbound dispatch uses fake providers only.
 use api::{AppState, testing::TestApp};
 use infrastructure::{
     config::Config,
@@ -9,6 +9,7 @@ use infrastructure::{
 use mcp::server::{McpState, build_router};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -21,6 +22,8 @@ struct Rig {
     manager_csrf: String,
     url: String,
     token: String,
+    credential_id: Uuid,
+    agent_grant_version: i64,
     client: reqwest::Client,
     run_id: Uuid,
     server: tokio::task::JoinHandle<()>,
@@ -37,8 +40,8 @@ impl Rig {
         let db_url = std::env::var("MCP_TEST_DATABASE_URL")
             .expect("MCP_TEST_DATABASE_URL must point to the isolated test database");
         assert!(
-            db_url.ends_with("/outreach_mcp_sales_verify"),
-            "use only the isolated outreach_mcp_sales_verify database"
+            db_url.ends_with("/outreach_approved_send_verify"),
+            "use only the isolated outreach_approved_send_verify database"
         );
         let owner = Db::connect(&db_url, None).await.unwrap();
         owner.migrate().await.unwrap();
@@ -66,33 +69,19 @@ impl Rig {
             "templates.read",
             "mail.read",
             "mail.compose",
+            "mail.submit_approved",
             "operations.read",
         ]
         .into_iter()
         .map(String::from)
         .collect();
-        let (_, token) = infrastructure::repo::auth::create_service_credential(
+        let (credential_id, token) = infrastructure::repo::auth::create_service_credential(
             &mut tx,
             world.agent.principal_id,
-            "isolated MCP sales workflow",
+            "isolated approved-send verification",
             &scopes,
             chrono::Duration::hours(1),
         )
-        .await
-        .unwrap();
-        // can_send is deliberately granted: the application must still reject
-        // an agent's direct submit, independently of mailbox capabilities.
-        sqlx::query(
-            "INSERT INTO mail_account_grants
-                (workspace_id, mail_account_id, principal_id,
-                 can_read, can_compose, can_send, can_approve, can_assign, granted_by)
-             VALUES ($1, $2, $3, true, true, true, false, false, $4)",
-        )
-        .bind(world.workspace_id)
-        .bind(world.mail_account_id)
-        .bind(world.agent.principal_id)
-        .bind(world.admin.principal_id)
-        .execute(tx.conn())
         .await
         .unwrap();
         tx.commit().await.unwrap();
@@ -136,10 +125,30 @@ impl Rig {
             manager_csrf,
             url,
             token,
+            credential_id,
+            agent_grant_version: 0,
             client: reqwest::Client::new(),
             run_id: Uuid::nil(),
             server,
         };
+
+        let initial_grant = human_data(
+            rig.admin_put_agent_grant(
+                json!({
+                    "can_read":true,
+                    "can_compose":true,
+                    "can_send":false,
+                    "can_approve":false,
+                    "can_assign":false
+                }),
+                None,
+            )
+            .await,
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(initial_grant["can_send"], false);
+        rig.agent_grant_version = initial_grant["version"].as_i64().unwrap();
 
         let init = rig
             .rpc(
@@ -235,6 +244,25 @@ impl Rig {
         key: &str,
     ) -> reqwest::Response {
         post_as_human(&self.api, &self.csrf, path, body, version, key).await
+    }
+
+    async fn admin_put_agent_grant(&self, body: Value, version: Option<i64>) -> reqwest::Response {
+        let path = format!(
+            "/api/v1/mail-accounts/{}/grants/{}",
+            self.world.mail_account_id, self.world.agent.principal_id
+        );
+        let mut request = self
+            .api
+            .client
+            .put(self.api.url(&path))
+            .header("x-csrf-token", &self.csrf)
+            .json(&body);
+        request = if let Some(version) = version {
+            request.header("if-match", format!("\"{version}\""))
+        } else {
+            request.header("if-none-match", "*")
+        };
+        request.send().await.unwrap()
     }
 
     async fn manager_post(
@@ -459,7 +487,7 @@ async fn add_and_verify_evidence(
 
 #[tokio::test]
 async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_draft() {
-    let rig = Rig::new().await;
+    let mut rig = Rig::new().await;
     let suffix = Uuid::new_v4().simple().to_string();
     let aurora_name = format!("Aurora Storage {suffix}");
     let forge_name = format!("Forge Robotics {suffix}");
@@ -476,9 +504,10 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     assert!(tool_names.contains(&"research_propose_leads"));
     assert!(tool_names.contains(&"crm_get_company"));
     assert!(tool_names.contains(&"mail_create_draft"));
+    assert!(tool_names.contains(&"mail_submit_approved"));
     assert!(!tool_names.contains(&"mail_submit"));
     assert!(!tool_names.contains(&"approvals_decide"));
-    assert!(!tool_names.contains(&"mail_get_outbound"));
+    assert!(tool_names.contains(&"mail_get_outbound"));
     assert!(tool_names.contains(&"mail_get_thread"));
 
     let proposal_args = json!({
@@ -847,6 +876,31 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     let outbound_id = Uuid::parse_str(frozen["outbound_message_id"].as_str().unwrap()).unwrap();
     let payload_hash = frozen["payload_hash"].as_str().unwrap().to_string();
 
+    let mut provenance_tx = rig.owner.begin(rig.world.workspace_id).await.unwrap();
+    let (outbound_requester, source_credential, local_thread, internet_message_id): (
+        Uuid,
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT requested_by, source_credential_id, thread_id, internet_message_id
+           FROM outbound_messages WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(rig.world.workspace_id)
+    .bind(outbound_id)
+    .fetch_one(provenance_tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(outbound_requester, rig.world.agent.principal_id);
+    assert_eq!(source_credential, Some(rig.credential_id));
+    assert!(local_thread.is_some());
+    assert!(
+        internet_message_id
+            .as_deref()
+            .is_some_and(|message_id| message_id.starts_with('<') && message_id.ends_with('>'))
+    );
+    provenance_tx.rollback().await.unwrap();
+
     let outbound_before_approval = human_data(
         rig.api
             .get(&format!("/api/v1/outbound-messages/{outbound_id}"))
@@ -970,6 +1024,36 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
         )
         .await;
     assert!(mcp_submit.get("error").is_some());
+    let preapproval_send_grant = human_data(
+        rig.admin_put_agent_grant(
+            json!({
+                "can_read":true,
+                "can_compose":true,
+                "can_send":true,
+                "can_approve":false,
+                "can_assign":false
+            }),
+            Some(rig.agent_grant_version),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    rig.agent_grant_version = preapproval_send_grant["version"].as_i64().unwrap();
+    let approved_submit_before_approval = rig
+        .tool_error(
+            "mail_submit_approved",
+            json!({
+                "outbound_message_id": outbound_id,
+                "expected_payload_hash": payload_hash,
+                "idempotency_key": "approved-send-before-approval"
+            }),
+        )
+        .await;
+    assert_eq!(
+        approved_submit_before_approval["result"]["structuredContent"]["error"]["code"],
+        "CONFLICT"
+    );
     let mcp_decide = rig
         .tool_error(
             "approvals_decide",
@@ -992,9 +1076,9 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     )
     .await;
     assert_eq!(decision["approval_status"], "approved");
-    assert_eq!(decision["execution_status"], "queued");
+    assert_eq!(decision["execution_status"], "ready");
     assert_eq!(decision["provider_accepted_count"], 0);
-    let job_id = decision["job_id"].as_str().unwrap().to_string();
+    assert!(decision["job_id"].is_null());
 
     let replay = human_data(
         rig.manager_post(&decision_path, decision_body, Some(1), decision_key)
@@ -1003,19 +1087,196 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     )
     .await;
     assert_eq!(replay["decision_id"], decision["decision_id"]);
-    assert_eq!(replay["job_id"], job_id);
+    assert!(replay["job_id"].is_null());
     assert_eq!(replay["provider_accepted_count"], 0);
 
-    let queued = human_data(
+    let revoked_send_grant = human_data(
+        rig.admin_put_agent_grant(
+            json!({
+                "can_read":true,
+                "can_compose":true,
+                "can_send":false,
+                "can_approve":false,
+                "can_assign":false
+            }),
+            Some(rig.agent_grant_version),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    rig.agent_grant_version = revoked_send_grant["version"].as_i64().unwrap();
+    let denied_without_current_send_grant = rig
+        .tool_error(
+            "mail_submit_approved",
+            json!({
+                "outbound_message_id": outbound_id,
+                "expected_payload_hash": payload_hash,
+                "idempotency_key": "approved-send-without-grant"
+            }),
+        )
+        .await;
+    assert_eq!(
+        denied_without_current_send_grant["result"]["structuredContent"]["error"]["code"],
+        "MAILBOX_ACCESS_DENIED"
+    );
+    let send_grant = human_data(
+        rig.admin_put_agent_grant(
+            json!({
+                "can_read":true,
+                "can_compose":true,
+                "can_send":true,
+                "can_approve":false,
+                "can_assign":false
+            }),
+            Some(rig.agent_grant_version),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(send_grant["can_send"], true);
+    assert_eq!(send_grant["can_approve"], false);
+    rig.agent_grant_version = send_grant["version"].as_i64().unwrap();
+
+    let effective_mailbox = rig
+        .client
+        .get(rig.api.url(&format!(
+            "/api/v1/mail-accounts/{}",
+            rig.world.mail_account_id
+        )))
+        .bearer_auth(&rig.token)
+        .send()
+        .await
+        .unwrap();
+    let effective_mailbox = human_data(effective_mailbox, StatusCode::OK).await;
+    let effective_actions = effective_mailbox["allowed_actions"].as_array().unwrap();
+    assert!(effective_actions.contains(&json!("mail.read")));
+    assert!(effective_actions.contains(&json!("mail.compose")));
+    assert!(!effective_actions.contains(&json!("mail.send")));
+    assert!(!effective_actions.contains(&json!("mail.approve")));
+
+    let agent_me = rig
+        .client
+        .get(rig.api.url("/api/v1/me"))
+        .bearer_auth(&rig.token)
+        .send()
+        .await
+        .unwrap();
+    let agent_me = human_data(agent_me, StatusCode::OK).await;
+    let me_mailbox = agent_me["mail_accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|mailbox| mailbox["id"] == rig.world.mail_account_id.to_string())
+        .unwrap();
+    let me_actions = me_mailbox["allowed_actions"].as_array().unwrap();
+    assert!(!me_actions.contains(&json!("mail.send")));
+    assert!(!me_actions.contains(&json!("mail.approve")));
+
+    let direct_send_after_grant = rig
+        .agent_post(
+            &format!("/api/v1/outbound-messages/{outbound_id}/submit"),
+            json!({"expected_payload_hash":payload_hash}),
+            None,
+            "sales-workflow-agent-direct-after-grant",
+        )
+        .await;
+    let direct_send_after_grant = problem(direct_send_after_grant, StatusCode::FORBIDDEN).await;
+    assert_eq!(
+        direct_send_after_grant["code"],
+        "AGENT_DIRECT_SEND_FORBIDDEN"
+    );
+
+    let approved = human_data(
         rig.api
             .get(&format!("/api/v1/outbound-messages/{outbound_id}"))
             .await,
         StatusCode::OK,
     )
     .await;
-    assert_eq!(queued["status"], "queued");
-    assert_eq!(queued["provider_accepted"], Value::Null);
-    assert_eq!(queued["delivery_status"], "unknown");
+    assert_eq!(approved["status"], "draft");
+    assert_eq!(approved["approval_status"], "approved");
+    assert_eq!(approved["approval_valid"], true);
+    assert_eq!(approved["approval_snapshot_matches"], true);
+    assert!(approved["thread_id"].is_string());
+    assert_eq!(approved["provider_accepted"], Value::Null);
+    assert_eq!(approved["delivery_status"], "unknown");
+
+    let submit_args = json!({
+        "outbound_message_id": outbound_id,
+        "expected_payload_hash": payload_hash,
+        "idempotency_key": "approved-send-workflow-001"
+    });
+    let submitted = rig.call("mail_submit_approved", submit_args.clone()).await;
+    assert_eq!(submitted["status"], "queued");
+    assert_eq!(submitted["provider_accepted"], false);
+    let replayed_submit = rig.call("mail_submit_approved", submit_args).await;
+    assert_eq!(replayed_submit["job_id"], submitted["job_id"]);
+    assert_eq!(replayed_submit["status"], "queued");
+
+    let status = rig
+        .call(
+            "mail_get_outbound",
+            json!({"outbound_message_id": outbound_id}),
+        )
+        .await;
+    assert_eq!(status["status"], "queued");
+    assert_eq!(status["delivery_status"], "unknown");
+    assert_eq!(status["approval_status"], "approved");
+    assert_eq!(status["approval_valid"], true);
+    assert_eq!(status["thread_id"], approved["thread_id"]);
+    assert_eq!(status["engagement"]["tracking_enabled"], false);
+    assert_eq!(status["engagement"]["open_request_count"], 0);
+    assert_eq!(status["engagement"]["click_request_count"], 0);
+    assert_eq!(status["known_replies"], json!([]));
+
+    let mut tx = rig.owner.begin(rig.world.workspace_id).await.unwrap();
+    let queued_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id=$1 AND kind='sending.dispatch_outbound' AND payload->>'outbound_message_id'=$2 AND state='queued'",
+    )
+    .bind(rig.world.workspace_id)
+    .bind(outbound_id.to_string())
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(queued_jobs, 1, "idempotent submit queues exactly once");
+
+    let original_scopes: Vec<String> = sqlx::query_scalar(
+        "SELECT scopes FROM service_credentials WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(rig.world.workspace_id)
+    .bind(rig.credential_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE service_credentials SET scopes=array_remove(scopes,'mail.read') WHERE workspace_id=$1 AND id=$2")
+        .bind(rig.world.workspace_id)
+        .bind(rig.credential_id)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let hidden_status = rig
+        .tool_error(
+            "mail_get_outbound",
+            json!({"outbound_message_id": outbound_id}),
+        )
+        .await;
+    assert_eq!(
+        hidden_status["result"]["structuredContent"]["error"]["code"],
+        "MAILBOX_ACCESS_DENIED"
+    );
+
+    let mut tx = rig.owner.begin(rig.world.workspace_id).await.unwrap();
+    sqlx::query("UPDATE service_credentials SET scopes=$3 WHERE workspace_id=$1 AND id=$2")
+        .bind(rig.world.workspace_id)
+        .bind(rig.credential_id)
+        .bind(original_scopes)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
     let remaining_draft = human_data(
         rig.api
             .get(&format!("/api/v1/message-drafts/{forge_draft_id}"))
@@ -1026,14 +1287,509 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     assert_eq!(remaining_draft["status"], "draft");
     assert!(remaining_draft["outbound_message_id"].is_null());
 
-    // The job endpoint is catalogued for polling, but approval-created
+    // The job endpoint is catalogued for polling, but approved-submit
     // dispatch jobs have no principal owner, so this agent cannot read one.
     let job_poll = rig
-        .tool_error("operations_get_job", json!({"job_id":job_id}))
+        .tool_error("operations_get_job", json!({"job_id": submitted["job_id"]}))
         .await;
     assert_eq!(job_poll["result"]["isError"], true);
     assert_eq!(
         job_poll["result"]["structuredContent"]["error"]["code"],
         "NOT_FOUND"
+    );
+}
+
+#[tokio::test]
+async fn agent_campaign_approval_then_explicit_mcp_execution_sends_one_tracked_threaded_message() {
+    let mut rig = Rig::new().await;
+    let db = rig.api.state.db.clone();
+    let ws = rig.world.workspace_id;
+    let channel_id = fake_delivery_channel(&rig).await;
+    let public_base_url = rig.api.url("");
+
+    let mut setup = rig.owner.begin(ws).await.unwrap();
+    let mut scopes: Vec<String> = sqlx::query_scalar(
+        "SELECT scopes FROM service_credentials WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(ws)
+    .bind(rig.credential_id)
+    .fetch_one(setup.conn())
+    .await
+    .unwrap();
+    for scope in ["campaign.compose", "campaign.submit_approved"] {
+        if !scopes.iter().any(|existing| existing == scope) {
+            scopes.push(scope.to_string());
+        }
+    }
+    sqlx::query("UPDATE service_credentials SET scopes=$3 WHERE workspace_id=$1 AND id=$2")
+        .bind(ws)
+        .bind(rig.credential_id)
+        .bind(scopes)
+        .execute(setup.conn())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE workspaces
+            SET settings = settings || jsonb_build_object(
+                'tracking_enabled', true,
+                'public_base_url', $2::text
+            )
+          WHERE id=$1",
+    )
+    .bind(ws)
+    .bind(public_base_url)
+    .execute(setup.conn())
+    .await
+    .unwrap();
+
+    let recipient_address = format!("campaign-agent-{}@example.test", Uuid::new_v4());
+    let recipient_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_addresses
+            (workspace_id, address_original, normalized_key, kind,
+             verification_status, verified_at)
+         VALUES ($1, $2, $2, 'person', 'verified', now()) RETURNING id",
+    )
+    .bind(ws)
+    .bind(&recipient_address)
+    .fetch_one(setup.conn())
+    .await
+    .unwrap();
+    let contact_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO contacts (workspace_id, name)
+         VALUES ($1, 'Campaign execution recipient') RETURNING id",
+    )
+    .bind(ws)
+    .fetch_one(setup.conn())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO contact_emails
+            (workspace_id, contact_id, email_address_id, is_primary)
+         VALUES ($1, $2, $3, true)",
+    )
+    .bind(ws)
+    .bind(contact_id)
+    .bind(recipient_id)
+    .execute(setup.conn())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO communication_bases
+            (workspace_id, email_address_id, purpose, jurisdiction, basis_type,
+             status, evidence_ref, collected_at, reviewed_by, reviewed_at)
+         VALUES ($1, $2, 'marketing', 'US', 'explicit_consent', 'valid',
+                 'isolated-campaign-consent', now(), $3, now())",
+    )
+    .bind(ws)
+    .bind(recipient_id)
+    .bind(rig.world.admin.principal_id)
+    .execute(setup.conn())
+    .await
+    .unwrap();
+
+    let template_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_templates (workspace_id, name, created_by)
+         VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(ws)
+    .bind(format!("campaign-execute-{}", Uuid::new_v4()))
+    .bind(rig.world.admin.principal_id)
+    .fetch_one(setup.conn())
+    .await
+    .unwrap();
+    let template_version_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO template_versions
+            (workspace_id, template_id, version_no, subject, body_text, body_html,
+             variable_schema, content_hash, created_by)
+         VALUES ($1, $2, 1, 'A tracked campaign offer',
+                 'See https://example.test/offer',
+                 '<p>See <a href=\"https://example.test/offer\">the offer</a></p>',
+                 '{\"type\":\"object\",\"properties\":{},\"required\":[],\"additionalProperties\":false}',
+                 decode(md5(random()::text), 'hex'), $3)
+         RETURNING id",
+    )
+    .bind(ws)
+    .bind(template_id)
+    .bind(rig.world.admin.principal_id)
+    .fetch_one(setup.conn())
+    .await
+    .unwrap();
+    setup.commit().await.unwrap();
+
+    let draft = rig
+        .call(
+            "campaign_create_draft",
+            json!({
+                "idempotency_key":"agent-campaign-create-001",
+                "name":"Explicitly approved campaign test",
+                "objective":"Verify separated approval and execution",
+                "mail_account_id":rig.world.mail_account_id,
+                "delivery_channel_id":channel_id,
+                "timezone":"UTC",
+                "schedule_rules":{
+                    "weekdays":[1,2,3,4,5,6,7],
+                    "window_start":"00:00",
+                    "window_end":"23:59"
+                },
+                "steps":[{"step_order":1,"template_version_id":template_version_id,"delay_hours":0}]
+            }),
+        )
+        .await;
+    let campaign_id = Uuid::parse_str(draft["campaign_id"].as_str().unwrap()).unwrap();
+    let revision_id = Uuid::parse_str(draft["revision_id"].as_str().unwrap()).unwrap();
+
+    let created = rig
+        .agent_post(
+            &format!("/api/v1/campaigns/{campaign_id}/launches"),
+            json!({
+                "revision_id":revision_id,
+                "email_address_ids":[recipient_id],
+                "tracking_requested":true
+            }),
+            None,
+            "agent-campaign-launch-001",
+        )
+        .await;
+    let created = human_data(created, StatusCode::ACCEPTED).await;
+    let launch_id = Uuid::parse_str(created["launch_id"].as_str().unwrap()).unwrap();
+    let freeze_job_id = Uuid::parse_str(created["job_id"].as_str().unwrap()).unwrap();
+    let mut tx = rig.owner.begin(ws).await.unwrap();
+    let freeze_payload: Value =
+        sqlx::query_scalar("SELECT payload FROM jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(ws)
+            .bind(freeze_job_id)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    let variables: BTreeMap<String, String> = serde_json::from_value(
+        freeze_payload
+            .get("variables")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    )
+    .unwrap();
+    application::campaigns::freeze_launch(
+        &mut tx,
+        rig.world.system.principal_id,
+        freeze_job_id,
+        launch_id,
+        &[recipient_id],
+        &variables,
+        freeze_payload["tracking_requested"]
+            .as_bool()
+            .unwrap_or(false),
+        &freeze_payload["requester_context"],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE jobs SET state='completed', finished_at=now() WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(ws)
+    .bind(freeze_job_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    let (approval_id, manifest): (Uuid, Vec<u8>) = sqlx::query_as(
+        "SELECT ar.id, l.manifest_hash
+           FROM approval_requests ar
+           JOIN campaign_launches l ON l.workspace_id=ar.workspace_id AND l.id=ar.launch_id
+          WHERE ar.workspace_id=$1 AND ar.launch_id=$2",
+    )
+    .bind(ws)
+    .bind(launch_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let manifest_hash: String = manifest.iter().map(|byte| format!("{byte:02x}")).collect();
+
+    let decision = human_data(
+        rig.manager_post(
+            &format!("/api/v1/approvals/{approval_id}/decisions"),
+            json!({
+                "decision":"approved",
+                "expected_snapshot_hash":manifest_hash,
+                "reason":"Human reviewed this exact campaign manifest"
+            }),
+            Some(1),
+            "agent-campaign-human-approval-001",
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(decision["execution_status"], "ready");
+    assert!(
+        decision["job_id"].is_null(),
+        "approval never queues activation"
+    );
+
+    let send_grant = human_data(
+        rig.admin_put_agent_grant(
+            json!({
+                "can_read":true,
+                "can_compose":true,
+                "can_send":true,
+                "can_approve":false,
+                "can_assign":false
+            }),
+            Some(rig.agent_grant_version),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(send_grant["can_send"], true);
+    rig.agent_grant_version = send_grant["version"].as_i64().unwrap();
+
+    let launch_detail = human_data(
+        rig.api
+            .get(&format!("/api/v1/campaign-launches/{launch_id}"))
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(launch_detail["status"], "approved");
+    assert_eq!(launch_detail["execution_status"], "ready");
+    let submit_args = json!({
+        "idempotency_key":"agent-campaign-submit-approved-001",
+        "launch_id":launch_id,
+        "expected_manifest_hash":manifest_hash,
+        "expected_version":launch_detail["version"]
+    });
+    let submitted = rig
+        .call("campaign_submit_approved", submit_args.clone())
+        .await;
+    assert_eq!(submitted["launch_status"], "approved");
+    assert_eq!(submitted["execution_status"], "queued");
+    let repeated = rig.call("campaign_submit_approved", submit_args).await;
+    assert_eq!(repeated["job_id"], submitted["job_id"]);
+    let activation_job_id = Uuid::parse_str(submitted["job_id"].as_str().unwrap()).unwrap();
+
+    let safe_status = rig
+        .call("campaign_get_launch", json!({"launch_id":launch_id}))
+        .await;
+    assert_eq!(safe_status["execution_status"], "queued");
+    assert_eq!(
+        safe_status["activation_job_id"],
+        activation_job_id.to_string()
+    );
+    assert_eq!(safe_status["enrollment_ids"].as_array().unwrap().len(), 1);
+    assert!(safe_status.get("messages").is_none());
+    assert!(safe_status.get("to_address_snapshot").is_none());
+
+    let mut tx = rig.owner.begin(ws).await.unwrap();
+    let activation_payload: Value =
+        sqlx::query_scalar("SELECT payload FROM jobs WHERE workspace_id=$1 AND id=$2")
+            .bind(ws)
+            .bind(activation_job_id)
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    let activation_approval_id =
+        Uuid::parse_str(activation_payload["approval_request_id"].as_str().unwrap()).unwrap();
+    application::campaigns::activate_launch(
+        &mut tx,
+        rig.world.system.principal_id,
+        activation_job_id,
+        launch_id,
+        activation_approval_id,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut tx = rig.owner.begin(ws).await.unwrap();
+    #[allow(clippy::type_complexity)]
+    let outbound: (
+        Uuid,
+        Option<Uuid>,
+        Option<String>,
+        Option<Uuid>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        String,
+        String,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT id, thread_id, internet_message_id, source_credential_id,
+                explicit_submission_at, from_address_snapshot, to_address_snapshot,
+                body_text, body_html
+           FROM outbound_messages WHERE workspace_id=$1 AND launch_id=$2",
+    )
+    .bind(ws)
+    .bind(launch_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(outbound.3, Some(rig.credential_id));
+    let thread_id = outbound
+        .1
+        .expect("campaign message must belong to a local thread");
+    let internet_message_id = outbound
+        .2
+        .expect("campaign message must have a stable RFC ID");
+    let explicit_submission_at = outbound.4.expect("explicit campaign execution marker");
+    assert!(outbound.7.contains("/public/v1/engagement/click/"));
+    assert!(outbound.7.contains("/public/unsubscribe/"));
+    let capability_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbound_engagement_capabilities
+          WHERE workspace_id=$1 AND outbound_message_id=$2",
+    )
+    .bind(ws)
+    .bind(outbound.0)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(capability_count, 2);
+    let dispatch_payload: Value = sqlx::query_scalar(
+        "SELECT payload FROM jobs WHERE workspace_id=$1 AND kind='sending.dispatch_outbound'
+           AND payload->>'outbound_message_id'=$2",
+    )
+    .bind(ws)
+    .bind(outbound.0.to_string())
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let dispatch_marker: chrono::DateTime<chrono::Utc> = serde_json::from_value(json!(
+        dispatch_payload["explicit_submission_at"].as_str().unwrap()
+    ))
+    .unwrap();
+    assert_eq!(dispatch_marker, explicit_submission_at);
+
+    let jobs = infrastructure::jobs::claim(
+        &mut tx,
+        "isolated-campaign-fake-worker",
+        1,
+        &["sending.dispatch_outbound"],
+    )
+    .await
+    .unwrap();
+    assert_eq!(jobs.len(), 1, "exactly one dispatch is claimable");
+    let job = jobs.into_iter().next().unwrap();
+    let lease_token = job.lease_token.unwrap();
+    let job_ctx = infrastructure::jobs::JobCtx {
+        job_id: job.id,
+        workspace_id: ws,
+        lease_token,
+        attempt_count: job.attempt_count,
+        lease_owner: job.lease_owner.clone().unwrap(),
+    };
+    tx.commit().await.unwrap();
+
+    let fake_delivery = Arc::new(infrastructure::providers::fake::FakeDeliveryProvider::new());
+    let providers = application::sending::dispatch::Providers {
+        mail: Arc::new(infrastructure::providers::fake::FakeMailProvider::new()),
+        delivery: fake_delivery.clone(),
+    };
+    application::sending::dispatch::run_dispatch(&db, &providers, &job_ctx, outbound.0)
+        .await
+        .unwrap();
+    let mut tx = rig.owner.begin(ws).await.unwrap();
+    assert!(
+        infrastructure::jobs::complete(&mut tx, job.id, lease_token)
+            .await
+            .unwrap()
+    );
+    tx.commit().await.unwrap();
+    let sent = fake_delivery.sent();
+    assert_eq!(sent.len(), 1, "authorized campaign sends exactly once");
+    assert_eq!(
+        sent[0].0.internet_message_id.as_deref(),
+        Some(internet_message_id.as_str())
+    );
+
+    let click_token = sent[0]
+        .0
+        .body_text
+        .as_deref()
+        .unwrap()
+        .split("/public/v1/engagement/click/")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .trim_end_matches(['.', ',', ';', '!', ')']);
+    let click = rig
+        .api
+        .client
+        .get(
+            rig.api
+                .url(&format!("/public/v1/engagement/click/{click_token}")),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(click.status(), StatusCode::FOUND);
+    assert_eq!(
+        click.headers().get("location").unwrap(),
+        "https://example.test/offer"
+    );
+    let html = sent[0].0.body_html.as_deref().unwrap();
+    let open_token = html
+        .split("/public/v1/engagement/open/")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    let open = rig
+        .api
+        .client
+        .get(
+            rig.api
+                .url(&format!("/public/v1/engagement/open/{open_token}")),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(open.status(), StatusCode::OK);
+    assert_eq!(open.headers().get("content-type").unwrap(), "image/gif");
+
+    let reply = infrastructure::providers::ProviderMessage {
+        provider_message_id: format!("fake-campaign-reply-{}", Uuid::new_v4()),
+        provider_thread_id: None,
+        internet_message_id: Some(format!("<reply-{}@example.test>", Uuid::new_v4())),
+        in_reply_to: Some(internet_message_id),
+        references: vec![],
+        from: outbound.6.clone(),
+        to: vec![outbound.5.clone()],
+        subject: Some("Re: A tracked campaign offer".into()),
+        body_text: Some("Thanks, let's talk.".into()),
+        body_html: None,
+        message_at: chrono::Utc::now(),
+    };
+    let mut tx = rig.owner.begin(ws).await.unwrap();
+    let ingested = application::inbox::ingest::ingest_provider_message(
+        &mut tx,
+        None,
+        rig.world.mail_account_id,
+        &reply,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        ingested.thread_id, thread_id,
+        "reply matches the frozen local thread"
+    );
+
+    let outbound_status = human_data(
+        rig.api
+            .get(&format!("/api/v1/outbound-messages/{}", outbound.0))
+            .await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(outbound_status["status"], "accepted");
+    assert_eq!(outbound_status["thread_id"], thread_id.to_string());
+    assert_eq!(outbound_status["engagement"]["tracking_enabled"], true);
+    assert_eq!(outbound_status["engagement"]["click_request_count"], 1);
+    assert_eq!(outbound_status["engagement"]["open_request_count"], 1);
+    assert_eq!(
+        outbound_status["known_replies"].as_array().unwrap().len(),
+        1
     );
 }

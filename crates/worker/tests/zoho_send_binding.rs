@@ -239,6 +239,7 @@ async fn dispatch_sends_only_through_the_provider_bound_to_the_outbound_mailbox(
             delivery_channel_id: channel,
             sender_identity_id: None,
             meeting_type_id: None,
+            tracking_requested: false,
         },
     )
     .await
@@ -267,6 +268,7 @@ async fn dispatch_sends_only_through_the_provider_bound_to_the_outbound_mailbox(
     let calendar = Arc::new(FakeMailProvider::new());
     let context = WorkerContext {
         db: db.clone(),
+        config: Arc::new(infrastructure::config::Config::test()),
         mail,
         delivery: Arc::new(FakeDeliveryProvider::new()),
         calendar,

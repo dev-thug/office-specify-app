@@ -382,7 +382,7 @@ fn grant_precondition(
         (status = 403, description = "Not admin / agent attempt", body = Problem),
         (status = 404, description = "Mailbox or grantee not found", body = Problem),
         (status = 412, description = "Precondition failed (exists on create / stale version)", body = Problem),
-        (status = 422, description = "AGENT_FORBIDDEN — agents cannot hold send/approve", body = Problem),
+        (status = 422, description = "Invalid grant dependency chain or can_approve role", body = Problem),
         (status = 428, description = "Precondition header required", body = Problem),
     )
 )]

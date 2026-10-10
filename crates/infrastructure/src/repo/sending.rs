@@ -34,6 +34,7 @@ pub struct DraftRow {
     pub workspace_id: Uuid,
     pub mail_account_id: Uuid,
     pub owner_principal_id: Uuid,
+    pub source_credential_id: Option<Uuid>,
     /// 'private' | 'mailbox'
     pub visibility: String,
     pub thread_id: Option<Uuid>,
@@ -70,7 +71,7 @@ pub struct DraftListRow {
     pub updated_at: DateTime<Utc>,
 }
 
-const DRAFT_COLS: &str = "id, workspace_id, mail_account_id, owner_principal_id, visibility, \
+const DRAFT_COLS: &str = "id, workspace_id, mail_account_id, owner_principal_id, source_credential_id, visibility, \
      thread_id, reply_to_message_id, expected_last_inbound_id, to_email_address_id, \
      template_version_id, purpose, subject, body_text, body_html, variables, status, \
      version, updated_at, created_at";
@@ -164,6 +165,7 @@ pub async fn insert_draft(
     tx: &mut Tx<'_>,
     mail_account_id: Uuid,
     owner: Uuid,
+    source_credential_id: Option<Uuid>,
     visibility: &str,
     thread_id: Option<Uuid>,
     reply_to_message_id: Option<Uuid>,
@@ -178,16 +180,17 @@ pub async fn insert_draft(
 ) -> Result<DraftRow, AppError> {
     sqlx::query_as::<_, DraftRow>(&format!(
         "INSERT INTO message_drafts
-            (workspace_id, mail_account_id, owner_principal_id, visibility,
+            (workspace_id, mail_account_id, owner_principal_id, source_credential_id, visibility,
              thread_id, reply_to_message_id, expected_last_inbound_id,
              to_email_address_id, template_version_id, purpose, subject,
              body_text, body_html, variables)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          RETURNING {DRAFT_COLS}"
     ))
     .bind(tx.workspace_id())
     .bind(mail_account_id)
     .bind(owner)
+    .bind(source_credential_id)
     .bind(visibility)
     .bind(thread_id)
     .bind(reply_to_message_id)
@@ -287,6 +290,8 @@ pub struct OutboundRow {
     pub reply_to_message_id: Option<Uuid>,
     pub requested_by: Uuid,
     pub source_credential_id: Option<Uuid>,
+    pub internet_message_id: Option<String>,
+    pub explicit_submission_at: Option<DateTime<Utc>>,
     pub purpose: String,
     pub from_address_snapshot: String,
     pub to_address_snapshot: String,
@@ -306,7 +311,7 @@ pub struct OutboundRow {
 const OUTBOUND_COLS: &str = "id, workspace_id, mail_account_id, delivery_channel_id, \
      sender_identity_id, to_email_address_id, communication_basis_id, source_draft_id, \
      launch_id, revision_id, enrollment_id, step_id, thread_id, reply_to_message_id, \
-     requested_by, source_credential_id, purpose, from_address_snapshot, \
+     requested_by, source_credential_id, internet_message_id, explicit_submission_at, purpose, from_address_snapshot, \
      to_address_snapshot, subject, body_text, body_html, payload_hash, status, \
      not_before, accepted_at, provider_message_id, failure_code, version, created_at";
 
@@ -355,6 +360,7 @@ pub struct NewOutbound {
     pub reply_to_message_id: Option<Uuid>,
     pub requested_by: Uuid,
     pub source_credential_id: Option<Uuid>,
+    pub internet_message_id: Option<String>,
     pub purpose: String,
     pub from_address_snapshot: String,
     pub to_address_snapshot: String,
@@ -371,10 +377,10 @@ pub async fn insert_outbound(tx: &mut Tx<'_>, n: &NewOutbound) -> Result<Outboun
             (id, workspace_id, mail_account_id, delivery_channel_id,
              sender_identity_id, to_email_address_id, communication_basis_id,
              source_draft_id, thread_id, reply_to_message_id, requested_by,
-             source_credential_id, purpose, from_address_snapshot,
+             source_credential_id, internet_message_id, purpose, from_address_snapshot,
              to_address_snapshot, subject, body_text, body_html, payload_hash,
              status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                  'draft')
          RETURNING {OUTBOUND_COLS}"
     ))
@@ -390,6 +396,7 @@ pub async fn insert_outbound(tx: &mut Tx<'_>, n: &NewOutbound) -> Result<Outboun
     .bind(n.reply_to_message_id)
     .bind(n.requested_by)
     .bind(n.source_credential_id)
+    .bind(&n.internet_message_id)
     .bind(&n.purpose)
     .bind(&n.from_address_snapshot)
     .bind(&n.to_address_snapshot)
@@ -435,19 +442,66 @@ pub async fn set_queued(
     tx: &mut Tx<'_>,
     id: Uuid,
     not_before: Option<DateTime<Utc>>,
+    explicit_submission_at: DateTime<Utc>,
 ) -> Result<(), AppError> {
     sqlx::query(
         "UPDATE outbound_messages
-            SET status = 'queued', not_before = $3, version = version + 1
+            SET status = 'queued', not_before = $3,
+                explicit_submission_at = $4, version = version + 1
           WHERE workspace_id = $1 AND id = $2",
     )
     .bind(tx.workspace_id())
     .bind(id)
     .bind(not_before)
+    .bind(explicit_submission_at)
     .execute(tx.conn())
     .await
     .map_err(map_sqlx)?;
     Ok(())
+}
+
+/// Remove an unmarked legacy queue row before it can cross the provider
+/// boundary. Caller holds the outbound row lock and records the audit event.
+pub async fn return_legacy_queue_to_draft(tx: &mut Tx<'_>, id: Uuid) -> Result<bool, AppError> {
+    let reset = sqlx::query(
+        "UPDATE outbound_messages
+            SET status = 'draft', not_before = NULL, failure_code = NULL,
+                version = version + 1
+          WHERE workspace_id = $1 AND id = $2
+            AND status IN ('queued','claimed') AND explicit_submission_at IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM send_attempts sa
+                 WHERE sa.workspace_id = outbound_messages.workspace_id
+                   AND sa.outbound_message_id = outbound_messages.id
+            )",
+    )
+    .bind(tx.workspace_id())
+    .bind(id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?
+    .rows_affected();
+    if reset == 1 {
+        // Keep the reserved claim as history. Claims already submitted to a
+        // provider are never cleared by a legacy queue repair.
+        sqlx::query(
+            "UPDATE reply_claims rc SET state = 'released'
+               FROM outbound_messages o
+              WHERE o.workspace_id = $1 AND o.id = $2
+                AND rc.workspace_id = o.workspace_id
+                AND rc.mail_account_id = o.mail_account_id
+                AND rc.thread_id = o.thread_id
+                AND rc.inbound_message_id = o.reply_to_message_id
+                AND rc.outbound_message_id = o.id
+                AND rc.state = 'reserved'",
+        )
+        .bind(tx.workspace_id())
+        .bind(id)
+        .execute(tx.conn())
+        .await
+        .map_err(map_sqlx)?;
+    }
+    Ok(reset == 1)
 }
 
 /// The submitting boundary — the last durable write before the provider
@@ -887,11 +941,23 @@ pub async fn credential_usable(tx: &mut Tx<'_>, credential_id: Uuid) -> Result<b
     crate::repo::auth::credential_authorizes(tx, credential_id, None, &[]).await
 }
 
+/// A frozen outbound must retain an active source credential owned by its
+/// requesting principal. This keeps another principal from borrowing a
+/// valid credential ID on a forged/restored row.
+pub async fn source_credential_usable(
+    tx: &mut Tx<'_>,
+    credential_id: Uuid,
+    principal_id: Uuid,
+) -> Result<bool, AppError> {
+    crate::repo::auth::credential_authorizes(tx, credential_id, Some(principal_id), &[]).await
+}
+
 /// Latest approval request targeting this outbound (any status — the
 /// evaluator interprets it).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ApprovalState {
     pub id: Uuid,
+    pub requested_by: Uuid,
     pub status: String,
     pub expires_at: DateTime<Utc>,
     pub snapshot_hash: Vec<u8>,
@@ -902,7 +968,7 @@ pub async fn latest_outbound_approval(
     outbound_id: Uuid,
 ) -> Result<Option<ApprovalState>, AppError> {
     sqlx::query_as::<_, ApprovalState>(
-        "SELECT id, status, expires_at, snapshot_hash
+        "SELECT id, requested_by, status, expires_at, snapshot_hash
            FROM approval_requests
           WHERE workspace_id = $1 AND outbound_message_id = $2
           ORDER BY created_at DESC LIMIT 1",
@@ -1199,6 +1265,54 @@ pub async fn inbound_message_in_thread(
     .await
     .map_err(map_sqlx)?;
     Ok(ok.unwrap_or(false))
+}
+
+/// A reply draft may only target the normalized address on the inbound's
+/// `From` participant. Require one unambiguous inbound sender and verify
+/// both its text and any normalized-address link to prevent recipient
+/// retargeting through legacy or manually altered draft rows.
+pub async fn reply_recipient_matches(
+    tx: &mut Tx<'_>,
+    mail_account_id: Uuid,
+    thread_id: Uuid,
+    inbound_message_id: Uuid,
+    recipient_email_address_id: Uuid,
+) -> Result<bool, AppError> {
+    let Some((_, recipient_key)) = email_address_row(tx, recipient_email_address_id).await? else {
+        return Ok(false);
+    };
+    let senders: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT p.address, ea.normalized_key
+           FROM email_messages m
+           JOIN message_participants p
+             ON p.workspace_id = m.workspace_id AND p.email_message_id = m.id
+            AND p.role = 'from'
+           LEFT JOIN email_addresses ea
+             ON ea.workspace_id = p.workspace_id AND ea.id = p.email_address_id
+          WHERE m.workspace_id = $1 AND m.mail_account_id = $2
+            AND m.thread_id = $3 AND m.id = $4 AND m.direction = 'inbound'",
+    )
+    .bind(tx.workspace_id())
+    .bind(mail_account_id)
+    .bind(thread_id)
+    .bind(inbound_message_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    if senders.len() != 1 {
+        return Ok(false);
+    }
+    let (sender_address, linked_sender_key) = &senders[0];
+    let Ok(sender_key) = domain::email_address::normalize(
+        sender_address,
+        domain::email_address::LocalPartPolicy::Lowercase,
+    ) else {
+        return Ok(false);
+    };
+    Ok(sender_key.normalized_key == recipient_key
+        && linked_sender_key
+            .as_ref()
+            .is_none_or(|linked_key| linked_key == &sender_key.normalized_key))
 }
 
 /// The reply target's RFC Message-ID (for In-Reply-To headers, §11.3).

@@ -15,6 +15,7 @@ testing = []
 [dependencies]
 contracts.workspace = true
 domain.workspace = true
+async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
@@ -38,6 +39,9 @@ ammonia.workspace = true
 csv.workspace = true
 http.workspace = true
 ipnetwork.workspace = true
+mailparse = "0.17.0"
+tokio-rustls = "0.26.6"
+webpki-roots = "1.0.9"
 lettre = { version = "0.11.23", default-features = false, features = [
     "builder",
     "smtp-transport",

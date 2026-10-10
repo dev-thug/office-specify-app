@@ -106,6 +106,10 @@ pub struct PreflightResponse {
 pub struct CreateLaunchRequest {
     pub revision_id: Uuid,
     pub email_address_ids: Vec<Uuid>,
+    /// Add recipient-bound request tracking capabilities when the workspace
+    /// has engagement tracking enabled. False by default at immutable freeze.
+    #[serde(default)]
+    pub tracking_requested: bool,
     /// Allowed personalization values — applied to every recipient unless a
     /// system-resolved variable of the same name exists (system wins).
     #[serde(default)]
@@ -136,6 +140,47 @@ pub struct LaunchApprovalRequestResponse {
     pub expires_at: DateTime<Utc>,
     pub version: i64,
     pub launch_id: Uuid,
+}
+
+/// `POST /campaign-launches/{id}/execute` body — authorizes one explicit
+/// execution of the approved frozen manifest using launch-version CAS.
+#[derive(Debug, Clone, Deserialize, ToSchema, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExecuteLaunchRequest {
+    pub expected_manifest_hash: String,
+    pub expected_version: i64,
+}
+
+/// Explicit campaign execution acceptance. The launch remains `approved`
+/// until the worker activates it; authorization and activation each bump version.
+#[derive(Debug, Clone, Serialize, ToSchema, Deserialize, schemars::JsonSchema)]
+pub struct ExecuteLaunchResponse {
+    pub launch_id: Uuid,
+    pub launch_status: String,
+    pub execution_status: String,
+    pub job_id: Uuid,
+    pub manifest_hash: String,
+    pub version: i64,
+}
+
+/// Safe read-only launch status for agents. It exposes identifiers and counts,
+/// never the frozen message bodies or recipient addresses.
+#[derive(Debug, Clone, Serialize, ToSchema, Deserialize, schemars::JsonSchema)]
+pub struct CampaignLaunchStatus {
+    pub launch_id: Uuid,
+    pub campaign_id: Uuid,
+    pub revision_id: Uuid,
+    pub mail_account_id: Uuid,
+    pub status: String,
+    pub manifest_hash: Option<String>,
+    pub frozen_at: Option<DateTime<Utc>>,
+    pub expires_at: DateTime<Utc>,
+    pub version: i64,
+    pub created_at: DateTime<Utc>,
+    pub execution_status: String,
+    pub activation_job_id: Option<Uuid>,
+    pub enrollments: EnrollmentSummary,
+    pub enrollment_ids: Vec<Uuid>,
 }
 
 /// `POST /campaign-launches/{id}/pause` body (B.2) — If-Match on the launch.
@@ -242,7 +287,7 @@ pub struct CreateRevisionResponse {
     pub blocking_reasons: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema, Deserialize)]
+#[derive(Debug, Clone, Serialize, ToSchema, Deserialize, schemars::JsonSchema)]
 pub struct EnrollmentSummary {
     pub total: i64,
     pub pending: i64,
@@ -283,6 +328,12 @@ pub struct LaunchDetail {
     pub mail_account_id: Uuid,
     pub step_count: i64,
     pub enrollments: EnrollmentSummary,
+    /// Execution of the approved manifest, separate from launch lifecycle state.
+    pub execution_status: String,
+    /// Retained for status and deduplication after explicit execution.
+    pub activation_job_id: Option<Uuid>,
+    /// UI hint only; every execution is authorized again by the service.
+    pub allowed_actions: Vec<String>,
     /// Frozen per-step outbound snapshots (B.3.8) — cursor-paginated.
     pub messages: LaunchMessagePage,
 }

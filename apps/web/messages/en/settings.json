@@ -9,7 +9,7 @@
     "notFound": "The resource was not found or is not accessible.",
     "providerBlocked": "Blocked — the provider policy does not allow this.",
     "invalidCredentials": "The current password is incorrect.",
-    "agentGrantForbidden": "Agents cannot be granted send or approve permissions."
+    "agentGrantForbidden": "Agents cannot be granted approval permission. Their send access is limited to human-approved messages."
   },
   "common": {
     "adminOnly": "Requires Admin",
@@ -39,6 +39,11 @@
     "formTitle": "Add SMTP connection",
     "formDescription": "The password is write-only and encrypted on the server. It is cleared when this form closes.",
     "mailAccountRequired": "Select a mail account.",
+    "purpose": "Connection purpose",
+    "purposes": {
+      "marketing": "Marketing",
+      "correspondence": "Replies only"
+    },
     "senderConfirmationRequired": "Confirm that this From address is registered to the selected mail account.",
     "portInvalid": "Enter a port from 1 to 65535.",
     "customHeadersInvalid": "Custom headers must be valid JSON with only the allowed header names and single-line string values.",
@@ -70,7 +75,33 @@
     "disableTitle": "Disable this SMTP connection?",
     "disableDescription": "{name} will stop being available for campaign delivery.",
     "disabling": "Disabling…",
-    "confirmDisable": "Confirm disable"
+    "confirmDisable": "Confirm disable",
+  "inbox": {
+    "title": "SMTP inbox sync",
+    "credentialNotice": "Inbox sync reuses the encrypted SMTP credential stored for this connection. No separate IMAP password is shown or requested.",
+    "enabled": "Inbox sync is enabled",
+    "disabled": "Inbox sync is disabled",
+    "loading": "Loading inbox sync status…",
+    "loadFailed": "Could not load inbox sync status.",
+    "retry": "Retry",
+    "host": "IMAP host",
+    "hostPlaceholder": "imap.example.com",
+    "enable": "Enable inbox sync",
+    "serverSettings": "Port {port}; folder {folder}.",
+    "save": "Save inbox settings",
+    "saving": "Saving…",
+    "importedMessages": "Messages imported",
+    "lastSuccess": "Last successful sync",
+    "nextSync": "Next scheduled sync",
+    "cursor": "IMAP cursor (UIDVALIDITY / UID)",
+    "advancedDiagnostics": "Advanced sync diagnostics",
+    "bookmarkDescription": "This internal IMAP bookmark records where incremental sync should resume.",
+    "lastError": "Last sync error: {code}",
+    "syncQueued": "Manual inbox sync request is queued.",
+    "syncNow": "Sync inbox now",
+    "syncing": "Queueing sync…",
+    "requestFailed": "Could not update inbox sync settings. Try again."
+  }
   },
   "members": {
     "title": "Members",
@@ -208,10 +239,11 @@
         "can_read": "Read",
         "can_compose": "Compose",
         "can_send": "Send",
+        "agentCanSend": "Human-approved send only",
         "can_approve": "Approve",
         "can_assign": "Assign"
       },
-      "blockAgent": "Agents cannot hold send or approve permissions",
+      "blockAgent": "Agents cannot approve messages.",
       "blockRole": "Approve can only be granted to Admin or Manager",
       "addTitle": "Add principal",
       "principal": "Principal",

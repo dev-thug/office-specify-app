@@ -55,7 +55,7 @@ async fn list_connections(
     request_body = CreateSmtpConnectionRequest,
     params(("Idempotency-Key" = String, Header, description = "Stable request key")),
     responses(
-        (status = 201, description = "Pending Office SMTP profile and disabled marketing channel", body = SmtpConnectionResponse),
+        (status = 201, description = "Pending Office SMTP profile and disabled purpose-scoped delivery channel", body = SmtpConnectionResponse),
         (status = 400, description = "Missing or invalid idempotency key", body = Problem),
         (status = 403, description = "Human administrator session or mailbox send permission required", body = Problem),
         (status = 404, description = "Mail account not found", body = Problem),
@@ -207,6 +207,11 @@ fn create_request_hash(key: &[u8], req: &CreateSmtpConnectionRequest) -> [u8; 32
         push_field(&mut canonical, name.as_bytes());
         push_field(&mut canonical, value.as_bytes());
     }
+    let purpose = req.purpose.as_deref().unwrap_or("marketing");
+    if purpose != "marketing" {
+        push_field(&mut canonical, b"purpose");
+        push_field(&mut canonical, purpose.as_bytes());
+    }
     crypto::hmac_sha256(key, &canonical)
 }
 
@@ -253,6 +258,7 @@ mod tests {
         CreateSmtpConnectionRequest {
             name: "Office SMTP".into(),
             mail_account_id: Uuid::nil(),
+            purpose: Some("marketing".into()),
             host: "smtp.example.test".into(),
             port: 587,
             security: "starttls".into(),
@@ -274,6 +280,12 @@ mod tests {
             fingerprint,
             create_request_hash(b"test-hmac-key", &original)
         );
+        let mut legacy_request = request("smtp-secret-a");
+        legacy_request.purpose = None;
+        assert_eq!(
+            fingerprint,
+            create_request_hash(b"test-hmac-key", &legacy_request)
+        );
         assert_ne!(
             fingerprint,
             create_request_hash(b"another-hmac-key", &original)
@@ -281,6 +293,12 @@ mod tests {
         assert_ne!(
             fingerprint,
             create_request_hash(b"test-hmac-key", &request("smtp-secret-b"))
+        );
+        let mut correspondence = request("smtp-secret-a");
+        correspondence.purpose = Some("correspondence".into());
+        assert_ne!(
+            fingerprint,
+            create_request_hash(b"test-hmac-key", &correspondence)
         );
     }
 }

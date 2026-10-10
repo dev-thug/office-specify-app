@@ -14,4 +14,5 @@ pub mod operations;
 pub mod org;
 pub mod research;
 pub mod sending;
+pub mod smtp_inbox;
 pub mod templates;

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyGrantChange,
   grantBlockReason,
-  type GrantKey,
+  grantToggleDisabled,
 } from "@/features/settings/grant-rules";
 import type { GrantBooleans } from "@/lib/api/settings";
 
@@ -65,14 +65,21 @@ describe("grantBlockReason — 부여 불가 정책", () => {
   const manager = { kind: "human", role: "manager" };
   const admin = { kind: "human", role: "admin" };
 
-  it("agents can never hold send or approve", () => {
-    const blocked: GrantKey[] = ["can_send", "can_approve"];
-    for (const k of blocked) {
-      expect(grantBlockReason(agent, k)).toBe("agent");
-    }
+  it("agents may send only human-approved messages and can never approve", () => {
+    expect(grantBlockReason(agent, "can_send")).toBeNull();
+    expect(grantToggleDisabled(agent, "can_send")).toBe(false);
+    expect(grantBlockReason(agent, "can_approve")).toBe("agent");
+    expect(grantToggleDisabled(agent, "can_approve")).toBe(true);
     expect(grantBlockReason(agent, "can_read")).toBeNull();
     expect(grantBlockReason(agent, "can_compose")).toBeNull();
     expect(grantBlockReason(agent, "can_assign")).toBeNull();
+    expect(applyGrantChange(OFF, "can_send", true)).toEqual({
+      can_read: true,
+      can_compose: true,
+      can_send: true,
+      can_approve: false,
+      can_assign: false,
+    });
   });
 
   it("approve is limited to admin/manager roles", () => {

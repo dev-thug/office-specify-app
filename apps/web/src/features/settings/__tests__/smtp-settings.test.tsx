@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import common from "../../../../messages/en/common.json";
 import settings from "../../../../messages/en/settings.json";
 import operations from "../../../../messages/en/operations.json";
+import type { SmtpInboxStatus } from "@/lib/api/smtp";
 import { SmtpSettings } from "../smtp-settings";
 import { MailAccountsScreen } from "../mail-accounts-screen";
 
@@ -30,6 +31,7 @@ const profile = {
   id: "smtp-1",
   name: "Newsletter SMTP",
   mail_account_id: mailAccount.id,
+  purpose: "marketing",
   host: "smtppro.zoho.com",
   port: 587,
   security: "starttls",
@@ -108,7 +110,9 @@ afterEach(() => {
 });
 
 describe("SMTP settings", () => {
-  it("requires sender confirmation and sends SMTP login separately from the From alias", async () => {
+  it.each([["marketing", "Marketing"], ["correspondence", "Replies only"]] as const)(
+    "defaults SMTP profiles to marketing and creates %s-purpose profiles",
+    async (purpose, purposeLabel) => {
     const calls: Call[] = [];
     let savedProfiles: unknown[] = [];
     const fetcher = vi.fn<typeof fetch>(async (input, init) => {
@@ -117,8 +121,12 @@ describe("SMTP settings", () => {
       calls.push({ url, init: request });
 
       if (url === "/api/v1/smtp-connections" && request.method === "POST") {
-        savedProfiles = [profile];
-        return response(profile, 201);
+        const createdProfile = {
+          ...profile,
+          purpose: JSON.parse(String(request.body)).purpose,
+        };
+        savedProfiles = [createdProfile];
+        return response(createdProfile, 201);
       }
       if (url === "/api/v1/smtp-connections") return response(savedProfiles);
       return response([]);
@@ -129,6 +137,12 @@ describe("SMTP settings", () => {
       expect(screen.getByRole("button", { name: "Add SMTP connection" })).toBeEnabled()
     );
     fireEvent.click(screen.getByRole("button", { name: "Add SMTP connection" }));
+    const purposeSelect = screen.getByRole("combobox", { name: "Connection purpose" });
+    expect(purposeSelect).toHaveTextContent("Marketing");
+    if (purpose === "correspondence") {
+      fireEvent.click(purposeSelect);
+      fireEvent.click(screen.getByRole("option", { name: "Replies only" }));
+    }
     fillRequiredFields();
 
     fireEvent.click(screen.getByRole("button", { name: "Save SMTP connection" }));
@@ -163,6 +177,7 @@ describe("SMTP settings", () => {
     expect(payload).toMatchObject({
       name: "Newsletter SMTP",
       mail_account_id: mailAccount.id,
+      purpose,
       host: "smtppro.zoho.com",
       port: 587,
       security: "starttls",
@@ -175,6 +190,7 @@ describe("SMTP settings", () => {
       sender_confirmed: true,
     });
     expect(payload.username).not.toBe(payload.from_address);
+    expect(await screen.findByText(purposeLabel, { exact: true })).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.queryByDisplayValue("super-secret-smtp-password")).toBeNull()
     );
@@ -297,7 +313,137 @@ describe("SMTP settings", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Add SMTP connection" }));
 
-    expect(screen.getByLabelText("SMTP password")).toHaveValue("");
+  });
+
+  it("configures inbox sync and queues a manual sync using the stored SMTP credential", async () => {
+    const calls: Call[] = [];
+    const currentProfile = { ...profile, status: "active" };
+    const activeJobId = "7f4b68ee-4fe8-4b2f-88ee-0d3e0374d9c1";
+    let inboxStatus: SmtpInboxStatus = {
+      smtp_connection_id: profile.id,
+      mail_account_id: mailAccount.id,
+      enabled: false,
+      imap_host: "",
+      imap_port: 993,
+      folder: "INBOX" as const,
+      cursor_uidvalidity: null,
+      cursor_uid: 0,
+      imported_messages: 0,
+      last_success_at: null,
+      last_error_code: null,
+      next_sync_at: null,
+      active_job_id: activeJobId,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      const request = init ?? {};
+      calls.push({ url, init: request });
+
+      if (url === "/api/v1/smtp-connections/smtp-1/inbox") {
+        if (request.method === "PUT") {
+          inboxStatus = { ...inboxStatus, ...JSON.parse(String(request.body)) };
+          return response(inboxStatus);
+        }
+        return response(inboxStatus);
+      }
+      if (url === "/api/v1/smtp-connections/smtp-1/inbox/sync" && request.method === "POST") {
+        return response({ job_id: activeJobId, state: "queued" }, 202);
+      }
+      if (url === "/api/v1/smtp-connections") return response([currentProfile]);
+      return response([]);
+    });
+
+    mount(fetcher);
+
+    const inboxRegion = await screen.findByRole("region", { name: "SMTP inbox sync" });
+    const host = await within(inboxRegion).findByRole("textbox", { name: "IMAP host" });
+    expect(host).toHaveValue("imappro.zoho.com");
+    const enabled = within(inboxRegion).getByRole("checkbox", {
+      name: "Enable inbox sync",
+    });
+    expect(enabled).not.toBeChecked();
+    fireEvent.click(enabled);
+    fireEvent.click(
+      within(inboxRegion).getByRole("button", { name: "Save inbox settings" })
+    );
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.url === "/api/v1/smtp-connections/smtp-1/inbox" &&
+            call.init.method === "PUT"
+        )
+      ).toBe(true);
+    });
+    const updateCall = calls.find(
+      (call) =>
+        call.url === "/api/v1/smtp-connections/smtp-1/inbox" &&
+        call.init.method === "PUT"
+    )!;
+    expect(JSON.parse(String(updateCall.init.body))).toEqual({
+      enabled: true,
+      imap_host: "imappro.zoho.com",
+    });
+    expect(new Headers(updateCall.init.headers).get("Idempotency-Key")).toMatch(
+      /^[0-9a-f-]{36}$/
+    );
+    expect(within(inboxRegion).getByText("Inbox sync is enabled")).toBeInTheDocument();
+    expect(inboxRegion).not.toHaveTextContent(activeJobId);
+    expect(within(inboxRegion).getByText(/reuses the encrypted SMTP credential/i)).toBeInTheDocument();
+    expect(within(inboxRegion).queryByLabelText(/password/i)).not.toBeInTheDocument();
+
+    const syncButton = within(inboxRegion).getByRole("button", { name: "Sync inbox now" });
+    expect(syncButton).toBeEnabled();
+    fireEvent.click(syncButton);
+    expect(await within(inboxRegion).findByText("Manual inbox sync request is queued.")).toBeInTheDocument();
+    expect(inboxRegion).not.toHaveTextContent(activeJobId);
+    const syncCall = calls.find((call) =>
+      call.url === "/api/v1/smtp-connections/smtp-1/inbox/sync"
+    )!;
+    expect(syncCall.init.method).toBe("POST");
+    expect(new Headers(syncCall.init.headers).get("Idempotency-Key")).toMatch(
+      /^[0-9a-f-]{36}$/
+    );
+    expect(syncButton).toBeEnabled();
+    const diagnostics = within(inboxRegion).getByText("Advanced sync diagnostics");
+    const cursorLabel = within(inboxRegion).getByText(/UIDVALIDITY \/ UID/);
+    expect(cursorLabel.closest("details")).not.toHaveAttribute("open");
+    expect(cursorLabel).not.toBeVisible();
+    fireEvent.click(diagnostics);
+    expect(cursorLabel).toBeVisible();
+  });
+
+  it("does not guess an IMAP host for a generic SMTP connection", async () => {
+    const genericProfile = { ...profile, host: "smtp.example.test" };
+    const inboxStatus: SmtpInboxStatus = {
+      smtp_connection_id: profile.id,
+      mail_account_id: mailAccount.id,
+      enabled: false,
+      imap_host: "",
+      imap_port: 993,
+      folder: "INBOX" as const,
+      cursor_uidvalidity: null,
+      cursor_uid: 0,
+      imported_messages: 0,
+      last_success_at: null,
+      last_error_code: null,
+      next_sync_at: null,
+      active_job_id: null,
+    };
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/smtp-connections/smtp-1/inbox") {
+        return response(inboxStatus);
+      }
+      if (url === "/api/v1/smtp-connections") return response([genericProfile]);
+      return response([]);
+    });
+
+    mount(fetcher);
+
+    const inboxRegion = await screen.findByRole("region", { name: "SMTP inbox sync" });
+    expect(await within(inboxRegion).findByRole("textbox", { name: "IMAP host" })).toHaveValue("");
   });
 });
 

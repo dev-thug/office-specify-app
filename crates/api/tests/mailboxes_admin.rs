@@ -322,7 +322,8 @@ async fn grant_put_preconditions_and_rules() {
     .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
-    // Agent can never hold can_send/can_approve → 403.
+    // An Agent may hold the mailbox can_send ACL needed by the separate
+    // human-approved submit path; this does not grant direct send authority.
     let res = put_grant(
         &app,
         acct,
@@ -330,6 +331,28 @@ async fn grant_put_preconditions_and_rules() {
         &csrf,
         Some(("if-none-match", "*")),
         flags(true, true, true, false, false),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let agent_grant_etag = res
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    let agent_grant = TestApp::data(res).await;
+    assert_eq!(agent_grant["can_send"], true);
+    assert_eq!(agent_grant["can_approve"], false);
+
+    // The same Agent can never receive independent approval authority.
+    let res = put_grant(
+        &app,
+        acct,
+        world.agent.principal_id,
+        &csrf,
+        Some(("if-match", &agent_grant_etag)),
+        flags(true, true, true, true, false),
     )
     .await;
     let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;

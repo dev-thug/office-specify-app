@@ -16,7 +16,12 @@
 //!   supply them (§8.1: "시스템 생성 URL은 사용자가 덮어쓸 수 없다").
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// Variable names the server injects at render/freeze time. Callers may
 /// never pass values for these.
@@ -417,6 +422,10 @@ pub fn render(
     let rendered_html = body_html
         .map(|h| render_part(h, &by_name, &values, Ctx::Html))
         .transpose()?;
+    let rendered_html = rendered_html
+        .as_deref()
+        .map(sanitize_email_html)
+        .transpose()?;
 
     // Warn on declared-but-unused variables (checked against all parts).
     for spec in specs {
@@ -440,70 +449,530 @@ pub fn render(
     })
 }
 
-/// §8.1 "위험 HTML" guard applied at version-create and freeze time. This is
-/// a conservative substring scan, not a parser — anything it cannot vouch
-/// for is rejected.
-pub fn is_dangerous_html(html: &str) -> bool {
-    let lower = html.to_lowercase();
-    const FORBIDDEN_TAGS: &[&str] = &[
-        "<script",
-        "<img",
-        "<picture",
-        "<iframe",
-        "<object",
-        "<embed",
-        "<form",
-        "<meta",
-        "<link",
-        "<base",
-        "<svg",
-        "<style",
-        "<applet",
-        "<frame",
-        "<frameset",
-        "<audio",
-        "<video",
-        "<source",
-        "<track",
-    ];
-    if FORBIDDEN_TAGS.iter().any(|t| lower.contains(t)) {
+const EMAIL_HTML_TAGS: &[&str] = &[
+    "a",
+    "abbr",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "div",
+    "em",
+    "figcaption",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "i",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "s",
+    "span",
+    "strong",
+    "sub",
+    "sup",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "u",
+    "ul",
+];
+
+const DANGEROUS_EMAIL_TAGS: &[&str] = &[
+    "script", "style", "img", "picture", "iframe", "object", "embed", "form", "input", "meta",
+    "link", "base", "svg", "math", "applet", "frame", "frameset", "audio", "video", "source",
+    "track",
+];
+
+const EMAIL_STYLE_PROPERTIES: &[&str] = &[
+    "color",
+    "background-color",
+    "font-size",
+    "font-weight",
+    "font-family",
+    "text-align",
+    "line-height",
+    "padding",
+    "margin",
+    "border",
+    "border-radius",
+    "width",
+    "max-width",
+    "text-decoration",
+    "display",
+    "border-collapse",
+    "border-spacing",
+    "vertical-align",
+    "table-layout",
+];
+
+/// Build the shared Ammonia HTML5 sanitizer used for rendered email HTML and
+/// freeze-time link rewriting. Its CSS property filter is intentionally
+/// narrow; callers that set an attribute filter should also call
+/// [`is_safe_inline_style`] on `style` values.
+pub fn safe_email_html_builder() -> ammonia::Builder<'static> {
+    let mut builder = ammonia::Builder::default();
+    let tags = EMAIL_HTML_TAGS.iter().copied().collect::<HashSet<_>>();
+    let generic_attributes = ["lang", "title", "style"].into_iter().collect();
+    let tag_attributes = HashMap::from([
+        ("a", HashSet::from(["href"])),
+        (
+            "table",
+            HashSet::from(["align", "cellpadding", "cellspacing", "width"]),
+        ),
+        (
+            "td",
+            HashSet::from(["align", "colspan", "rowspan", "valign", "width"]),
+        ),
+        (
+            "th",
+            HashSet::from(["align", "colspan", "rowspan", "valign", "width"]),
+        ),
+    ]);
+    builder
+        .tags(tags)
+        .generic_attributes(generic_attributes)
+        .tag_attributes(tag_attributes)
+        .url_schemes(["http", "https", "mailto"].into_iter().collect())
+        .url_relative(ammonia::UrlRelative::PassThrough)
+        .filter_style_properties(EMAIL_STYLE_PROPERTIES.iter().copied().collect())
+        .link_rel(Some("noopener noreferrer"))
+        .strip_comments(true);
+    builder
+}
+
+/// Validate and normalize email HTML with the shared HTML5/CSS parser.
+/// Invalid, unsafe, or unknown CSS declarations return `DangerousHtml`;
+/// permitted styles are retained in Ammonia's normalized output.
+pub fn sanitize_email_html(html: &str) -> Result<String, TemplateError> {
+    if html_has_dangerous_constructs(html, false) {
+        return Err(TemplateError::DangerousHtml);
+    }
+    Ok(safe_email_html_builder().clean(html).to_string())
+}
+
+/// Validate a parser-decoded inline `style` attribute against the email CSS
+/// subset. The accepted grammar excludes escapes, comments, at-rules, CSS
+/// functions other than bounded `rgb()`/`rgba()`, and all unknown properties.
+pub fn is_safe_inline_style(style: &str) -> bool {
+    if style.trim().is_empty() {
         return true;
     }
-    if lower.contains("javascript:") || lower.contains("data:text/html") || lower.contains("srcdoc")
+    if !style.is_ascii()
+        || style.chars().any(char::is_control)
+        || style.contains(['\\', '/', '*', '@', '<', '>', '!'])
     {
-        return true;
+        return false;
     }
-    if lower.contains(" style=")
-        || lower.starts_with("style=")
-        || lower.contains("url(")
-        || lower.contains("srcset=")
-        || lower.contains("&#")
-        || lower.contains("&colon;")
-    {
-        return true;
-    }
-    // Event-handler attributes: on<word>=
-    let bytes = lower.as_bytes();
-    let mut i = 0;
-    while i + 2 < bytes.len() {
-        if bytes[i] == b'o' && bytes[i + 1] == b'n' {
-            let mut j = i + 2;
-            while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
-                j += 1;
+
+    let declarations: Vec<_> = style.split(';').collect();
+    let mut seen = BTreeSet::new();
+    for (index, raw) in declarations.iter().enumerate() {
+        let declaration = raw.trim();
+        if declaration.is_empty() {
+            if index + 1 == declarations.len() && style.trim_end().ends_with(';') {
+                continue;
             }
-            if j > i + 2 {
-                let mut k = j;
-                while k < bytes.len() && bytes[k].is_ascii_whitespace() {
-                    k += 1;
-                }
-                if k < bytes.len() && bytes[k] == b'=' {
-                    return true;
-                }
-            }
+            return false;
         }
-        i += 1;
+        let Some((raw_property, raw_value)) = declaration.split_once(':') else {
+            return false;
+        };
+        let property = raw_property.trim();
+        let value = raw_value.trim();
+        if !EMAIL_STYLE_PROPERTIES.contains(&property) || !seen.insert(property) {
+            return false;
+        }
+        if !is_safe_style_value(property, value) {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_safe_style_value(property: &str, value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    match property {
+        "color" => safe_text_color(&lower),
+        "background-color" => safe_color(&lower),
+        "font-size" => safe_font_size(&lower),
+        "font-weight" => {
+            matches!(lower.as_str(), "normal" | "bold" | "bolder" | "lighter")
+                || lower
+                    .parse::<u16>()
+                    .is_ok_and(|weight| (100..=900).contains(&weight) && weight % 100 == 0)
+        }
+        "font-family" => safe_font_family(&lower),
+        "text-align" => matches!(
+            lower.as_str(),
+            "left" | "right" | "center" | "justify" | "start" | "end"
+        ),
+        "line-height" => {
+            lower != "0"
+                && (lower == "normal"
+                    || parse_decimal(&lower).is_some_and(|n| (0.75..=3.5).contains(&n))
+                    || safe_length(&lower, 64.0, 300.0, 8.0))
+        }
+        "padding" => safe_box_lengths(&lower, false, 64.0, 100.0, 8.0),
+        "margin" => safe_box_lengths(&lower, true, 64.0, 100.0, 8.0),
+        "border" => safe_border(&lower),
+        "border-radius" => safe_box_lengths(&lower, false, 32.0, 50.0, 8.0),
+        "width" | "max-width" => lower != "0" && safe_length(&lower, 1200.0, 100.0, 100.0),
+        "text-decoration" => matches!(lower.as_str(), "none" | "underline"),
+        "display" => matches!(lower.as_str(), "inline" | "inline-block" | "block"),
+        "border-collapse" => matches!(lower.as_str(), "collapse" | "separate"),
+        "border-spacing" => safe_border_spacing(&lower),
+        "vertical-align" => matches!(
+            lower.as_str(),
+            "baseline" | "top" | "middle" | "bottom" | "text-top" | "text-bottom"
+        ),
+        "table-layout" => matches!(lower.as_str(), "auto" | "fixed"),
+        _ => false,
+    }
+}
+
+fn parse_decimal(value: &str) -> Option<f64> {
+    if value.is_empty() || value.starts_with(['+', '-']) {
+        return None;
+    }
+    let mut decimal_points = 0;
+    let mut digits = 0;
+    for character in value.chars() {
+        match character {
+            '0'..='9' => digits += 1,
+            '.' => decimal_points += 1,
+            _ => return None,
+        }
+    }
+    if digits == 0 || decimal_points > 1 {
+        return None;
+    }
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+}
+
+fn safe_font_size(value: &str) -> bool {
+    let unit_start = value
+        .find(|character: char| character.is_ascii_alphabetic() || character == '%')
+        .unwrap_or(value.len());
+    let Some(size) = parse_decimal(&value[..unit_start]) else {
+        return false;
+    };
+    let unit = &value[unit_start..];
+    match unit {
+        "px" => (8.0..=72.0).contains(&size),
+        "pt" => (6.0..=54.0).contains(&size),
+        // Relative font sizes can shrink repeatedly through nested elements,
+        // so they are excluded from this authoring subset.
+        _ => false,
+    }
+}
+
+fn safe_length(value: &str, max_px: f64, max_percent: f64, max_em: f64) -> bool {
+    if value == "0" {
+        return true;
+    }
+    let unit_start = value
+        .find(|character: char| character.is_ascii_alphabetic() || character == '%')
+        .unwrap_or(value.len());
+    let Some(number) = parse_decimal(&value[..unit_start]) else {
+        return false;
+    };
+    if number <= 0.0 {
+        return false;
+    }
+    let unit = &value[unit_start..];
+    match unit {
+        "px" => number <= max_px,
+        "pt" => number <= max_px * 0.75,
+        "em" | "rem" => number <= max_em,
+        "%" => max_percent > 0.0 && number <= max_percent,
+        _ => false,
+    }
+}
+
+fn safe_box_lengths(
+    value: &str,
+    allow_auto: bool,
+    max_px: f64,
+    max_percent: f64,
+    max_em: f64,
+) -> bool {
+    let values: Vec<_> = value.split_ascii_whitespace().collect();
+    (1..=4).contains(&values.len())
+        && values.iter().all(|value| {
+            (*value == "auto" && allow_auto) || safe_length(value, max_px, max_percent, max_em)
+        })
+}
+
+fn safe_border_spacing(value: &str) -> bool {
+    let values: Vec<_> = value.split_ascii_whitespace().collect();
+    (1..=2).contains(&values.len())
+        && values
+            .iter()
+            .all(|value| safe_length(value, 32.0, 0.0, 8.0))
+}
+
+fn safe_border(value: &str) -> bool {
+    let mut width = false;
+    let mut style = false;
+    let mut color = false;
+    for part in value.split_ascii_whitespace() {
+        if !width && safe_length(part, 8.0, 0.0, 1.0) {
+            width = true;
+        } else if !style && matches!(part, "none" | "solid" | "dashed" | "dotted" | "double") {
+            style = true;
+        } else if !color && safe_simple_color(part) {
+            color = true;
+        } else {
+            return false;
+        }
+    }
+    width || style || color
+}
+
+fn safe_color(value: &str) -> bool {
+    if safe_simple_color(value) {
+        return true;
+    }
+    if let Some(args) = value.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
+        let parts: Vec<_> = args.split(',').map(str::trim).collect();
+        return parts.len() == 3 && parts.iter().all(|part| safe_rgb_channel(part));
+    }
+    if let Some(args) = value
+        .strip_prefix("rgba(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<_> = args.split(',').map(str::trim).collect();
+        return parts.len() == 4
+            && parts[..3].iter().all(|part| safe_rgb_channel(part))
+            && safe_alpha(parts[3]);
     }
     false
+}
+
+fn safe_text_color(value: &str) -> bool {
+    if value == "transparent" {
+        return false;
+    }
+    if let Some(hex) = value.strip_prefix('#') {
+        if !hex.chars().all(|character| character.is_ascii_hexdigit()) {
+            return false;
+        }
+        return match hex.len() {
+            3 | 6 => true,
+            4 => hex.chars().last().is_some_and(|alpha| alpha >= 'c'),
+            8 => u8::from_str_radix(&hex[6..], 16).is_ok_and(|alpha| alpha >= 0xcc),
+            _ => false,
+        };
+    }
+    if let Some(args) = value
+        .strip_prefix("rgba(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<_> = args.split(',').map(str::trim).collect();
+        return parts.len() == 4
+            && parts[..3].iter().all(|part| safe_rgb_channel(part))
+            && visible_foreground_alpha(parts[3]);
+    }
+    safe_color(value)
+}
+
+fn visible_foreground_alpha(value: &str) -> bool {
+    if let Some(percent) = value.strip_suffix('%') {
+        return parse_decimal(percent).is_some_and(|alpha| (80.0..=100.0).contains(&alpha));
+    }
+    parse_decimal(value).is_some_and(|alpha| (0.8..=1.0).contains(&alpha))
+}
+
+fn safe_simple_color(value: &str) -> bool {
+    const COLOR_NAMES: &[&str] = &[
+        "aqua",
+        "black",
+        "blue",
+        "brown",
+        "fuchsia",
+        "gray",
+        "green",
+        "lime",
+        "maroon",
+        "navy",
+        "olive",
+        "orange",
+        "purple",
+        "rebeccapurple",
+        "red",
+        "silver",
+        "teal",
+        "transparent",
+        "white",
+        "yellow",
+    ];
+    if COLOR_NAMES.contains(&value) {
+        return true;
+    }
+    value.strip_prefix('#').is_some_and(|hex| {
+        matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
+fn safe_rgb_channel(value: &str) -> bool {
+    if let Some(percent) = value.strip_suffix('%') {
+        return parse_decimal(percent).is_some_and(|number| (0.0..=100.0).contains(&number));
+    }
+    parse_decimal(value).is_some_and(|number| (0.0..=255.0).contains(&number))
+}
+
+fn safe_alpha(value: &str) -> bool {
+    parse_alpha(value).is_some()
+}
+
+fn parse_alpha(value: &str) -> Option<f64> {
+    if let Some(percent) = value.strip_suffix('%') {
+        return parse_decimal(percent).filter(|number| (0.0..=100.0).contains(number));
+    }
+    parse_decimal(value).filter(|number| (0.0..=1.0).contains(number))
+}
+
+fn safe_font_family(value: &str) -> bool {
+    const FONT_FAMILIES: &[&str] = &[
+        "arial",
+        "apple sd gothic neo",
+        "courier new",
+        "georgia",
+        "helvetica",
+        "lato",
+        "malgun gothic",
+        "monospace",
+        "noto sans",
+        "noto sans kr",
+        "open sans",
+        "roboto",
+        "sans-serif",
+        "serif",
+        "segoe ui",
+        "system-ui",
+        "tahoma",
+        "times new roman",
+        "trebuchet ms",
+        "verdana",
+    ];
+    value.split(',').all(|family| {
+        let family = family.trim();
+        let family = family
+            .strip_prefix('\'')
+            .and_then(|inner| inner.strip_suffix('\''))
+            .or_else(|| {
+                family
+                    .strip_prefix('"')
+                    .and_then(|inner| inner.strip_suffix('"'))
+            })
+            .unwrap_or(family);
+        let normalized = family
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        FONT_FAMILIES.contains(&normalized.as_str())
+    })
+}
+
+fn safe_email_href(value: &str, allow_template_placeholder: bool) -> bool {
+    if value.contains(['{', '}']) {
+        return allow_template_placeholder && is_template_url_placeholder(value);
+    }
+    if value.is_empty()
+        || value.chars().any(|character| {
+            character.is_whitespace() || character.is_control() || character == '\\'
+        })
+    {
+        return false;
+    }
+    match ammonia::Url::parse(value) {
+        Ok(url) => matches!(url.scheme(), "http" | "https" | "mailto"),
+        Err(ammonia::url::ParseError::RelativeUrlWithoutBase) => true,
+        Err(_) => false,
+    }
+}
+
+fn is_template_url_placeholder(value: &str) -> bool {
+    let value = value.trim();
+    value
+        .strip_prefix("{{")
+        .and_then(|inner| inner.strip_suffix("}}"))
+        .is_some_and(|name| valid_var_name(name.trim()))
+}
+
+/// §8.1 dangerous HTML validation. Ammonia parses the HTML5 fragment and
+/// passes decoded attributes to the callback, so entity/comment/tag tricks do
+/// not bypass the event, URL, or style checks. Valid standalone URL placeholders
+/// are allowed here because template rendering substitutes them server-side;
+/// [`sanitize_email_html`] rejects any placeholder that remains afterward.
+pub fn is_dangerous_html(html: &str) -> bool {
+    html_has_dangerous_constructs(html, true)
+}
+
+fn html_has_dangerous_constructs(html: &str, allow_template_url_placeholders: bool) -> bool {
+    let invalid = Arc::new(AtomicBool::new(false));
+    let invalid_attr = invalid.clone();
+    let mut parser = ammonia::Builder::default();
+    parser
+        .clean_content_tags(HashSet::new())
+        .add_generic_attributes(&["style", "data-template-unsafe", "src", "srcset", "srcdoc"])
+        .generic_attribute_prefixes(["on"].into_iter().collect())
+        .url_schemes(
+            [
+                "http",
+                "https",
+                "mailto",
+                "javascript",
+                "data",
+                "vbscript",
+                "file",
+                "ftp",
+            ]
+            .into_iter()
+            .collect(),
+        );
+    for tag in DANGEROUS_EMAIL_TAGS {
+        parser
+            .add_tags([tag])
+            .set_tag_attribute_value(tag, "data-template-unsafe", "1");
+    }
+    parser.attribute_filter(move |tag, name, value| {
+        if DANGEROUS_EMAIL_TAGS.contains(&tag)
+            || name == "data-template-unsafe"
+            || name.starts_with("on")
+            || tag == "img"
+            || name == "srcset"
+            || name == "src"
+            || name == "srcdoc"
+        {
+            invalid_attr.store(true, Ordering::Relaxed);
+            return None;
+        }
+        if name == "style" && !is_safe_inline_style(value) {
+            invalid_attr.store(true, Ordering::Relaxed);
+            return None;
+        }
+        if name == "href" && !safe_email_href(value, allow_template_url_placeholders) {
+            invalid_attr.store(true, Ordering::Relaxed);
+            return None;
+        }
+        Some(Cow::Borrowed(value))
+    });
+    let _parsed = parser.clean(html);
+    invalid.load(Ordering::Relaxed)
 }
 
 /// Reject CR/LF in fields that end up in message headers (§8.1 "헤더 줄바꿈").
@@ -550,6 +1019,7 @@ mod tests {
                 "company.name": {"type": "string", "maxLength": 300},
                 "contact.name": {"type": "string", "maxLength": 300},
                 "meeting.booking_url": {"type": "string", "format": "uri"},
+                "compliance.unsubscribe_url": {"type": "string", "format": "uri"},
                 "custom.url": {"type": "string", "format": "uri"},
                 "opt": {"type": "string", "default": "d"}
             },
@@ -585,6 +1055,137 @@ mod tests {
         assert_eq!(r.subject, "안내 A&B <Co>");
         assert_eq!(r.body_text, "Hi Kim \"x\" d");
         assert_eq!(r.body_html.as_deref(), Some("<p>A&amp;B &lt;Co&gt;</p>"));
+    }
+
+    #[test]
+    fn render_preserves_safe_cta_and_table_inline_styles() {
+        let vars = serde_json::Map::from_iter([
+            ("company.name".into(), json!("Northwind")),
+            ("contact.name".into(), json!("Ari")),
+        ]);
+        let html = r##"<table style="width:100%;max-width:600px;margin:0 auto;border-collapse:collapse"><tr><td style="background-color:#f3f4f6;padding:24px"><p>Hello {{contact.name}} at {{company.name}}</p><a href="{{ meeting.booking_url }}" style="display:inline-block;background-color:#171717;color:rgb(255, 255, 255);font-size:16px;font-weight:600;font-family:'Arial',sans-serif;text-align:center;line-height:1.5;padding:12px 24px;border:1px solid #171717;border-radius:4px;text-decoration:none">Review offer</a><a href="{{ compliance.unsubscribe_url }}">Unsubscribe</a></td></tr></table>"##;
+        let system_values = BTreeMap::from_iter([
+            (
+                "meeting.booking_url".into(),
+                "https://book.example/cta".into(),
+            ),
+            (
+                "compliance.unsubscribe_url".into(),
+                "https://mail.example/unsubscribe".into(),
+            ),
+        ]);
+        let rendered = render(&specs(), "s", "body", Some(html), &vars, &system_values)
+            .expect("safe styled email HTML should render");
+        let output = rendered.body_html.unwrap();
+        assert!(output.contains("<table"), "{output}");
+        assert!(output.contains("max-width:600px"), "{output}");
+        assert!(output.contains("background-color:#171717"), "{output}");
+        assert!(output.contains("color:rgb("), "{output}");
+        assert!(output.contains("display:inline-block"), "{output}");
+        assert!(output.contains("padding:12px 24px"), "{output}");
+        assert!(output.contains("border-radius:4px"), "{output}");
+        assert!(output.contains("text-decoration:none"), "{output}");
+        assert!(
+            output.contains("href=\"https://book.example/cta\""),
+            "{output}"
+        );
+        assert!(
+            output.contains("href=\"https://mail.example/unsubscribe\""),
+            "{output}"
+        );
+        assert!(output.contains("Hello Ari at Northwind"), "{output}");
+    }
+
+    #[test]
+    fn template_url_placeholders_are_only_allowed_before_rendering() {
+        let template = "<a href=\"{{ meeting.booking_url }}\">Book</a>";
+        assert!(!is_dangerous_html(template));
+        assert!(!is_dangerous_html(
+            "<a href=\"{{meeting.booking_url}}\">Book</a>"
+        ));
+        assert!(is_dangerous_html(
+            "<a href=\"https://example.invalid/{{meeting.booking_url}}\">Book</a>"
+        ));
+        assert_eq!(
+            sanitize_email_html(template),
+            Err(TemplateError::DangerousHtml)
+        );
+        let entity_encoded = "<a href=\"&#123;&#123; meeting.booking_url &#125;&#125;\">Book</a>";
+        assert_eq!(
+            sanitize_email_html(entity_encoded),
+            Err(TemplateError::DangerousHtml)
+        );
+        for unresolved in [
+            "<a href=\"{{meeting.booking_url}}\">Book</a>",
+            "<a href=\"https://example.invalid/{{meeting.booking_url}}\">Book</a>",
+            "<a href=\"{{meeting.booking_url}}/extra\">Book</a>",
+        ] {
+            assert_eq!(
+                sanitize_email_html(unresolved),
+                Err(TemplateError::DangerousHtml),
+                "sanitizer accepted unresolved href {unresolved}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_rejects_unsafe_or_unknown_css_without_parser_bypasses() {
+        let vars = serde_json::Map::from_iter([
+            ("company.name".into(), json!("Northwind")),
+            ("contact.name".into(), json!("Ari")),
+        ]);
+        for html in [
+            "<style>.x { color: red }</style><p>x</p>",
+            "<script>alert(1)</script><p>x</p>",
+            "<p onclick=\"alert(1)\">x</p>",
+            "<div srcdoc=\"<script>alert(1)</script>\">x</div>",
+            "<p style=\"color:red;position:fixed\">x</p>",
+            "<p style=\"display:none\">x</p>",
+            "<p style=\"font-size:0\">x</p>",
+            "<p style=\"line-height:0\">x</p>",
+            "<p style=\"color:transparent\">x</p>",
+            "<p style=\"color:rgba(255,255,255,0)\">x</p>",
+            "<p style=\"behavior:url(#default#vml)\">x</p>",
+            "<p style=\"color:url(javascript:alert(1))\">x</p>",
+            "<p style=\"color:expression(alert(1))\">x</p>",
+            "<p style=\"@import url(javascript:alert(1))\">x</p>",
+            "<p style=\"background-image:url(javascript:alert(1))\">x</p>",
+            "<p style=\"color:red;unknown-property:value\">x</p>",
+            r#"<p style="color:r\65 d">x</p>"#,
+            "<p style=\"color:red/**/;background-color:#fff\">x</p>",
+            "<p style=\"background-color:&#x6a;avascript:alert(1)\">x</p>",
+        ] {
+            let error =
+                render(&specs(), "s", "body", Some(html), &vars, &BTreeMap::new()).expect_err(html);
+            assert_eq!(error, TemplateError::DangerousHtml, "{html}");
+        }
+    }
+
+    #[test]
+    fn rejects_hidden_font_sizes_and_translucent_foreground_colors() {
+        for html in [
+            "<p style=\"font-size:0.01px\">x</p>",
+            "<p style=\"font-size:0.1em\">x</p>",
+            "<p style=\"font-size:7.99px\">x</p>",
+            "<p style=\"font-size:5.99pt\">x</p>",
+            "<p style=\"color:#fff0\">x</p>",
+            "<p style=\"color:#ffffff00\">x</p>",
+            "<p style=\"color:#ffffff01\">x</p>",
+            "<p style=\"color:#ffffffcb\">x</p>",
+            "<p style=\"color:#ffffff80\">x</p>",
+            "<p style=\"color:rgba(255,255,255,79%)\">x</p>",
+        ] {
+            assert!(is_dangerous_html(html), "guard accepted {html}");
+            assert_eq!(
+                sanitize_email_html(html),
+                Err(TemplateError::DangerousHtml),
+                "sanitizer accepted {html}"
+            );
+        }
+        assert!(is_safe_inline_style("font-size:8px;color:#ffffffcc"));
+        assert!(is_safe_inline_style(
+            "font-size:6pt;color:rgba(255,255,255,80%)"
+        ));
     }
 
     #[test]

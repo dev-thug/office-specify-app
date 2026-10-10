@@ -145,7 +145,7 @@ async fn audit_denied_decision(
     params(("id" = Uuid, Path, description = "Approval request id")),
     request_body = CreateDecisionRequest,
     responses(
-        (status = 200, description = "Decision recorded; side effect queued when approved", body = DecisionResponse),
+        (status = 200, description = "Decision recorded; approval may require a separate explicit execution action", body = DecisionResponse),
         (status = 403, description = "Agent / non-approver / self-approval", body = Problem),
         (status = 404, description = "Request not found", body = Problem),
         (status = 409, description = "Expired / snapshot mismatch / already decided / key reused", body = Problem),

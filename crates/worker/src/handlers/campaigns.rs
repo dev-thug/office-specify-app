@@ -74,6 +74,10 @@ impl JobHandler for FreezeLaunch {
             .get("variables")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
+        let tracking_requested = payload
+            .get("tracking_requested")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         let requester_context = payload
             .get("requester_context")
             .cloned()
@@ -86,6 +90,7 @@ impl JobHandler for FreezeLaunch {
             launch_id,
             &ids,
             &variables,
+            tracking_requested,
             &requester_context,
         )
         .await

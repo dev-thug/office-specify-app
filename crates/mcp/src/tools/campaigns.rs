@@ -3,9 +3,9 @@
 
 use crate::{ToolDef, arguments, result, tool_with_db};
 use contracts::campaigns::{
-    CampaignStepInput, CreateCampaignRequest, CreateCampaignResponse,
-    LaunchApprovalRequestResponse, LaunchSummary, PreflightRequest, PreflightResponse,
-    ScheduleRulesInput,
+    CampaignLaunchStatus, CampaignStepInput, CreateCampaignRequest, CreateCampaignResponse,
+    ExecuteLaunchRequest, ExecuteLaunchResponse, LaunchApprovalRequestResponse, LaunchSummary,
+    PreflightRequest, PreflightResponse, ScheduleRulesInput,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -47,6 +47,21 @@ struct CampaignRequestLaunchInput {
     launch_id: Uuid,
     expected_manifest_hash: String,
     reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CampaignSubmitApprovedInput {
+    idempotency_key: String,
+    launch_id: Uuid,
+    expected_manifest_hash: String,
+    expected_version: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CampaignGetLaunchInput {
+    launch_id: Uuid,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -191,6 +206,68 @@ pub fn tools() -> Vec<ToolDef> {
             },
         ),
         tool_with_db(
+            "campaign_submit_approved",
+            "Queue activation of one human-approved frozen campaign manifest. Requires the narrow campaign.submit_approved scope plus a current campaign mailbox compose or send grant; does not approve or directly send messages.",
+            serde_json::to_value(schemars::schema_for!(CampaignSubmitApprovedInput))
+                .expect("schema serializes"),
+            serde_json::to_value(schemars::schema_for!(ExecuteLaunchResponse))
+                .expect("schema serializes"),
+            true,
+            |db, ctx, value| async move {
+                let input = arguments::<CampaignSubmitApprovedInput>(value)?;
+                let request = ExecuteLaunchRequest {
+                    expected_manifest_hash: input.expected_manifest_hash,
+                    expected_version: input.expected_version,
+                };
+                let request_hash = infrastructure::crypto::sha256_bytes(
+                    &serde_json::to_vec(&serde_json::json!({
+                        "launch_id": input.launch_id,
+                        "body": &request,
+                    }))
+                    .unwrap_or_default(),
+                );
+                let launch_id = input.launch_id;
+                let scope = scope(
+                    &ctx,
+                    "MCP tools/call campaign_submit_approved",
+                    input.idempotency_key,
+                );
+                let outcome =
+                    infrastructure::idempotency::run(&db, &scope, &request_hash, |mut tx| {
+                        let ctx = ctx.clone();
+                        let request = request;
+                        async move {
+                            let body = application::campaigns::execute_launch(
+                                &mut tx, &ctx, launch_id, &request,
+                            )
+                            .await?;
+                            Ok((
+                                tx,
+                                infrastructure::idempotency::Stored { status: 202, body },
+                            ))
+                        }
+                    })
+                    .await?
+                    .into_inner();
+                result(outcome.body)
+            },
+        ),
+        tool_with_db(
+            "campaign_get_launch",
+            "Read a safe campaign launch summary, execution status, enrollment IDs, and counts. Requires current campaign mailbox read access and campaign.compose for credential callers; message bodies and recipient addresses are omitted.",
+            serde_json::to_value(schemars::schema_for!(CampaignGetLaunchInput))
+                .expect("schema serializes"),
+            serde_json::to_value(schemars::schema_for!(CampaignLaunchStatus))
+                .expect("schema serializes"),
+            false,
+            |db, ctx, value| async move {
+                let input = arguments::<CampaignGetLaunchInput>(value)?;
+                let status =
+                    application::campaigns::get_launch_status(&db, &ctx, input.launch_id).await?;
+                result(status)
+            },
+        ),
+        tool_with_db(
             "campaign_pause",
             "Pause one campaign launch so future scheduled sends stop. Requires campaign.pause scope or campaign ownership/admin rights; any in-flight submission remains separately tracked.",
             serde_json::to_value(schemars::schema_for!(CampaignPauseInput))
@@ -252,12 +329,14 @@ mod tests {
                 "campaign_create_draft",
                 "campaign_preflight",
                 "campaign_request_launch",
+                "campaign_submit_approved",
+                "campaign_get_launch",
                 "campaign_pause",
             ]
         );
         for tool in tools
             .iter()
-            .filter(|tool| tool.name != "campaign_preflight")
+            .filter(|tool| tool.name != "campaign_preflight" && tool.name != "campaign_get_launch")
         {
             assert!(tool.input_schema["additionalProperties"] == false);
             assert!(
@@ -268,5 +347,40 @@ mod tests {
                     .any(|v| v == "idempotency_key")
             );
         }
+    }
+
+    #[test]
+    fn approved_submit_is_mutating_and_status_is_safe_read_only() {
+        let tools = tools();
+        let submit = tools
+            .iter()
+            .find(|tool| tool.name == "campaign_submit_approved")
+            .unwrap();
+        assert!(submit.external_effect);
+        for field in [
+            "idempotency_key",
+            "launch_id",
+            "expected_manifest_hash",
+            "expected_version",
+        ] {
+            assert!(
+                submit.input_schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|required| required == field),
+                "campaign_submit_approved must require {field}"
+            );
+        }
+
+        let status = tools
+            .iter()
+            .find(|tool| tool.name == "campaign_get_launch")
+            .unwrap();
+        assert!(!status.external_effect);
+        assert_eq!(
+            status.input_schema["required"].as_array().unwrap(),
+            &[serde_json::json!("launch_id")]
+        );
     }
 }

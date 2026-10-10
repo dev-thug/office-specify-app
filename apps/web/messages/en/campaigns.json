@@ -220,7 +220,62 @@
     "enrollmentStatus": "Status",
     "enrollmentNext": "Next send",
     "enrollmentStopReason": "Stop reason",
-    "versionFrozen": "Steps and recipients of a frozen parent cannot change."
+    "versionFrozen": "Steps and recipients of a frozen parent cannot change.",
+    "payloadHash": "Snapshot hash",
+    "enrollmentCounts": {
+      "total": "Total",
+      "pending": "Pending",
+      "active": "Active",
+      "completed": "Completed",
+      "stopped": "Stopped",
+      "suppressed": "Suppressed"
+    },
+    "execution": {
+      "title": "Launch execution",
+      "launchStatusLabel": "Launch status",
+      "executionStatusLabel": "Execution status",
+      "jobId": "Activation job",
+      "launchStatuses": {
+        "approved": "Approved",
+        "running": "Running",
+        "paused": "Paused",
+        "completed": "Completed",
+        "canceled": "Canceled",
+        "awaiting_approval": "Awaiting approval",
+        "frozen": "Frozen",
+        "building": "Building"
+      },
+      "statuses": {
+        "not_ready": "Not ready",
+        "ready": "Ready to execute",
+        "queued": "Queued",
+        "running": "Starting",
+        "activated": "Started",
+        "failed": "Failed",
+        "canceled": "Canceled"
+      },
+      "readyDescription": "Approval is recorded. A separate human action starts this launch.",
+      "queuedDescription": "The worker queued job {job_id}. Launch status remains approved until activation.",
+      "runningDescription": "Activation job {job_id} is running.",
+      "activatedDescription": "The worker activated this launch.",
+      "failedDescription": "Launch execution failed. Review the latest status before trying again.",
+      "canceledDescription": "Launch execution was canceled.",
+      "permissionDenied": "You do not have permission to execute this launch.",
+      "notReady": "This launch is not ready to execute.",
+      "executeAction": "Execute approved launch",
+      "dialogTitle": "Start this approved launch?",
+      "dialogDescription": "This separate human action queues the launch for {count} recipients.",
+      "recipients": "Recipients",
+      "manifestHash": "Approved manifest",
+      "version": "Launch version",
+      "confirmExecute": "Confirm launch",
+      "executing": "Queueing launch…",
+      "cancel": "Cancel",
+      "loading": "Loading launch execution status…",
+      "loadFailed": "Could not load launch execution status.",
+      "requestFailed": "Could not start the launch. Refresh status before trying again.",
+      "jobPending": "pending"
+    }
   },
   "channelGate": {
     "title": "Delivery channel is blocked",

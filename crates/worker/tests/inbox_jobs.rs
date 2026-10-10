@@ -79,6 +79,7 @@ async fn store_webhook_event(
 async fn runner(db: &infrastructure::db::Db, fake: &Arc<FakeMailProvider>) -> Runner {
     let context = worker::WorkerContext {
         db: db.clone(),
+        config: Arc::new(infrastructure::config::Config::test()),
         mail: fake.clone(),
         delivery: Arc::new(FakeDeliveryProvider::new()),
         calendar: fake.clone(),

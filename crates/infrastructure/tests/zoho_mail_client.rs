@@ -279,6 +279,36 @@ async fn search_query_is_encoded_and_provider_message_details_and_content_are_no
 }
 
 #[tokio::test]
+async fn message_headers_uses_documented_raw_header_endpoint() {
+    let (client, state, _) = mock_client([(
+        "GET /api/accounts/123/folders/9000000000905/messages/9000000019029/header"
+            .to_string(),
+        MockResponse::json(ok(json!({
+            "messageId": "9000000019029",
+            "headerContent": "Message-ID: <reply@sender.example>\r\nReferences: <one@office.example> <two@office.example>\r\n"
+        }))),
+    )])
+    .await;
+
+    let headers = client
+        .message_headers("123", "9000000000905", "9000000019029")
+        .await
+        .unwrap();
+
+    assert!(
+        headers
+            .header_content
+            .contains("Message-ID: <reply@sender.example>")
+    );
+    let requests = state.requests.lock().unwrap();
+    assert_eq!(
+        requests[0].uri.path(),
+        "/api/accounts/123/folders/9000000000905/messages/9000000019029/header"
+    );
+    assert!(requests[0].uri.query().unwrap().contains("raw=true"));
+}
+
+#[tokio::test]
 async fn send_uses_official_payload_and_returns_provider_message_id() {
     let (client, state, _) = mock_client([(
         "POST /api/accounts/123/messages".to_string(),

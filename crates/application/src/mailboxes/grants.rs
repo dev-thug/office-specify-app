@@ -4,8 +4,9 @@
 //! `If-None-Match: *` (concurrent creators → 412), updates use
 //! `If-Match: <grant version>`. The DDL CHECK chain is pre-validated in
 //! `domain::mailboxes`; `can_approve` requires an Admin/Manager target;
-//! agents can never receive `can_send`/`can_approve` (T03 territory —
-//! denied attempts are audited). Every change bumps the target's
+//! agents may receive `can_send` only as a mailbox prerequisite for the
+//! approved-submit path and can never receive `can_approve`. Direct agent
+//! send remains forbidden. Every change bumps the target's
 //! `permission_version` (§5.5) so cached permissions invalidate.
 
 use contracts::AppError;
@@ -137,12 +138,14 @@ pub async fn put_grant(
         .await?
         .ok_or_else(|| AppError::not_found("principal not found"))?;
 
-    // Agent principals can never hold send/approve (§5.4, B.3.2 policy).
-    if target.kind == "agent" && (req.can_send || req.can_approve) {
+    // Approved-submit separately checks human approval and the narrow
+    // mail.submit_approved scope. A can_send grant does not authorize the
+    // direct REST/mail.send path for agents.
+    if target.kind == "agent" && req.can_approve {
         let _ = tx.rollback().await;
         return Err(AppError::new(
             ErrorCode::AgentDirectSendForbidden,
-            "agents cannot receive can_send or can_approve",
+            "agents cannot receive can_approve",
         ));
     }
     // `can_approve` additionally requires Admin/Manager (§5.4).

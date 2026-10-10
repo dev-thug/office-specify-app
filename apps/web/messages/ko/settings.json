@@ -9,7 +9,7 @@
     "notFound": "대상을 찾을 수 없거나 접근할 수 없습니다.",
     "providerBlocked": "공급자 정책이 허용하지 않아 차단됐습니다.",
     "invalidCredentials": "현재 비밀번호가 올바르지 않습니다.",
-    "agentGrantForbidden": "에이전트에게 발송·승인 권한은 부여할 수 없습니다."
+    "agentGrantForbidden": "에이전트에게 승인 권한을 부여할 수 없습니다. 발송 권한은 사람이 승인한 메일로 제한됩니다."
   },
   "common": {
     "adminOnly": "Admin 권한이 필요합니다",
@@ -39,6 +39,11 @@
     "formTitle": "SMTP 연결 추가",
     "formDescription": "비밀번호는 서버에서 암호화되어 저장되며 다시 표시되지 않습니다. 창을 닫으면 입력값이 지워집니다.",
     "mailAccountRequired": "메일 계정을 선택하세요.",
+    "purpose": "연결 용도",
+    "purposes": {
+      "marketing": "마케팅",
+      "correspondence": "일반 답장 전용"
+    },
     "senderConfirmationRequired": "From 주소가 선택한 메일 계정에 등록되어 있는지 확인하세요.",
     "portInvalid": "1에서 65535 사이의 포트를 입력하세요.",
     "customHeadersInvalid": "사용할 수 있는 헤더 이름과 한 줄 문자열 값만 포함한 올바른 JSON을 입력하세요.",
@@ -70,7 +75,33 @@
     "disableTitle": "이 SMTP 연결을 사용 중지할까요?",
     "disableDescription": "{name} 연결을 캠페인 발송에 더 이상 사용할 수 없습니다.",
     "disabling": "사용 중지 중…",
-    "confirmDisable": "사용 중지 확인"
+    "confirmDisable": "사용 중지 확인",
+  "inbox": {
+    "title": "SMTP 받은편지함 동기화",
+    "credentialNotice": "받은편지함 동기화는 이 연결에 암호화되어 저장된 SMTP 인증 정보를 재사용합니다. 별도의 IMAP 비밀번호를 표시하거나 요청하지 않습니다.",
+    "enabled": "받은편지함 동기화 사용 중",
+    "disabled": "받은편지함 동기화 사용 중지",
+    "loading": "받은편지함 동기화 상태를 불러오는 중…",
+    "loadFailed": "받은편지함 동기화 상태를 불러오지 못했습니다.",
+    "retry": "다시 시도",
+    "host": "IMAP 호스트",
+    "hostPlaceholder": "imap.example.com",
+    "enable": "받은편지함 동기화 사용",
+    "serverSettings": "포트 {port}, 폴더 {folder}.",
+    "save": "받은편지함 설정 저장",
+    "saving": "저장 중…",
+    "importedMessages": "가져온 메시지 수",
+    "lastSuccess": "마지막 동기화 성공",
+    "nextSync": "다음 예약 동기화",
+    "cursor": "IMAP 커서 (UIDVALIDITY / UID)",
+    "advancedDiagnostics": "고급 동기화 진단 정보",
+    "bookmarkDescription": "증분 동기화를 이어서 처리할 위치를 기록하는 내부 IMAP 북마크입니다.",
+    "lastError": "마지막 동기화 오류: {code}",
+    "syncQueued": "받은편지함 수동 동기화 요청이 대기열에 등록되었습니다.",
+    "syncNow": "받은편지함 지금 동기화",
+    "syncing": "동기화 요청 중…",
+    "requestFailed": "받은편지함 동기화 설정을 변경하지 못했습니다. 다시 시도하세요."
+  }
   },
   "members": {
     "title": "멤버",
@@ -208,10 +239,11 @@
         "can_read": "읽기",
         "can_compose": "초안",
         "can_send": "발송",
+        "agentCanSend": "사람이 승인한 메일만 발송",
         "can_approve": "승인",
         "can_assign": "배정"
       },
-      "blockAgent": "에이전트는 발송·승인 권한을 가질 수 없습니다",
+      "blockAgent": "에이전트는 메일을 승인할 수 없습니다.",
       "blockRole": "승인 권한은 Admin·Manager에게만 부여할 수 있습니다",
       "addTitle": "주체 추가",
       "principal": "주체",

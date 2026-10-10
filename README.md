@@ -12,7 +12,9 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 - [Upgrade from retired Zoho Campaigns](docs/runbooks/local-development.md#upgrade-from-the-retired-zoho-campaigns-integration) — stop old services,
   clean obsolete provider secrets, migrate, and restart.
 - [SMTP setup](docs/runbooks/smtp.md) — configure Office-owned campaigns to send
-  through an authenticated SMTP relay.
+  through an authenticated SMTP relay, with optional opt-in IMAP inbox sync.
+- [MCP agent guide](docs/runbooks/mcp-agent-guide.md) — scoped agent access,
+  template authoring, inbox management, and separately approved submission.
 - [Zoho integration status](docs/design/zoho-integration-status.md) — current
   Zoho Mail and SMTP behavior, plus the retired Campaigns integration record.
 - [Local booking setup](docs/runbooks/local-booking.md) — set up the internal
@@ -27,10 +29,11 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 ## Features
 
 For agent integration, read the [MCP connection, company-research field mapping,
-and feature coverage guide](docs/runbooks/mcp-agent-guide.md). The server exposes
-31 tools for selected read, research, proposal, and draft workflows; it does
-**not** expose every UI/REST action. Its initialization instructions and input
-schemas explain record IDs, field destinations, examples, and human handoffs.
+and feature coverage guide](docs/runbooks/mcp-agent-guide.md). MCP exposes a
+scoped subset of read, research, template-authoring, inbox, and approved-submit
+workflows; it does **not** expose every UI/REST action. Its initialization
+instructions and input schemas explain record IDs, field destinations, examples,
+and human handoffs. The live `tools/list` response is authoritative.
 
 New to Office? Open **Usage guide** in the top bar for the setup-to-send flow
 and instructions for every menu. Hover or focus the question-mark icon beside
@@ -42,14 +45,22 @@ the same icon. Escape closes the instructions and returns focus to the button.
 | --- | --- |
 | CRM | Contact and company records, search, notes, activity, and CSV imports. |
 | Email content | One rendered email canvas with a toggle to HTML source, variable presets and schema, recipient preview, and reusable immutable template versions. |
-| Office campaigns | Contact selection, consent and suppression checks, preflight, human approval, and one-step dispatch through authenticated SMTP. Office records the campaign and handles its unsubscribe links locally; SMTP setup requires an active Office mail account. |
-| Inbox | Zoho Mail OAuth correspondence, kept separate from SMTP campaign transport. |
+| Office campaigns | Contact selection, consent and suppression checks, preflight, human approval, and explicit launch execution through authenticated SMTP. Approval alone does not queue campaign work. Office records the campaign and handles its unsubscribe links locally; SMTP setup requires an active Office mail account. |
+| Inbox | Received mail imported by Zoho Mail OAuth or all received `INBOX` mail through an explicitly enabled SMTP-profile IMAP monitor; local thread status and read state remain separate from provider flags. |
 | Meetings | Internal meeting types, host availability, booking links, and persisted booking, reschedule, and cancellation records. The local calendar does not use OAuth. |
 | Access and operations | Admin, Manager, Member, Agent, and System principals; mailbox grants; approvals; emergency stop; job and delivery status; audit records; and recovery runbooks. |
-| MCP | A Streamable HTTP endpoint with workspace-scoped service credentials and policy-checked tools for CRM research, proposals, drafts, bookings, and campaign workflows. Agents cannot directly submit arbitrary email or decide approvals. |
+| MCP | A Streamable HTTP endpoint with workspace-scoped service credentials and policy-checked tools for CRM research, template authoring, drafts, inbox management, and approved-message/campaign submission. Agents cannot decide approvals or use general mail-send or approval scopes. |
 
 Office keeps an explicit separation between preparing an action and carrying it
-out. Agent-created email stays a draft for human approval. Marketing sends are
+out. An agent-created sales message stays a draft until a human approves its
+exact snapshot. Approval records the decision but does not queue delivery; a
+later explicit `mail_submit_approved` call with the narrow
+`mail.submit_approved` scope can submit only that still-current approved
+snapshot. Campaign approval also requires a separate explicit
+`campaign_submit_approved` action with `campaign.submit_approved`; approval
+leaves the launch approved without a queued job. Agents cannot use `mail.send`
+or `mail.approve`. An agent mailbox `can_send` grant is only an ACL prerequisite
+for `mail_submit_approved`; it does not permit direct sending. Marketing sends are
 blocked unless current communication-basis evidence and sender/provider policy
 checks pass. Suppressed addresses are skipped. A send with an uncertain provider
 outcome remains `unknown` and is never resubmitted automatically. Office does
@@ -63,6 +74,11 @@ source. Switching modes preserves the content. Insert the provided variables
 and meeting button as needed, then use recipient preview to inspect sample
 values before saving. Saved versions are immutable; create another version to
 reuse and revise an existing one.
+
+Agents can also create a reusable template container and immutable version
+through MCP. The [template authoring runbook](docs/runbooks/mcp-template-authoring.md)
+covers the create → version → render → draft path. Creating or previewing a
+template does not create or send a message.
 
 Office generates the plain-text email alternative from the canvas. If an
 imported version already has a different plain-text alternative, the editor
@@ -185,6 +201,13 @@ the encrypted SecretStore. See the [SMTP runbook](docs/runbooks/smtp.md) and
 [database restore runbook](docs/runbooks/restore.md) before operating a
 deployment.
 
+Local link and tracking tests use `http://127.0.0.1:13000`; no public tunnel is
+needed. Gmail's image proxy cannot fetch a pixel from a loopback address, and
+image or link requests from deployed proxies and scanners are engagement
+requests, not proof that a person read the message. Use a reachable HTTPS
+deployment origin such as `https://office.specify.app` for recipient-facing
+links.
+
 The app and internal local calendar can run without OAuth. A fresh workspace
 has no Office mail account, and the supported way to provision one is
 **Settings → Mail accounts → Connect mailbox** through Zoho Mail OAuth. This
@@ -198,6 +221,10 @@ app, local calendar, or SMTP setup requires a public tunnel. For deployed
 recipient booking and unsubscribe links, `PUBLIC_BASE_URL` must use a reachable
 HTTPS origin. Do not treat mock or local SMTP acceptance as proof of inbox
 delivery, sender authentication, or live Zoho behavior.
+
+The optional SMTP-profile inbox monitor authenticates directly to the configured
+IMAP host; it does not require Zoho Mail OAuth or provision an Office mailbox.
+The SMTP profile must still be attached to an existing Office `mail_account_id`.
 
 ## Current boundaries
 

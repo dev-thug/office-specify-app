@@ -78,6 +78,49 @@ Keep the key stable, protect it with the deployment secret manager, and include
 the encrypted `SECRETS_FILE` in the protected backup plan. Development's fixed
 fallback key is only for local testing.
 
+## Optional IMAP inbox synchronization
+
+An SMTP profile can also import received messages from its bound Office mailbox.
+This monitor is **disabled by default** and must be explicitly enabled by an
+Admin under **Settings → Mail accounts → SMTP profile → Inbox sync**. The
+authenticated Admin API equivalent is `PUT /api/v1/smtp-connections/{id}/inbox`
+with `{ "enabled": true, "imap_host": "<provider IMAP hostname>" }`; disable
+it with `enabled: false`. Enabling it does not send mail or require Zoho Mail
+OAuth for IMAP authentication. The SMTP profile must already be attached to an
+existing Office `mail_account_id`; the monitor does not provision a mailbox
+record.
+
+The Admin supplies the IMAP host and enables synchronization. Office connects
+with implicit TLS on port 993, selects the fixed `INBOX` folder, and authenticates
+with the SMTP profile username and its existing encrypted password. No second
+password is saved or returned. The worker resolves the hostname and
+rejects private or loopback addresses before connecting; use the provider's
+public IMAP hostname.
+
+Synchronization reads the entire received INBOX, not just replies. It uses
+read-only IMAP `EXAMINE` and `BODY.PEEK[]`; it does not set or clear remote
+read flags. Office keeps an incremental UID cursor with the mailbox's
+`UIDVALIDITY`. If `UIDVALIDITY` changes, the cursor resets and Office replays
+messages through provider-ID deduplication. Each durable job handles one
+bounded ascending UID body page of at most 2 messages, subject to 512 KiB per
+message and 1 MiB per job. Backfill continues in delayed pages; after catch-up,
+the worker checks for new messages every 60 seconds. The IMAP monitor imports
+headers and text/HTML bodies; it does not download binary attachment originals.
+Messages at the body-size limit retain a visible truncation notice.
+
+Imported mail enters the same local inbox pipeline as other received mail and
+remains untrusted content. Replies attach to an outbound conversation only
+when message identifiers and sender checks establish the match; unrelated mail
+starts its own conversation. Inbound instructions never authorize an action or
+cause an automatic response. Disabling the monitor clears pending and future
+poll work. A page already running completes under the monitor lock before the
+disable takes effect.
+
+Check the SMTP profile's inbox-sync state and last-sync or last-error details
+separately from its SMTP delivery connection status. IMAP login succeeds or
+fails independently of campaign relay checks, and an enabled monitor does not
+change campaign delivery settings.
+
 ## Send an Office campaign
 
 1. Create or import the contacts in Office, and use the visual template canvas
@@ -90,11 +133,23 @@ fallback key is only for local testing.
    basis, suppression, channel policy, and the emergency stop. Marketing stays
    blocked when required consent/provider policy evidence is missing.
 4. Freeze the launch, review the exact recipient/content manifest, and obtain
-   the required human approval and final confirmation. A successful approval
-   records permission to proceed; it does not itself mean the relay accepted a
-   message.
-5. Keep the Office worker running with the same database and environment as
+   the required human approval. Approval leaves the launch in `approved` state
+   and does not create an activation job.
+5. After approval, explicitly execute the same approved launch. An authorized
+   human uses `POST /api/v1/campaign-launches/{id}/execute`; an MCP caller uses
+   `campaign_submit_approved` with `campaign.submit_approved`, the current
+   mailbox compose grant, and the launch ID, manifest hash, version, and
+   idempotency key. This queues activation once; it does not itself mean the
+   relay accepted any message. `campaign_get_launch` can read the safe summary
+   for a known launch ID and distinguish approved launch state from queued
+   execution state.
+6. Keep the Office worker running with the same database and environment as
    the API while dispatch jobs are processed.
+
+For an individual sales message prepared through MCP, use the separate
+approved-snapshot path: a human approves the message first, then an authorized
+caller explicitly invokes `mail_submit_approved` to queue that exact current
+snapshot. Approval by itself does not queue it. See the [MCP agent guide](mcp-agent-guide.md).
 
 Office does not send automatic follow-ups or drip steps. The current campaign
 route supports a one-step dispatch; scheduled follow-up automation is outside
@@ -145,6 +200,14 @@ header. Custom SMTP headers are limited to `X-Auto-Response-Suppress` and
 `X-Importance`; they cannot replace unsubscribe, correlation, or structural
 headers. The relay and recipient server can add or rewrite Return-Path,
 Received, DKIM, ARC, and Authentication-Results.
+
+The engagement endpoints use the configured public origin for links and the
+tracking pixel. With local `PUBLIC_BASE_URL=http://127.0.0.1:13000`, no public
+tunnel is needed for local work, but Gmail's image proxy cannot fetch a pixel
+from loopback. Deployed mail proxies and scanners can also request images or
+links; these are recorded as open-request or click-request events, not proof
+that a person read the message. For recipient testing, configure a reachable
+HTTPS origin such as `https://office.specify.app`.
 
 ## Delivery evidence and recovery
 

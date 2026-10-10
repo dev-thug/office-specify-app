@@ -102,6 +102,39 @@ pub async fn list_threads(
     repo::list_threads(tx, ctx.principal_id, filter, after, limit).await
 }
 
+/// Search message subject and plain-text content for MCP inbox discovery.
+/// The repository query only returns messages from mailboxes with a current
+/// `can_read` grant; this application boundary also requires `mail.read`.
+pub async fn search_messages(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    mail_account_id: Option<Uuid>,
+    query: &str,
+    after: Option<(DateTime<Utc>, Uuid)>,
+    limit: i64,
+) -> Result<Vec<repo::MessageSearchRow>, AppError> {
+    authz::require_scope(ctx, Scope::MailRead)?;
+    let normalized = query.trim();
+    if normalized.is_empty() || normalized.chars().count() > 200 {
+        return Err(AppError::validation(
+            "query must contain 1 to 200 characters",
+            vec![Violation {
+                field: "query".into(),
+                code: "out_of_range".into(),
+            }],
+        ));
+    }
+    repo::search_messages(
+        tx,
+        ctx.principal_id,
+        mail_account_id,
+        normalized,
+        after,
+        limit,
+    )
+    .await
+}
+
 pub fn to_summary(row: repo::ThreadListRow) -> ThreadSummary {
     summary(row)
 }
@@ -165,6 +198,7 @@ pub async fn get_thread(tx: &mut Tx<'_>, ctx: &Ctx, id: Uuid) -> Result<ThreadDe
         assigned_principal_id: thread.assigned_principal_id,
         status: ThreadStatus::parse(&thread.status).unwrap_or(ThreadStatus::Open),
         version: thread.version,
+        last_inbound_message_id: thread.last_inbound_message_id,
         my_last_read_at,
         updated_at: thread.updated_at,
         created_at: thread.created_at,
@@ -233,6 +267,30 @@ pub async fn set_assignment(
     }
 }
 
+/// Recheck assignment scope and mailbox capability before an idempotency
+/// replay returns a stored mutation response.
+pub async fn authorize_assignment(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    thread_id: Uuid,
+) -> Result<(), AppError> {
+    authz::require_scope(ctx, Scope::MailAssign)?;
+    thread_with_perm(tx, ctx, thread_id, MailboxPerm::Assign).await?;
+    Ok(())
+}
+
+/// Recheck local inbox-management scope and read capability before a cached
+/// status/read-state response is replayed.
+pub async fn authorize_management(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    thread_id: Uuid,
+) -> Result<(), AppError> {
+    authz::require_scope(ctx, Scope::MailManage)?;
+    thread_with_perm(tx, ctx, thread_id, MailboxPerm::Read).await?;
+    Ok(())
+}
+
 /// `PUT /email-threads/{id}/read-state` — caller's own mark only, monotonic
 /// (B.1.4). No If-Match (explicitly exempt).
 pub async fn set_read_state(
@@ -263,6 +321,33 @@ pub async fn set_read_state(
     })
 }
 
+/// MCP-local read/unread control. Unlike the human API's monotonic read
+/// position, marking unread clears only the authenticated caller's read row.
+pub async fn set_managed_read_state(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    thread_id: Uuid,
+    read: bool,
+) -> Result<Option<DateTime<Utc>>, AppError> {
+    authorize_management(tx, ctx, thread_id).await?;
+    let last_read_at = if read {
+        Some(repo::upsert_read_state(tx, thread_id, ctx.principal_id, Utc::now()).await?)
+    } else {
+        repo::clear_read_state(tx, thread_id, ctx.principal_id).await?;
+        None
+    };
+    let mut entry = AuditEntry::new(
+        ctx.principal_id,
+        "thread.read_state",
+        "email_thread",
+        ctx.request_id.clone(),
+    )
+    .with_target(thread_id);
+    entry.metadata = serde_json::json!({ "read": read });
+    audit::record(tx, entry).await?;
+    Ok(last_read_at)
+}
+
 /// `PATCH /email-threads/{id}` — status only, If-Match.
 pub async fn patch_status(
     tx: &mut Tx<'_>,
@@ -271,7 +356,29 @@ pub async fn patch_status(
     if_match: i64,
     req: &PatchThreadRequest,
 ) -> Result<ThreadMutationResponse, AppError> {
-    authz::require_scope(ctx, Scope::MailRead)?;
+    patch_status_with_scope(tx, ctx, thread_id, if_match, req, Scope::MailRead).await
+}
+
+/// Status changes initiated by MCP require the dedicated `mail.manage` scope.
+pub async fn manage_status(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    thread_id: Uuid,
+    if_match: i64,
+    req: &PatchThreadRequest,
+) -> Result<ThreadMutationResponse, AppError> {
+    patch_status_with_scope(tx, ctx, thread_id, if_match, req, Scope::MailManage).await
+}
+
+async fn patch_status_with_scope(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    thread_id: Uuid,
+    if_match: i64,
+    req: &PatchThreadRequest,
+    required_scope: Scope,
+) -> Result<ThreadMutationResponse, AppError> {
+    authz::require_scope(ctx, required_scope)?;
     let (thread, _) = thread_with_perm(tx, ctx, thread_id, MailboxPerm::Read).await?;
     match repo::set_status(tx, thread_id, if_match, req.status.as_str()).await? {
         Some(t) => {
@@ -341,6 +448,19 @@ pub async fn create_reply_draft(
         )
         .with_status(422));
     }
+    if req
+        .body_html
+        .as_deref()
+        .is_some_and(domain::templates::is_dangerous_html)
+    {
+        return Err(AppError::validation(
+            "body_html contains disallowed constructs",
+            vec![Violation {
+                field: "body_html".into(),
+                code: "DANGEROUS_HTML".into(),
+            }],
+        ));
+    }
     let visibility = req.visibility.as_deref().unwrap_or("private");
     if !matches!(visibility, "private" | "mailbox") {
         return Err(AppError::validation(
@@ -372,6 +492,11 @@ pub async fn create_reply_draft(
         ));
     };
 
+    let source_credential_id = match &ctx.auth {
+        contracts::AuthMethod::ServiceCredential { credential_id } => Some(*credential_id),
+        _ => None,
+    };
+
     // Subject: `Re:` the latest inbound subject (or the last message's).
     let subject = match thread.last_inbound_message_id {
         Some(id) => repo::get_message(tx, id)
@@ -392,6 +517,7 @@ pub async fn create_reply_draft(
         tx,
         thread.mail_account_id,
         ctx.principal_id,
+        source_credential_id,
         visibility,
         thread.id,
         thread.last_inbound_message_id,

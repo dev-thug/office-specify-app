@@ -349,7 +349,7 @@ export interface GrantBooleans {
 
 /**
  * PUT grants — 기존 행은 If-Match: "<version>", 첫 생성은 If-None-Match: * (B.3.2).
- * agent에게 can_send/can_approve 는 서버가 정책 위반으로 거절한다 — UI도 막는다.
+ * Agent can_send is only an ACL prerequisite for human-approved submission. Agents cannot approve or directly submit messages.
  */
 export function putMailAccountGrant(
   mailAccountId: string,

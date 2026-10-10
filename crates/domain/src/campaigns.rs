@@ -428,9 +428,32 @@ pub fn payload_bytes(
     body_text: &str,
     body_html: Option<&str>,
 ) -> Vec<u8> {
-    format!(
+    payload_bytes_with_context(from, to, subject, body_text, body_html, None, None)
+}
+
+/// Campaign payload hash input with immutable correspondence identifiers.
+/// `None` for both identifiers preserves the exact v1 input used by legacy
+/// frozen campaign outbounds.
+pub fn payload_bytes_with_context(
+    from: &str,
+    to: &str,
+    subject: &str,
+    body_text: &str,
+    body_html: Option<&str>,
+    thread_id: Option<&str>,
+    internet_message_id: Option<&str>,
+) -> Vec<u8> {
+    let legacy = format!(
         "payload/v1\nfrom:{from}\nto:{to}\nsubject:{subject}\ntext:{body_text}\nhtml:{}",
         body_html.unwrap_or("")
+    );
+    if thread_id.is_none() && internet_message_id.is_none() {
+        return legacy.into_bytes();
+    }
+    format!(
+        "{legacy}\nthread_id:{}\ninternet_message_id:{}",
+        thread_id.unwrap_or(""),
+        internet_message_id.unwrap_or("")
     )
     .into_bytes()
 }
@@ -672,5 +695,54 @@ mod tests {
         }];
         let m3 = manifest_bytes(a, b, a, &rules, exp, &r3);
         assert_ne!(m1, m3, "content change must change the manifest");
+    }
+
+    #[test]
+    fn campaign_payload_context_is_hashed_without_changing_legacy_none_context() {
+        let legacy = payload_bytes(
+            "from@example.test",
+            "to@example.test",
+            "subject",
+            "body",
+            None,
+        );
+        let expected_legacy =
+            b"payload/v1\nfrom:from@example.test\nto:to@example.test\nsubject:subject\ntext:body\nhtml:";
+        assert_eq!(legacy, expected_legacy);
+
+        let contextual = payload_bytes_with_context(
+            "from@example.test",
+            "to@example.test",
+            "subject",
+            "body",
+            None,
+            Some("thread-1"),
+            Some("<outbound-1@example.test>"),
+        );
+        assert_ne!(contextual, legacy);
+        assert_ne!(
+            contextual,
+            payload_bytes_with_context(
+                "from@example.test",
+                "to@example.test",
+                "subject",
+                "body",
+                None,
+                Some("thread-2"),
+                Some("<outbound-1@example.test>"),
+            )
+        );
+        assert_eq!(
+            payload_bytes_with_context(
+                "from@example.test",
+                "to@example.test",
+                "subject",
+                "body",
+                None,
+                None,
+                None,
+            ),
+            legacy
+        );
     }
 }

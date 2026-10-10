@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftIcon,
   ChevronDownIcon,
@@ -32,12 +32,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
   cancelLaunch,
+  executeCampaignLaunch,
   getCampaign,
   getCampaignLaunch,
   normalizeLaunch,
   pauseLaunch,
   requestLaunchApproval,
   type CampaignLaunch,
+  type CampaignLaunchDetail,
   type LaunchMessageSnapshot,
 } from "@/lib/api/campaigns";
 import { useDeliveryChannels, useMailAccounts } from "@/lib/api/settings";
@@ -678,6 +680,247 @@ function LaunchRow({
 }
 
 /** 실행 묶음 상세 — 고정된 발송 내용(messages)과 대상 실행 상태(enrollments). */
+export function CampaignLaunchExecutionControl({
+  launchId,
+  onExecuted,
+}: {
+  launchId: string;
+  onExecuted?: () => void | Promise<unknown>;
+}) {
+  const t = useTranslations("campaigns.detail.execution");
+  const queryClient = useQueryClient();
+  const executeKey = useIdempotencyKey();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const detail = useQuery({
+    queryKey: ["campaigns", "launch-execution", launchId],
+    queryFn: async () =>
+      normalizeLaunch((await getCampaignLaunch(launchId)).data),
+    retry: false,
+    refetchInterval: (query) =>
+      ["queued", "running"].includes(
+        query.state.data?.execution_status ?? ""
+      )
+        ? 2_000
+        : false,
+  });
+
+  const launch = detail.data;
+  const executionStatus = launch?.execution_status ?? "not_ready";
+  const canExecute = Boolean(
+    launch?.status === "approved" &&
+      executionStatus === "ready" &&
+      launch.allowed_actions?.includes("execute_launch")
+  );
+
+  const execute = useMutation({
+    mutationFn: () => {
+      if (!launch?.manifest_hash || !canExecute) {
+        throw new Error(t("notReady"));
+      }
+      return executeCampaignLaunch(
+        launch.id,
+        {
+          expected_manifest_hash: launch.manifest_hash,
+          expected_version: launch.version,
+        },
+        { idempotencyKey: executeKey.key() }
+      );
+    },
+    onSuccess: async (result) => {
+      executeKey.settle();
+      setActionError(null);
+      setConfirmOpen(false);
+      queryClient.setQueryData<CampaignLaunchDetail>(
+        ["campaigns", "launch-execution", launchId],
+        (current) =>
+          current
+            ? {
+                ...current,
+                status: result.data.launch_status,
+                execution_status: result.data.execution_status,
+                activation_job_id: result.data.job_id,
+                job_id: result.data.job_id,
+                version: result.data.version,
+                manifest_hash: result.data.manifest_hash,
+              }
+            : current
+      );
+      await Promise.all([
+        detail.refetch(),
+        queryClient.invalidateQueries({
+          queryKey: ["campaigns", "launch-detail", launchId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["campaigns", "detail"] }),
+      ]);
+      await onExecuted?.();
+    },
+    onError: (error) => {
+      executeKey.settle(error);
+      setActionError(t("requestFailed"));
+      void detail.refetch();
+    },
+  });
+
+  const launchStatusLabel = (status: string) =>
+    t.has(`launchStatuses.${status}`)
+      ? t(`launchStatuses.${status}`)
+      : status;
+  const executionStatusLabel = (status: string) =>
+    t.has(`statuses.${status}`) ? t(`statuses.${status}`) : status;
+
+  return (
+    <section
+      aria-label={t("title")}
+      className="grid gap-2 rounded-xl border border-border p-3"
+    >
+      <h3 className="text-sm font-medium">{t("title")}</h3>
+      {detail.isPending ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {t("loading")}
+        </p>
+      ) : detail.isError || !launch ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t("loadFailed")}
+        </p>
+      ) : (
+        <>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+            <dt className="text-muted-foreground">{t("launchStatusLabel")}</dt>
+            <dd>{launchStatusLabel(launch.status)}</dd>
+            <dt className="text-muted-foreground">{t("executionStatusLabel")}</dt>
+            <dd>{executionStatusLabel(executionStatus)}</dd>
+            {launch.activation_job_id ? (
+              <>
+                <dt className="text-muted-foreground">{t("jobId")}</dt>
+                <dd className="break-all font-mono text-xs">
+                  {launch.activation_job_id}
+                </dd>
+              </>
+            ) : null}
+          </dl>
+
+          {executionStatus === "ready" && launch.status === "approved" ? (
+            <p className="text-xs text-muted-foreground">
+              {launch.allowed_actions?.includes("execute_launch")
+                ? t("readyDescription")
+                : t("permissionDenied")}
+            </p>
+          ) : executionStatus === "queued" ? (
+            <Alert>
+              <AlertDescription>
+                {t("queuedDescription", {
+                  job_id: launch.activation_job_id ?? t("jobPending"),
+                })}
+              </AlertDescription>
+            </Alert>
+          ) : executionStatus === "running" ? (
+            <Alert>
+              <AlertDescription>
+                {t("runningDescription", {
+                  job_id: launch.activation_job_id ?? t("jobPending"),
+                })}
+              </AlertDescription>
+            </Alert>
+          ) : executionStatus === "activated" ? (
+            <Alert variant="success">
+              <AlertDescription>{t("activatedDescription")}</AlertDescription>
+            </Alert>
+          ) : executionStatus === "failed" ? (
+            <Alert variant="warning">
+              <AlertDescription>{t("failedDescription")}</AlertDescription>
+            </Alert>
+          ) : executionStatus === "canceled" ? (
+            <Alert variant="warning">
+              <AlertDescription>{t("canceledDescription")}</AlertDescription>
+            </Alert>
+          ) : executionStatus === "not_ready" ? (
+            <p className="text-xs text-muted-foreground">{t("notReady")}</p>
+          ) : null}
+
+          {canExecute ? (
+            <Button
+              type="button"
+              size="sm"
+              className="w-fit"
+              disabled={execute.isPending || detail.isFetching}
+              onClick={() => setConfirmOpen(true)}
+            >
+              {t("executeAction")}
+            </Button>
+          ) : null}
+
+          {actionError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {actionError}
+            </p>
+          ) : null}
+
+          <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("dialogTitle")}</DialogTitle>
+                <DialogDescription>
+                  {t("dialogDescription", {
+                    count:
+                      launch.enrollments?.total ??
+                      launch.recipients_count ??
+                      0,
+                  })}
+                </DialogDescription>
+              </DialogHeader>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg border border-border bg-app-panel-muted px-3 py-2 text-sm">
+                <dt className="text-muted-foreground">{t("recipients")}</dt>
+                <dd>
+                  {launch.enrollments?.total ??
+                    launch.recipients_count ??
+                    0}
+                </dd>
+                <dt className="text-muted-foreground">{t("manifestHash")}</dt>
+                <dd className="break-all font-mono text-xs">
+                  {launch.manifest_hash
+                    ? shortHash(launch.manifest_hash, 24)
+                    : "—"}
+                </dd>
+                <dt className="text-muted-foreground">{t("version")}</dt>
+                <dd>{launch.version}</dd>
+              </dl>
+              {launch.messages.items[0] ? (
+                <div className="grid gap-1 rounded-lg border border-border px-3 py-2">
+                  <p className="text-sm font-medium">
+                    {launch.messages.items[0].subject}
+                  </p>
+                  <p className="max-h-32 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
+                    {launch.messages.items[0].body_text}
+                  </p>
+                </div>
+              ) : null}
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={execute.isPending}
+                  onClick={() => setConfirmOpen(false)}
+                >
+                  {t("cancel")}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={execute.isPending || !canExecute}
+                  onClick={() => execute.mutate()}
+                >
+                  {execute.isPending ? t("executing") : t("confirmExecute")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
+    </section>
+  );
+}
+
 function LaunchDetailPanel({ launchId }: { launchId: string }) {
   const t = useTranslations("campaigns.detail");
   const locale = useLocale();
@@ -787,6 +1030,15 @@ function LaunchDetailPanel({ launchId }: { launchId: string }) {
             ))}
           </dl>
         </div>
+      ) : null}
+
+      {d &&
+      (d.status === "approved" ||
+        (d.execution_status && d.execution_status !== "not_ready")) ? (
+        <CampaignLaunchExecutionControl
+          launchId={launchId}
+          onExecuted={() => detail.refetch()}
+        />
       ) : null}
 
       {loadError ? <ErrorState error={loadError} onRetry={() => void loadMore()} /> : null}

@@ -48,6 +48,36 @@ fn hex_decode(s: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
+pub(crate) fn stable_internet_message_id(
+    outbound_id: Uuid,
+    from_address: &str,
+) -> Result<String, AppError> {
+    let Some((_, raw_domain)) = from_address.rsplit_once('@') else {
+        return Err(AppError::validation(
+            "verified sender address has no domain",
+            vec![violation("sender_identity_id", "FORMAT")],
+        ));
+    };
+    let domain = raw_domain.trim().to_ascii_lowercase();
+    let valid = !domain.is_empty()
+        && domain.is_ascii()
+        && domain.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
+    if !valid {
+        return Err(AppError::validation(
+            "verified sender address has an invalid domain",
+            vec![violation("sender_identity_id", "FORMAT")],
+        ));
+    }
+    Ok(format!("<{}@{domain}>", outbound_id.simple()))
+}
+
 fn violation(field: &str, code: &str) -> Violation {
     Violation {
         field: field.into(),
@@ -321,6 +351,20 @@ pub async fn create_draft_in_tx<'db>(
                     vec![violation("reply_to_message_id", "MISMATCH")],
                 ));
             }
+            if !repo::reply_recipient_matches(
+                &mut tx,
+                req.mail_account_id,
+                tid,
+                m,
+                req.to_email_address_id,
+            )
+            .await?
+            {
+                return Err(AppError::validation(
+                    "a reply recipient must match the inbound From address",
+                    vec![violation("to_email_address_id", "REPLY_RECIPIENT_MISMATCH")],
+                ));
+            }
         }
     }
     if let Some(v) = req.template_version_id
@@ -334,10 +378,16 @@ pub async fn create_draft_in_tx<'db>(
         ));
     }
 
+    let source_credential_id = match &ctx.auth {
+        contracts::AuthMethod::ServiceCredential { credential_id } => Some(*credential_id),
+        _ => None,
+    };
+
     let row = repo::insert_draft(
         &mut tx,
         req.mail_account_id,
         ctx.principal_id,
+        source_credential_id,
         visibility,
         req.thread_id,
         req.reply_to_message_id,
@@ -462,6 +512,42 @@ pub async fn patch_draft(
             vec![violation("expected_last_inbound_id", "MISMATCH")],
         ));
     }
+    let reply_recipient_id = req.to_email_address_id.unwrap_or(d.to_email_address_id);
+    let mut reply_context_ids = Vec::new();
+    if let Some(reply_to) = d.reply_to_message_id {
+        reply_context_ids.push(reply_to);
+    }
+    if let Some(reviewed_inbound) = req.expected_last_inbound_id.or(d.expected_last_inbound_id)
+        && !reply_context_ids.contains(&reviewed_inbound)
+    {
+        reply_context_ids.push(reviewed_inbound);
+    }
+    if !reply_context_ids.is_empty() {
+        let Some(thread_id) = d.thread_id else {
+            return Err(AppError::validation(
+                "reply fields require a thread",
+                vec![violation("thread_id", "REQUIRED")],
+            ));
+        };
+        for inbound_id in reply_context_ids {
+            if !repo::inbound_message_in_thread(&mut tx, d.mail_account_id, thread_id, inbound_id)
+                .await?
+                || !repo::reply_recipient_matches(
+                    &mut tx,
+                    d.mail_account_id,
+                    thread_id,
+                    inbound_id,
+                    reply_recipient_id,
+                )
+                .await?
+            {
+                return Err(AppError::validation(
+                    "a reply recipient must match the inbound From address",
+                    vec![violation("to_email_address_id", "REPLY_RECIPIENT_MISMATCH")],
+                ));
+            }
+        }
+    }
     let Some(row) = repo::patch_draft(
         &mut tx,
         id,
@@ -537,6 +623,20 @@ pub async fn freeze_draft_in_tx<'db>(
         return Err(AppError::new(
             ErrorCode::MailboxAccessDenied,
             "no compose access to this draft",
+        ));
+    }
+    if let Some(credential_id) = d.source_credential_id {
+        if !repo::source_credential_usable(&mut tx, credential_id, d.owner_principal_id).await? {
+            return Err(AppError::conflict(
+                "the draft source credential is no longer active or owned by its creator",
+            ));
+        }
+    } else if matches!(
+        repo::principal_state(&mut tx, d.owner_principal_id).await?,
+        Some((_, ref kind, _)) if kind == "agent"
+    ) {
+        return Err(AppError::conflict(
+            "this legacy agent draft has no bound source credential; recreate it before freezing",
         ));
     }
     if d.status != "draft" {
@@ -624,6 +724,31 @@ pub async fn freeze_draft_in_tx<'db>(
                 ErrorCode::ReplyContextChanged,
                 "a newer inbound message arrived — review before sending",
             ));
+        }
+        let mut reply_context_ids = Vec::new();
+        if let Some(reply_to) = d.reply_to_message_id {
+            reply_context_ids.push(reply_to);
+        }
+        if let Some(reviewed_inbound) = d.expected_last_inbound_id
+            && !reply_context_ids.contains(&reviewed_inbound)
+        {
+            reply_context_ids.push(reviewed_inbound);
+        }
+        for inbound_id in reply_context_ids {
+            if !repo::reply_recipient_matches(
+                &mut tx,
+                d.mail_account_id,
+                tid,
+                inbound_id,
+                d.to_email_address_id,
+            )
+            .await?
+            {
+                return Err(AppError::new(
+                    ErrorCode::ReplyContextChanged,
+                    "reply recipient no longer matches the inbound From address",
+                ));
+            }
         }
     }
 
@@ -781,6 +906,42 @@ pub async fn freeze_draft_in_tx<'db>(
         ));
     };
 
+    // Freeze tracked links and the pixel into the exact outbound content so
+    // the approval hash pins every recipient-bound tracking URL.
+    let prepared_engagement = crate::engagement::prepare_frozen_outbound_in_tx(
+        &mut tx,
+        outbound_id,
+        d.to_email_address_id,
+        &body_text,
+        body_html.as_deref(),
+        req.tracking_requested,
+    )
+    .await?;
+    body_text = prepared_engagement.body_text.clone();
+    body_html = prepared_engagement.body_html.clone();
+
+    // Give every new outbound a mailbox-local conversation and a stable RFC
+    // Message-ID before computing the approval-bound hash.
+    let thread_id = match d.thread_id {
+        Some(id) => {
+            let Some(thread) = infrastructure::repo::inbox::get_thread(&mut tx, id).await? else {
+                return Err(AppError::conflict("draft thread no longer exists"));
+            };
+            if thread.mail_account_id != d.mail_account_id {
+                return Err(AppError::new(
+                    ErrorCode::MailboxAccessDenied,
+                    "draft thread belongs to another mailbox",
+                ));
+            }
+            id
+        }
+        None => {
+            infrastructure::repo::inbox::create_thread(&mut tx, d.mail_account_id, None, None)
+                .await?
+        }
+    };
+    let internet_message_id = stable_internet_message_id(outbound_id, &sender_address)?;
+
     let payload_hash = crypto::sha256_bytes(&domain::sending::payload_preimage(
         &chan.purpose,
         &d.mail_account_id.to_string(),
@@ -792,16 +953,12 @@ pub async fn freeze_draft_in_tx<'db>(
         &subject,
         &body_text,
         body_html.as_deref(),
-        d.thread_id.map(|t| t.to_string()).as_deref(),
+        Some(thread_id.to_string()).as_deref(),
         d.reply_to_message_id.map(|t| t.to_string()).as_deref(),
         communication_basis_id.map(|t| t.to_string()).as_deref(),
         d.template_version_id.map(|t| t.to_string()).as_deref(),
+        Some(internet_message_id.as_str()),
     ));
-
-    let credential_id = match ctx.auth {
-        contracts::AuthMethod::ServiceCredential { credential_id } => Some(credential_id),
-        _ => None,
-    };
 
     let new_outbound = NewOutbound {
         id: outbound_id,
@@ -811,10 +968,11 @@ pub async fn freeze_draft_in_tx<'db>(
         to_email_address_id: d.to_email_address_id,
         communication_basis_id,
         source_draft_id: Some(d.id),
-        thread_id: d.thread_id,
+        thread_id: Some(thread_id),
         reply_to_message_id: d.reply_to_message_id,
-        requested_by: ctx.principal_id,
-        source_credential_id: credential_id,
+        requested_by: d.owner_principal_id,
+        source_credential_id: d.source_credential_id,
+        internet_message_id: Some(internet_message_id),
         purpose: chan.purpose.clone(),
         from_address_snapshot: sender_address,
         to_address_snapshot: to_addr,
@@ -830,6 +988,14 @@ pub async fn freeze_draft_in_tx<'db>(
         }
         Err(e) => return Err(e),
     };
+
+    crate::engagement::persist_frozen_outbound_in_tx(
+        &mut tx,
+        outbound_id,
+        d.to_email_address_id,
+        &prepared_engagement,
+    )
+    .await?;
 
     // Minted unsubscribe capability → store its hash now that the outbound
     // row exists (the FK target).
@@ -1057,11 +1223,225 @@ pub async fn submit(
     let expected_hash = req.expected_payload_hash.clone();
     let not_before = req.not_before;
     idem::run(db, &scope, &request_hash, |mut tx| async move {
-        let stored = submit_tx(&mut tx, &ctx2, id, &expected_hash, not_before).await?;
+        let stored = submit_tx(&mut tx, &ctx2, id, &expected_hash, not_before, false).await?;
         Ok((tx, stored))
     })
     .await
     .map(|o| o.into_inner())
+}
+
+/// MCP-only approval-bound execution. Unlike the human REST submit path,
+/// this path always requires an explicit `mail.submit_approved` grant and a
+/// current approval, including for correspondence-purpose messages.
+pub async fn submit_approved(
+    db: &Db,
+    ctx: &Ctx,
+    id: Uuid,
+    expected_payload_hash: &str,
+    idempotency_key: &str,
+) -> Result<idem::Stored<SubmitOutboundResponse>, AppError> {
+    let request_hash = crypto::sha256_bytes(
+        serde_json::to_string(&serde_json::json!({
+            "outbound_message_id": id,
+            "expected_payload_hash": expected_payload_hash,
+        }))
+        .unwrap_or_default()
+        .as_bytes(),
+    );
+    let scope = idem::Scope {
+        workspace_id: ctx.workspace_id,
+        principal_or_capability: ctx.principal_id.to_string(),
+        endpoint: "MCP mail_submit_approved".into(),
+        key: idempotency_key.to_string(),
+    };
+    let ctx2 = ctx.clone();
+    let expected_hash = expected_payload_hash.to_string();
+    idem::run(db, &scope, &request_hash, |mut tx| async move {
+        let stored = submit_tx(&mut tx, &ctx2, id, &expected_hash, None, true).await?;
+        Ok((tx, stored))
+    })
+    .await
+    .map(|o| o.into_inner())
+}
+
+async fn require_approved_submit_access(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    outbound: &repo::OutboundRow,
+) -> Result<(), AppError> {
+    authz::require_scope(ctx, Scope::MailSubmitApproved)?;
+    if ctx.principal_kind == PrincipalKind::System {
+        return Err(AppError::forbidden(
+            "system principals cannot submit outbound messages",
+        ));
+    }
+    let Some((status, kind, _role)) = repo::principal_state(tx, ctx.principal_id).await? else {
+        return Err(AppError::new(
+            ErrorCode::PrincipalDisabled,
+            "submitter principal no longer exists",
+        ));
+    };
+    let kind_matches = matches!(
+        (ctx.principal_kind, kind.as_str()),
+        (PrincipalKind::Human, "human")
+            | (PrincipalKind::Agent, "agent")
+            | (PrincipalKind::System, "system")
+    );
+    if status != "active" || !kind_matches {
+        return Err(AppError::new(
+            ErrorCode::PrincipalDisabled,
+            "submitter principal is not active",
+        ));
+    }
+
+    if let contracts::AuthMethod::ServiceCredential { credential_id } = &ctx.auth {
+        if !infrastructure::repo::auth::credential_authorizes(
+            tx,
+            *credential_id,
+            Some(ctx.principal_id),
+            &[Scope::MailSubmitApproved.as_str()],
+        )
+        .await?
+        {
+            return Err(AppError::new(
+                ErrorCode::InvalidCredentials,
+                "approved-submit credential is no longer active or lacks its current scope",
+            ));
+        }
+        if ctx.principal_kind == PrincipalKind::Agent
+            && outbound.source_credential_id != Some(*credential_id)
+        {
+            return Err(AppError::forbidden(
+                "an agent may submit only snapshots created by its active credential",
+            ));
+        }
+    } else if ctx.principal_kind == PrincipalKind::Agent {
+        return Err(AppError::new(
+            ErrorCode::InvalidCredentials,
+            "agent approved-submit requires its service credential",
+        ));
+    }
+
+    let Some(grant) = authz::mailbox_grant(tx, ctx, outbound.mail_account_id).await? else {
+        return Err(AppError::new(
+            ErrorCode::MailboxAccessDenied,
+            "no access to this mailbox",
+        ));
+    };
+    if !grant.can_send {
+        return Err(AppError::new(
+            ErrorCode::MailboxAccessDenied,
+            "approved-submit requires a current mailbox send grant",
+        ));
+    }
+    Ok(())
+}
+
+struct OutboundApprovalSummary {
+    status: Option<String>,
+    valid: bool,
+    snapshot_matches: bool,
+    expires_at: Option<DateTime<Utc>>,
+}
+
+async fn outbound_approval_summary(
+    tx: &mut Tx<'_>,
+    outbound: &repo::OutboundRow,
+) -> Result<OutboundApprovalSummary, AppError> {
+    let Some(approval) = repo::latest_outbound_approval(tx, outbound.id).await? else {
+        return Ok(OutboundApprovalSummary {
+            status: None,
+            valid: false,
+            snapshot_matches: false,
+            expires_at: None,
+        });
+    };
+    let decision = repo::approval_decision(tx, approval.id).await?;
+    let snapshot_matches = approval.snapshot_hash == outbound.payload_hash;
+    let decision_ok = matches!(decision.as_ref(), Some((kind, approver_id))
+        if kind == "approved"
+            && *approver_id != approval.requested_by
+            && *approver_id != outbound.requested_by);
+    let approver_ok = if let Some((kind, approver_id)) = decision.as_ref()
+        && kind == "approved"
+        && *approver_id != approval.requested_by
+        && *approver_id != outbound.requested_by
+    {
+        match repo::principal_state(tx, *approver_id).await? {
+            Some((status, kind, role))
+                if status == "active"
+                    && kind == "human"
+                    && matches!(role.as_str(), "admin" | "manager") =>
+            {
+                matches!(
+                    repo::grant_for_principal(tx, *approver_id, outbound.mail_account_id).await?,
+                    Some((_, _, _, true, _))
+                )
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+    let valid = approval.status == "approved"
+        && approval.expires_at > Utc::now()
+        && snapshot_matches
+        && decision_ok
+        && approver_ok;
+    Ok(OutboundApprovalSummary {
+        status: Some(approval.status),
+        valid,
+        snapshot_matches,
+        expires_at: Some(approval.expires_at),
+    })
+}
+
+async fn require_current_outbound_approval(
+    tx: &mut Tx<'_>,
+    outbound: &repo::OutboundRow,
+) -> Result<(), AppError> {
+    let approval = outbound_approval_summary(tx, outbound).await?;
+    match approval.status.as_deref() {
+        None => {
+            return Err(AppError::conflict(
+                "this outbound requires an approved approval request first",
+            ));
+        }
+        Some("approved") => {}
+        Some("pending") if approval.expires_at.is_some_and(|at| at > Utc::now()) => {
+            return Err(AppError::conflict("the approval request is still pending"));
+        }
+        Some("pending" | "expired") => {
+            return Err(AppError::new(
+                ErrorCode::ApprovalExpired,
+                "the approval for this outbound has expired",
+            ));
+        }
+        Some(_) => {
+            return Err(AppError::conflict(
+                "the approval request was rejected or revoked",
+            ));
+        }
+    }
+    if approval.expires_at.is_some_and(|at| at <= Utc::now()) {
+        return Err(AppError::new(
+            ErrorCode::ApprovalExpired,
+            "the approval for this outbound has expired",
+        ));
+    }
+    if !approval.snapshot_matches {
+        return Err(AppError::new(
+            ErrorCode::SnapshotMismatch,
+            "the approval was issued for a different snapshot",
+        ));
+    }
+    if !approval.valid {
+        return Err(AppError::new(
+            ErrorCode::MailboxAccessDenied,
+            "the independent human approver no longer has active approval authority",
+        ));
+    }
+    Ok(())
 }
 
 async fn submit_tx(
@@ -1070,12 +1450,43 @@ async fn submit_tx(
     id: Uuid,
     expected_payload_hash: &str,
     not_before: Option<DateTime<Utc>>,
+    approved_submit: bool,
 ) -> Result<idem::Stored<SubmitOutboundResponse>, AppError> {
     let Some(o) = repo::get_outbound_for_update(tx, id).await? else {
         return Err(AppError::not_found("outbound message not found"));
     };
-    // can_send on the mailbox is the §5.3 normal-reply permission.
-    authz::require_mailbox(tx, ctx, o.mail_account_id, authz::MailboxPerm::Send).await?;
+    if approved_submit {
+        require_approved_submit_access(tx, ctx, &o).await?;
+    } else {
+        // can_send on the mailbox is the §5.3 normal-reply permission.
+        authz::require_mailbox(tx, ctx, o.mail_account_id, authz::MailboxPerm::Send).await?;
+    }
+
+    let requester = repo::principal_state(tx, o.requested_by).await?;
+    let Some((requester_status, requester_kind, _)) = requester else {
+        return Err(AppError::new(
+            ErrorCode::PrincipalDisabled,
+            "outbound requesting principal no longer exists",
+        ));
+    };
+    if requester_status != "active" {
+        return Err(AppError::new(
+            ErrorCode::PrincipalDisabled,
+            "outbound requesting principal is not active",
+        ));
+    }
+    let source_credential_usable = match o.source_credential_id {
+        Some(credential_id) => {
+            repo::source_credential_usable(tx, credential_id, o.requested_by).await?
+        }
+        None => false,
+    };
+    if (requester_kind == "agent" || o.source_credential_id.is_some()) && !source_credential_usable
+    {
+        return Err(AppError::conflict(
+            "the outbound source credential is no longer active or owned by its requester",
+        ));
+    }
 
     if o.status != "draft" {
         return Err(AppError::conflict(format!(
@@ -1137,38 +1548,8 @@ async fn submit_tx(
         Some((_, k, _)) => k == "agent",
         None => false,
     };
-    if o.purpose != "correspondence" || requester_is_agent {
-        match repo::latest_outbound_approval(tx, o.id).await? {
-            Some(a)
-                if a.status == "approved"
-                    && a.expires_at > Utc::now()
-                    && a.snapshot_hash == o.payload_hash => {}
-            Some(a) if a.expires_at <= Utc::now() || a.status == "expired" => {
-                return Err(AppError::new(
-                    ErrorCode::ApprovalExpired,
-                    "the approval for this outbound has expired",
-                ));
-            }
-            Some(a) if a.snapshot_hash != o.payload_hash => {
-                return Err(AppError::new(
-                    ErrorCode::SnapshotMismatch,
-                    "the approval was issued for a different snapshot",
-                ));
-            }
-            Some(a) if a.status == "pending" => {
-                return Err(AppError::conflict("the approval request is still pending"));
-            }
-            Some(_) => {
-                return Err(AppError::conflict(
-                    "the approval request was rejected or revoked",
-                ));
-            }
-            None => {
-                return Err(AppError::conflict(
-                    "this outbound requires an approved approval request first",
-                ));
-            }
-        }
+    if approved_submit || o.purpose != "correspondence" || requester_is_agent {
+        require_current_outbound_approval(tx, &o).await?;
     }
 
     // A.6.5 reply claim — thread lock → context check → unique active claim.
@@ -1211,12 +1592,22 @@ async fn submit_tx(
         }
     }
 
-    repo::set_queued(tx, o.id, not_before).await?;
+    // Use the database clock and its storage precision so the durable marker
+    // and JSON job payload compare exactly after a worker reloads both.
+    let explicit_submission_at: DateTime<Utc> =
+        sqlx::query_scalar("SELECT date_trunc('microseconds', now())")
+            .fetch_one(tx.conn())
+            .await
+            .map_err(infrastructure::error::map_sqlx)?;
+    repo::set_queued(tx, o.id, not_before, explicit_submission_at).await?;
     let job_id = infrastructure::jobs::enqueue(
         tx,
         dispatch::DISPATCH_KIND,
         1,
-        serde_json::json!({"outbound_message_id": o.id}),
+        serde_json::json!({
+            "outbound_message_id": o.id,
+            "explicit_submission_at": explicit_submission_at,
+        }),
         not_before.unwrap_or_else(Utc::now),
         Some(&format!("dispatch:{}", o.id)),
     )
@@ -1266,7 +1657,10 @@ async fn outbound_response(
     require_read(&mut tx, ctx, o.mail_account_id).await?;
     let event_types = repo::delivery_event_types(&mut tx, id).await?;
     let attempt = repo::latest_attempt(&mut tx, id).await?;
+    let approval = outbound_approval_summary(&mut tx, &o).await?;
+    let known_replies = infrastructure::repo::inbox::list_outbound_replies(&mut tx, id).await?;
     tx.commit().await?;
+    let engagement = crate::engagement::get_outbound_counts(db, ctx, id).await?;
 
     let delivery = domain::sending::DeliveryStatus::fold(event_types);
     let provider_accepted = match o.status.as_str() {
@@ -1285,6 +1679,7 @@ async fn outbound_response(
     };
     Ok(OutboundMessageResponse {
         outbound_message_id: o.id,
+        thread_id: o.thread_id,
         status: o.status.clone(),
         payload_hash: hex_encode(&o.payload_hash),
         failure_code: o.failure_code.clone(),
@@ -1300,6 +1695,16 @@ async fn outbound_response(
             started_at: a.started_at,
             finished_at: a.finished_at,
         }),
+        approval_status: approval.status,
+        approval_valid: approval.valid,
+        approval_snapshot_matches: approval.snapshot_matches,
+        approval_expires_at: approval.expires_at,
+        known_replies,
+        engagement: OutboundEngagementSummary {
+            tracking_enabled: engagement.tracking_enabled,
+            open_request_count: engagement.open_request_count,
+            click_request_count: engagement.click_request_count,
+        },
         purpose: o.purpose,
         from_address: o.from_address_snapshot,
         subject: o.subject,

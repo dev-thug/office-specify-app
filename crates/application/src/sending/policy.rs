@@ -85,13 +85,16 @@ async fn campaign_approval_checks(
 
     let manifest_matches = campaign_manifest_matches(&state);
     let decision_matches = campaign_decision_matches(&state, outbound.requested_by);
+    let thread_id = outbound.thread_id.map(|id| id.to_string());
     let expected_payload_hash =
-        infrastructure::crypto::sha256_bytes(&domain::campaigns::payload_bytes(
+        infrastructure::crypto::sha256_bytes(&domain::campaigns::payload_bytes_with_context(
             &outbound.from_address_snapshot,
             &outbound.to_address_snapshot,
             &outbound.subject,
             &outbound.body_text,
             outbound.body_html.as_deref(),
+            thread_id.as_deref(),
+            outbound.internet_message_id.as_deref(),
         ));
     let payload_hash_matches = state.payload_hash_len == 32
         && outbound.payload_hash.as_slice() == expected_payload_hash.as_slice();
@@ -378,9 +381,16 @@ pub async fn evaluate(
         Some((status, kind, _role)) if status == "active" => {
             checks.push(Check::pass("requester_active"));
             if kind == "agent" {
-                // Agents never hold send authority — the approval check
-                // below is their gate (§5.4).
-                checks.push(Check::pass("requester_permission"));
+                // Agents may execute only through the separate
+                // approved-submit scope, and their mailbox can_send grant is
+                // rechecked here before the provider boundary.
+                let grant =
+                    sending::grant_for_principal(tx, o.requested_by, o.mail_account_id).await?;
+                checks.push(if matches!(grant, Some((_, _, true, _, _))) {
+                    Check::pass("requester_permission")
+                } else {
+                    Check::fail("requester_permission", "MAILBOX_ACCESS_DENIED")
+                });
             } else {
                 let grant =
                     sending::grant_for_principal(tx, o.requested_by, o.mail_account_id).await?;
@@ -410,11 +420,15 @@ pub async fn evaluate(
     }
 
     if let Some(cred) = o.source_credential_id {
-        checks.push(if sending::credential_usable(tx, cred).await? {
-            Check::pass("credential_usable")
-        } else {
-            Check::fail("credential_usable", CODE_CREDENTIAL_REVOKED)
-        });
+        checks.push(
+            if sending::source_credential_usable(tx, cred, o.requested_by).await? {
+                Check::pass("credential_usable")
+            } else {
+                Check::fail("credential_usable", CODE_CREDENTIAL_REVOKED)
+            },
+        );
+    } else if requester_is_agent {
+        checks.push(Check::fail("credential_usable", CODE_CREDENTIAL_REVOKED));
     } else {
         checks.push(Check::pass("credential_usable"));
     }
@@ -535,11 +549,50 @@ pub async fn evaluate(
         Check::fail("recipient_not_suppressed", "RECIPIENT_SUPPRESSED")
     });
 
+    // Freeze-time checks protect new drafts, but older snapshots and direct
+    // DB writes still need a binding check at the provider boundary.
+    let mut reply_context_ids = Vec::with_capacity(2);
+    if let Some(reply_to) = o.reply_to_message_id {
+        reply_context_ids.push(reply_to);
+    }
+    if let Some(reviewed_inbound) = expected_last_inbound
+        && !reply_context_ids.contains(&reviewed_inbound)
+    {
+        reply_context_ids.push(reviewed_inbound);
+    }
+    let mut reply_recipient_ok = true;
+    if !reply_context_ids.is_empty() {
+        if let Some(thread_id) = o.thread_id {
+            for inbound_id in reply_context_ids {
+                if !sending::reply_recipient_matches(
+                    tx,
+                    o.mail_account_id,
+                    thread_id,
+                    inbound_id,
+                    o.to_email_address_id,
+                )
+                .await?
+                {
+                    reply_recipient_ok = false;
+                    break;
+                }
+            }
+        } else {
+            reply_recipient_ok = false;
+        }
+    }
+    checks.push(if reply_recipient_ok {
+        Check::pass("reply_recipient")
+    } else {
+        Check::fail("reply_recipient", "REPLY_RECIPIENT_MISMATCH")
+    });
+
     let basis_ok = match o.purpose.as_str() {
         "correspondence" => {
             if o.reply_to_message_id.is_some() {
-                // A genuine reply IS the basis (requested_reply).
-                true
+                // A matching inbound sender is the reply basis. A stale
+                // or retargeted snapshot must not inherit that exemption.
+                reply_recipient_ok
             } else if let Some(basis) = o.communication_basis_id {
                 sending::basis_still_valid(tx, basis).await?
             } else {

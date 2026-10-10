@@ -129,6 +129,7 @@ async fn inbox_sync_uses_the_mailbox_bound_provider_returned_by_the_router() {
     let calendar = Arc::new(FakeMailProvider::new());
     let context = WorkerContext {
         db: db.clone(),
+        config: Arc::new(infrastructure::config::Config::test()),
         mail,
         delivery: Arc::new(FakeDeliveryProvider::new()),
         calendar,

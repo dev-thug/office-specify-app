@@ -52,6 +52,26 @@ fn initialization_explains_company_research_storage_and_human_handoffs() {
 }
 
 #[test]
+fn inbox_and_approved_send_fields_explain_their_actual_context() {
+    let tools = mcp::all_tools();
+    let field = |name: &str, key: &str| {
+        tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap()
+            .input_schema["properties"][key]["description"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(field("mail_update_thread_status", "status").contains("open, pending or resolved"));
+    assert!(field("mail_search_messages", "query").contains("plain-text bodies"));
+    assert!(field("mail_create_reply_draft", "visibility").contains("mailbox (default)"));
+    assert!(field("mail_submit_approved", "outbound_message_id").contains("frozen outbound"));
+    assert!(field("mail_submit_approved", "expected_payload_hash").contains("reviewed by a human"));
+}
+
+#[test]
 fn every_discoverable_input_explains_its_meaning() {
     for tool in mcp::all_tools() {
         for (field, schema) in tool.input_schema["properties"]

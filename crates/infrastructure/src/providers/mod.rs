@@ -22,6 +22,8 @@ impl std::fmt::Debug for SecretValue {
 }
 
 pub mod fake;
+pub mod imap_reply;
+pub mod mail_headers;
 pub mod office_calendar;
 pub mod zoho;
 pub use office_calendar::{CalendarProviderRouter, OfficeCalendarProvider};
@@ -135,8 +137,12 @@ pub struct SendRequest {
     pub subject: String,
     pub body_text: Option<String>,
     pub body_html: Option<String>,
-    /// Message-ID we are replying to, when threaded.
+    /// Stable Internet Message-ID bound to the frozen outbound, when present.
+    pub internet_message_id: Option<String>,
+    /// RFC Message-ID of the inbound message being answered.
     pub in_reply_to: Option<String>,
+    /// Validated RFC References ancestry, oldest first.
+    pub references: Vec<String>,
     pub headers: Vec<(String, String)>,
 }
 

@@ -71,6 +71,17 @@ pub struct LaunchRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+pub struct LaunchActivationJob {
+    pub id: Uuid,
+    pub state: String,
+    pub dedupe_key: String,
+    pub requested_by: Option<Uuid>,
+    pub source_credential_id: Option<Uuid>,
+    pub approval_request_id: Option<String>,
+    pub explicit_submission_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct EnrollmentRow {
     pub id: Uuid,
     pub launch_id: Uuid,
@@ -562,6 +573,74 @@ pub async fn get_launch_for_update(
     .map_err(map_sqlx)
 }
 
+/// The one activation job associated with this launch's stable dedupe key.
+pub async fn launch_activation_job(
+    tx: &mut Tx<'_>,
+    launch_id: Uuid,
+) -> Result<Option<LaunchActivationJob>, AppError> {
+    sqlx::query_as::<_, LaunchActivationJob>(
+        "SELECT id, state, dedupe_key, requested_by, source_credential_id,
+                payload->>'approval_request_id' AS approval_request_id,
+                (payload->>'explicit_submission_at')::timestamptz AS explicit_submission_at
+           FROM jobs
+          WHERE workspace_id = $1
+            AND kind = 'campaigns.activate_launch'
+            AND dedupe_key = $2
+          LIMIT 1",
+    )
+    .bind(tx.workspace_id())
+    .bind(format!("explicit_activate_launch:{launch_id}"))
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Requester attribution for the immutable freeze operation that created a
+/// launch. The execution path uses the job columns, never caller-controlled
+/// payload values, to re-check the launch requester's current authority.
+pub async fn launch_freeze_attribution(
+    tx: &mut Tx<'_>,
+    launch_id: Uuid,
+) -> Result<Option<(Option<Uuid>, Option<Uuid>)>, AppError> {
+    sqlx::query_as(
+        "SELECT requested_by, source_credential_id
+           FROM jobs
+          WHERE workspace_id = $1
+            AND kind = 'campaigns.freeze_launch'
+            AND dedupe_key = $2
+          ORDER BY created_at, id
+          LIMIT 1",
+    )
+    .bind(tx.workspace_id())
+    .bind(format!("freeze_launch:{launch_id}"))
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Bump a launch version when an explicit execution request first queues
+/// activation, while retaining the approved lifecycle status.
+pub async fn bump_launch_version(
+    tx: &mut Tx<'_>,
+    id: Uuid,
+    expected_version: i64,
+) -> Result<bool, AppError> {
+    let n = sqlx::query(
+        "UPDATE campaign_launches
+            SET version = version + 1
+          WHERE workspace_id = $1 AND id = $2
+            AND status = 'approved' AND version = $3",
+    )
+    .bind(tx.workspace_id())
+    .bind(id)
+    .bind(expected_version)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?
+    .rows_affected();
+    Ok(n == 1)
+}
+
 /// Guarded status transition: only when the current state legally moves to
 /// `to` (callers use `domain::campaigns::launch_status::can_transition`)
 /// and `expected_version` matches when provided. Returns rows_affected.
@@ -963,18 +1042,72 @@ pub async fn insert_step_outbound(
     body_html: Option<&str>,
     payload_hash: &[u8],
 ) -> Result<Uuid, AppError> {
+    insert_step_outbound_with_context(
+        tx,
+        Uuid::new_v4(),
+        mail_account_id,
+        delivery_channel_id,
+        sender_identity_id,
+        to_email_address_id,
+        communication_basis_id,
+        launch_id,
+        revision_id,
+        enrollment_id,
+        step_id,
+        None,
+        requested_by,
+        None,
+        None,
+        from_address,
+        to_address,
+        subject,
+        body_text,
+        body_html,
+        payload_hash,
+    )
+    .await
+}
+
+/// Insert a frozen outbound with the authenticated campaign-source
+/// credential and mailbox-local reply attribution. The older helper above
+/// remains for fixtures and legacy rows without these optional bindings.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_step_outbound_with_context(
+    tx: &mut Tx<'_>,
+    outbound_id: Uuid,
+    mail_account_id: Uuid,
+    delivery_channel_id: Uuid,
+    sender_identity_id: Uuid,
+    to_email_address_id: Uuid,
+    communication_basis_id: Option<Uuid>,
+    launch_id: Uuid,
+    revision_id: Uuid,
+    enrollment_id: Uuid,
+    step_id: Uuid,
+    thread_id: Option<Uuid>,
+    requested_by: Uuid,
+    source_credential_id: Option<Uuid>,
+    internet_message_id: Option<&str>,
+    from_address: &str,
+    to_address: &str,
+    subject: &str,
+    body_text: &str,
+    body_html: Option<&str>,
+    payload_hash: &[u8],
+) -> Result<Uuid, AppError> {
     sqlx::query_scalar(
         "INSERT INTO outbound_messages
-            (workspace_id, mail_account_id, delivery_channel_id, sender_identity_id,
+            (id, workspace_id, mail_account_id, delivery_channel_id, sender_identity_id,
              to_email_address_id, communication_basis_id,
              launch_id, revision_id, enrollment_id, step_id,
-             requested_by, purpose,
+             thread_id, requested_by, source_credential_id, internet_message_id, purpose,
              from_address_snapshot, to_address_snapshot, subject, body_text, body_html,
              payload_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'marketing',
-                 $12, $13, $14, $15, $16, $17)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                 'marketing', $16, $17, $18, $19, $20, $21)
          RETURNING id",
     )
+    .bind(outbound_id)
     .bind(tx.workspace_id())
     .bind(mail_account_id)
     .bind(delivery_channel_id)
@@ -985,7 +1118,10 @@ pub async fn insert_step_outbound(
     .bind(revision_id)
     .bind(enrollment_id)
     .bind(step_id)
+    .bind(thread_id)
     .bind(requested_by)
+    .bind(source_credential_id)
+    .bind(internet_message_id)
     .bind(from_address)
     .bind(to_address)
     .bind(subject)
@@ -1062,6 +1198,33 @@ pub async fn queue_outbound_at(
     .bind(tx.workspace_id())
     .bind(id)
     .bind(not_before)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+/// Queue a frozen campaign outbound after explicit launch execution has
+/// validated the execution job and current approval authority.
+pub async fn queue_outbound_at_explicit(
+    tx: &mut Tx<'_>,
+    id: Uuid,
+    not_before: DateTime<Utc>,
+    explicit_submission_at: DateTime<Utc>,
+) -> Result<bool, AppError> {
+    let n = sqlx::query(
+        "UPDATE outbound_messages
+            SET status = 'queued', not_before = $3,
+                explicit_submission_at = $4, version = version + 1
+          WHERE workspace_id = $1 AND id = $2
+            AND status IN ('draft','queued')
+            AND explicit_submission_at IS NULL",
+    )
+    .bind(tx.workspace_id())
+    .bind(id)
+    .bind(not_before)
+    .bind(explicit_submission_at)
     .execute(tx.conn())
     .await
     .map_err(map_sqlx)?

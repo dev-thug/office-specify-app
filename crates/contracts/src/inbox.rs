@@ -160,6 +160,8 @@ pub struct ThreadDetail {
     pub assigned_principal_id: Option<Uuid>,
     pub status: ThreadStatus,
     pub version: i64,
+    /// Authoritative last inbound pointer used to fence reply drafts, including timestamp ties.
+    pub last_inbound_message_id: Option<Uuid>,
     /// Caller's own read mark (`thread_read_states`, §9.3) — never another
     /// principal's.
     pub my_last_read_at: Option<DateTime<Utc>>,

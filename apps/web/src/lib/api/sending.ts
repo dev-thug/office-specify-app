@@ -55,6 +55,7 @@ export interface FreezeMessageDraftInput {
   delivery_channel_id: string;
   sender_identity_id?: string;
   meeting_type_id?: string;
+  tracking_requested?: boolean;
 }
 
 export interface FreezeMessageDraftResult {
@@ -112,6 +113,19 @@ export interface CancelOutboundResult {
   version: number;
 }
 
+export interface OutboundEngagementCounts {
+  tracking_enabled: boolean;
+  open_request_count: number;
+  click_request_count: number;
+}
+
+export interface OutboundKnownReply {
+  inbound_message_id: string;
+  thread_id: string;
+  from_address: string;
+  received_at: string;
+}
+
 export interface OutboundAttemptInfo {
   attempt_no: number;
   status: string;
@@ -127,6 +141,13 @@ export interface OutboundMessageResponse {
   failure_code?: string | null;
   provider_accepted?: boolean | null;
   delivery_status: string;
+  thread_id: string | null;
+  approval_status: string | null;
+  approval_valid: boolean;
+  approval_snapshot_matches: boolean;
+  approval_expires_at: string | null;
+  engagement: OutboundEngagementCounts;
+  known_replies: OutboundKnownReply[];
   automatic_resubmit_allowed: boolean;
   next_action: string;
   last_attempt?: OutboundAttemptInfo | null;

@@ -8,7 +8,7 @@
 
 use api::AppState;
 use api::testing::TestApp;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use infrastructure::config::Config;
 use infrastructure::crypto;
 use infrastructure::db::{Db, ROLE_API};
@@ -81,6 +81,39 @@ async fn ingest(
     (out.thread_id, out.message_id.expect("new message"))
 }
 
+async fn ingest_at(
+    db: &Db,
+    world: &TestWorld,
+    provider_message_id: &str,
+    provider_thread_id: &str,
+    message_at: DateTime<Utc>,
+) -> (Uuid, Uuid) {
+    let message = ProviderMessage {
+        provider_message_id: provider_message_id.into(),
+        provider_thread_id: Some(provider_thread_id.into()),
+        internet_message_id: Some(format!("<{provider_message_id}@fake.test>")),
+        in_reply_to: None,
+        references: vec![],
+        from: "sender@example.com".into(),
+        to: vec!["shared@test.dev".into()],
+        subject: Some("Timestamp tie".into()),
+        body_text: Some(provider_message_id.into()),
+        body_html: None,
+        message_at,
+    };
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let out = application::inbox::ingest::ingest_provider_message(
+        &mut tx,
+        None,
+        world.mail_account_id,
+        &message,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    (out.thread_id, out.message_id.expect("new message"))
+}
+
 struct Session {
     csrf: String,
 }
@@ -139,6 +172,67 @@ async fn post(
 }
 
 // ------------------------------------------------------------- ACL (§5.4)
+
+#[tokio::test]
+async fn thread_detail_returns_authoritative_latest_inbound_id_when_times_tie() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let tied_at = Utc::now();
+    let (thread_id, first_id) = ingest_at(
+        &app.state.db,
+        &world,
+        "anchor-tie-0",
+        "pt-anchor-tie",
+        tied_at,
+    )
+    .await;
+    let mut latest_arrival_id = first_id;
+    let mut max_tied_id = first_id;
+    for attempt in 1..=64 {
+        let (_, message_id) = ingest_at(
+            &app.state.db,
+            &world,
+            &format!("anchor-tie-{attempt}"),
+            "pt-anchor-tie",
+            tied_at,
+        )
+        .await;
+        latest_arrival_id = message_id;
+        max_tied_id = max_tied_id.max(message_id);
+        if latest_arrival_id < max_tied_id {
+            break;
+        }
+    }
+    assert!(
+        latest_arrival_id < max_tied_id,
+        "fixture needs an arrival-ordered anchor below the timestamp/UUID maximum"
+    );
+
+    let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+    let stored_anchor: Uuid = sqlx::query_scalar(
+        "SELECT last_inbound_message_id FROM email_threads WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(thread_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(stored_anchor, latest_arrival_id);
+
+    let _session = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let response = app.get(&format!("/api/v1/email-threads/{thread_id}")).await;
+    let data = TestApp::data(response).await;
+    assert_eq!(
+        data["last_inbound_message_id"].as_str().unwrap(),
+        stored_anchor.to_string()
+    );
+    assert_ne!(
+        data["last_inbound_message_id"].as_str().unwrap(),
+        max_tied_id.to_string()
+    );
+}
 
 #[tokio::test]
 async fn mailbox_acl_hides_ungranted_thread_and_content() {

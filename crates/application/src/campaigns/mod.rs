@@ -15,5 +15,8 @@ pub use flow::{
     activate_launch, mark_enrollment_failed, pause_address, pause_enrollments, schedule_next_step,
 };
 pub use freeze::freeze_launch;
-pub use launch::{cancel_launch, create_launch, get_launch, pause_launch, request_launch_approval};
+pub use launch::{
+    cancel_launch, create_launch, execute_launch, get_launch, get_launch_status, pause_launch,
+    request_launch_approval,
+};
 pub use preflight::preflight;

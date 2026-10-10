@@ -1,8 +1,8 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
-import { useRef, useState, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,16 +31,24 @@ import { ApiError } from "@/lib/api/problem";
 import {
   createSmtpConnection,
   DELIVERY_CHANNELS_QUERY_KEY,
+  getSmtpInboxStatus,
+  SMTP_INBOX_QUERY_KEY,
+  syncSmtpInbox,
+  updateSmtpInboxSettings,
   disableSmtpConnection,
   SMTP_CONNECTIONS_QUERY_KEY,
   useSmtpConnections,
   verifySmtpConnection,
   type CreateSmtpConnectionInput,
+  type SmtpInboxStatus,
+  type UpdateSmtpInboxSettingsInput,
   type SmtpConnection,
   type SmtpConnectionStatus,
   type SmtpSecurity,
+  type SmtpPurpose,
 } from "@/lib/api/smtp";
 import type { MailAccount } from "@/lib/api/settings";
+import { formatDateTime } from "./format";
 import { useIsAdmin } from "@/features/settings/use-me";
 
 interface SmtpSettingsProps {
@@ -51,6 +59,7 @@ interface SmtpSettingsProps {
 interface SmtpForm {
   name: string;
   mailAccountId: string;
+  purpose: SmtpPurpose;
   host: string;
   port: string;
   security: SmtpSecurity;
@@ -66,6 +75,7 @@ interface SmtpForm {
 const EMPTY_FORM: SmtpForm = {
   name: "",
   mailAccountId: "",
+  purpose: "marketing",
   host: "",
   port: "587",
   security: "starttls",
@@ -138,6 +148,349 @@ function statusMessage(
     default:
       return t("statuses.pending");
   }
+}
+
+function defaultImapHostForConnection(connection: SmtpConnection): string {
+  return connection.host.toLowerCase().endsWith(".zoho.com")
+    ? "imappro.zoho.com"
+    : "";
+}
+
+function SmtpInboxSyncPanel({ connection }: { connection: SmtpConnection }) {
+  const t = useTranslations("settings.smtp.inbox");
+  const locale = useLocale();
+  const queryClient = useQueryClient();
+  const hostId = `smtp-inbox-host-${connection.id}`;
+  const enabledId = `smtp-inbox-enabled-${connection.id}`;
+  const [formOverride, setFormOverride] = useState<{
+    imapHost: string;
+    enabled: boolean;
+  } | null>(null);
+  const [manualSyncRequestedAt, setManualSyncRequestedAt] = useState<number | null>(null);
+  const [syncNoticeVisible, setSyncNoticeVisible] = useState(false);
+  const syncNoticeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [actionError, setActionError] = useState(false);
+  const saveKey = useRef<string | null>(null);
+  const syncKey = useRef<string | null>(null);
+  const [syncBaseline, setSyncBaseline] = useState<{
+    lastSuccess: string | null;
+    lastError: string | null;
+  } | null>(null);
+
+  useEffect(
+    () => () => {
+      if (syncNoticeTimeout.current !== null) {
+        clearTimeout(syncNoticeTimeout.current);
+      }
+    },
+    []
+  );
+
+  const inbox = useQuery<SmtpInboxStatus>({
+    queryKey: SMTP_INBOX_QUERY_KEY(connection.id),
+    queryFn: async () => (await getSmtpInboxStatus(connection.id)).data,
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data;
+      if (!status?.enabled) return false;
+      const syncOutcomeChanged = Boolean(
+        syncBaseline &&
+          (status.last_success_at !== syncBaseline.lastSuccess ||
+            status.last_error_code !== syncBaseline.lastError)
+      );
+      const waitingForManualSync =
+        manualSyncRequestedAt !== null &&
+        !syncOutcomeChanged &&
+        Date.now() - manualSyncRequestedAt < 30_000;
+      return waitingForManualSync ? 2_000 : 15_000;
+    },
+  });
+
+  const serverHost = inbox.data
+    ? inbox.data.imap_host || defaultImapHostForConnection(connection)
+    : "";
+  const imapHost = formOverride?.imapHost ?? serverHost;
+  const enabled = formOverride?.enabled ?? inbox.data?.enabled ?? false;
+  const dirty = Boolean(
+    inbox.data &&
+      formOverride &&
+      (formOverride.imapHost !== serverHost ||
+        formOverride.enabled !== inbox.data.enabled)
+  );
+  const syncOutcomeChanged = Boolean(
+    inbox.data &&
+      syncBaseline &&
+      (inbox.data.last_success_at !== syncBaseline.lastSuccess ||
+        inbox.data.last_error_code !== syncBaseline.lastError)
+  );
+  const showQueuedNotice = syncNoticeVisible && !syncOutcomeChanged;
+
+  const update = useMutation({
+    mutationFn: ({
+      input,
+      key,
+    }: {
+      input: UpdateSmtpInboxSettingsInput;
+      key: string;
+    }) =>
+      updateSmtpInboxSettings(connection.id, input, {
+        idempotencyKey: key,
+      }),
+    onSuccess: (result) => {
+      saveKey.current = null;
+      setActionError(false);
+      setFormOverride(null);
+      queryClient.setQueryData(
+        SMTP_INBOX_QUERY_KEY(connection.id),
+        result.data
+      );
+      void queryClient.invalidateQueries({
+        queryKey: SMTP_INBOX_QUERY_KEY(connection.id),
+      });
+    },
+    onError: (error) => {
+      setActionError(true);
+      if (isPermanentApiError(error)) saveKey.current = null;
+    },
+  });
+
+  const sync = useMutation({
+    mutationFn: (key: string) =>
+      syncSmtpInbox(connection.id, { idempotencyKey: key }),
+    onSuccess: () => {
+      syncKey.current = null;
+      setManualSyncRequestedAt(Date.now());
+      setSyncNoticeVisible(true);
+      if (syncNoticeTimeout.current !== null) {
+        clearTimeout(syncNoticeTimeout.current);
+      }
+      syncNoticeTimeout.current = setTimeout(
+        () => setSyncNoticeVisible(false),
+        30_000
+      );
+      setActionError(false);
+      void queryClient.invalidateQueries({
+        queryKey: SMTP_INBOX_QUERY_KEY(connection.id),
+      });
+    },
+    onError: (error) => {
+      setActionError(true);
+      setManualSyncRequestedAt(null);
+      setSyncNoticeVisible(false);
+      if (syncNoticeTimeout.current !== null) {
+        clearTimeout(syncNoticeTimeout.current);
+        syncNoticeTimeout.current = null;
+      }
+      if (isPermanentApiError(error)) syncKey.current = null;
+    },
+  });
+
+  function changeHost(value: string) {
+    setFormOverride({
+      imapHost: value,
+      enabled: formOverride?.enabled ?? inbox.data?.enabled ?? false,
+    });
+    setActionError(false);
+    saveKey.current = null;
+  }
+
+  function changeEnabled(value: boolean) {
+    setFormOverride({
+      imapHost: formOverride?.imapHost ?? serverHost,
+      enabled: value,
+    });
+    setActionError(false);
+    saveKey.current = null;
+  }
+
+  function saveSettings() {
+    const host = imapHost.trim();
+    if (!host) {
+      setActionError(true);
+      return;
+    }
+    saveKey.current ??= idempotencyKey();
+    update.mutate({
+      input: { enabled, imap_host: host },
+      key: saveKey.current,
+    });
+  }
+
+  function requestSync() {
+    if (!inbox.data?.enabled || connection.status !== "active") {
+      return;
+    }
+    setSyncBaseline({
+      lastSuccess: inbox.data.last_success_at,
+      lastError: inbox.data.last_error_code,
+    });
+    setSyncNoticeVisible(false);
+    if (syncNoticeTimeout.current !== null) {
+      clearTimeout(syncNoticeTimeout.current);
+      syncNoticeTimeout.current = null;
+    }
+    setManualSyncRequestedAt(Date.now());
+    syncKey.current ??= idempotencyKey();
+    setActionError(false);
+    sync.mutate(syncKey.current);
+  }
+
+  return (
+    <section
+      aria-label={t("title")}
+      className="basis-full rounded-xl border border-border bg-app-panel-muted p-3"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <h3 className="text-sm font-medium">{t("title")}</h3>
+          <p className="max-w-2xl text-xs text-muted-foreground">
+            {t("credentialNotice")}
+          </p>
+        </div>
+        {inbox.data ? (
+          <Badge variant={inbox.data.enabled ? "success-subtle" : "secondary"}>
+            {inbox.data.enabled ? t("enabled") : t("disabled")}
+          </Badge>
+        ) : null}
+      </div>
+
+      {inbox.isPending ? (
+        <p role="status" className="mt-3 text-sm text-muted-foreground">
+          {t("loading")}
+        </p>
+      ) : inbox.isError ? (
+        <div role="alert" className="mt-3 flex items-center gap-2 text-sm text-destructive">
+          <p>{t("loadFailed")}</p>
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            className="h-auto p-0 text-destructive"
+            onClick={() => void inbox.refetch()}
+          >
+            {t("retry")}
+          </Button>
+        </div>
+      ) : inbox.data ? (
+        <div className="mt-3 grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <div className="grid gap-1.5">
+              <Label htmlFor={hostId}>{t("host")}</Label>
+              <Input
+                id={hostId}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t("hostPlaceholder")}
+                value={imapHost}
+                required
+                onChange={(event) => changeHost(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id={enabledId}
+                  checked={enabled}
+                  onCheckedChange={(checked) => changeEnabled(checked === true)}
+                  aria-describedby={`${enabledId}-description`}
+                />
+                <Label htmlFor={enabledId} className="cursor-pointer text-sm">
+                  {t("enable")}
+                </Label>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={
+                  !dirty ||
+                  !imapHost.trim() ||
+                  update.isPending ||
+                  inbox.isFetching
+                }
+                onClick={saveSettings}
+              >
+                {update.isPending ? t("saving") : t("save")}
+              </Button>
+            </div>
+          </div>
+
+          <p id={`${enabledId}-description`} className="text-xs text-muted-foreground">
+            {t("serverSettings", {
+              port: inbox.data.imap_port,
+              folder: inbox.data.folder,
+            })}
+          </p>
+
+          <dl className="grid gap-x-5 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex gap-1.5">
+              <dt className="text-muted-foreground">{t("importedMessages")}</dt>
+              <dd>{inbox.data.imported_messages}</dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt className="text-muted-foreground">{t("lastSuccess")}</dt>
+              <dd>
+                <time dateTime={inbox.data.last_success_at ?? undefined}>
+                  {formatDateTime(inbox.data.last_success_at, locale)}
+                </time>
+              </dd>
+            </div>
+            <div className="flex gap-1.5">
+              <dt className="text-muted-foreground">{t("nextSync")}</dt>
+              <dd>{formatDateTime(inbox.data.next_sync_at, locale)}</dd>
+            </div>
+          </dl>
+
+          <details className="rounded-lg border border-border px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium">
+              {t("advancedDiagnostics")}
+            </summary>
+            <p className="mt-2 text-2xs text-muted-foreground">
+              {t("bookmarkDescription")}
+            </p>
+            <dl className="mt-2 grid gap-x-5 gap-y-1 text-xs sm:grid-cols-2">
+              <div className="flex gap-1.5">
+                <dt className="text-muted-foreground">{t("cursor")}</dt>
+                <dd>
+                  {inbox.data.cursor_uidvalidity ?? "—"} / {inbox.data.cursor_uid}
+                </dd>
+              </div>
+            </dl>
+          </details>
+
+          {inbox.data.last_error_code ? (
+            <p role="alert" className="text-xs text-destructive">
+              {t("lastError", { code: inbox.data.last_error_code })}
+            </p>
+          ) : null}
+          {showQueuedNotice ? (
+            <p role="status" className="text-xs text-muted-foreground">
+              {t("syncQueued")}
+            </p>
+          ) : null}
+          {actionError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {t("requestFailed")}
+            </p>
+          ) : null}
+
+          <Button
+            type="button"
+            size="sm"
+            className="w-fit"
+            disabled={
+              !inbox.data.enabled ||
+              connection.status !== "active" ||
+              sync.isPending
+            }
+            onClick={requestSync}
+          >
+            {sync.isPending ? t("syncing") : t("syncNow")}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 export function SmtpSettings({
@@ -267,6 +620,7 @@ export function SmtpSettings({
     create.mutate({
       name: form.name.trim(),
       mail_account_id: form.mailAccountId,
+      purpose: form.purpose,
       host: form.host.trim(),
       port,
       security: form.security,
@@ -338,6 +692,11 @@ export function SmtpSettings({
                       <Badge variant="secondary">
                         {statusLabel(connection.status)}
                       </Badge>
+                      <Badge variant="outline">
+                        {connection.purpose === "correspondence"
+                          ? t("purposes.correspondence")
+                          : t("purposes.marketing")}
+                      </Badge>
                     </div>
                     <p className="mt-1 text-2xs text-muted-foreground">
                       {connection.username} → {connection.from_address}
@@ -381,6 +740,7 @@ export function SmtpSettings({
                       </Button>
                     ) : null}
                   </div>
+                  <SmtpInboxSyncPanel connection={connection} />
                 </li>
               ))}
             </ul>
@@ -430,6 +790,23 @@ export function SmtpSettings({
                       {account.name}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="smtp-purpose">{t("purpose")}</Label>
+              <Select
+                value={form.purpose}
+                onValueChange={(purpose: SmtpPurpose) =>
+                  setForm((current) => ({ ...current, purpose }))
+                }
+              >
+                <SelectTrigger id="smtp-purpose" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="marketing">{t("purposes.marketing")}</SelectItem>
+                  <SelectItem value="correspondence">{t("purposes.correspondence")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

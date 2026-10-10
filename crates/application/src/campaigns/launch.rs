@@ -2,7 +2,7 @@
 //! approval-request creation, pause, cancel. All transitions are
 //! forward-only and only touch columns the A.6.2 freeze guards allow.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use contracts::campaigns::{
     CreateLaunchRequest, CreateLaunchResponse, EnrollmentSummary, LaunchApprovalRequestResponse,
     LaunchDetail, LaunchMessageItem, LaunchMessagePage, LaunchSummary,
@@ -85,6 +85,486 @@ async fn readable_launch_chain(
     Ok((l, r, c))
 }
 
+fn execution_status_for_launch(
+    launch_status: &str,
+    job: Option<&repo::LaunchActivationJob>,
+) -> String {
+    if let Some(job) = job {
+        if launch_status == d::launch_status::APPROVED && job.requested_by.is_none() {
+            return "ready".to_string();
+        }
+        return match job.state.as_str() {
+            "queued" | "retry_wait" => "queued",
+            "running" => "running",
+            "completed"
+                if matches!(
+                    launch_status,
+                    d::launch_status::RUNNING | d::launch_status::COMPLETED
+                ) =>
+            {
+                "activated"
+            }
+            "completed" if launch_status == d::launch_status::APPROVED => "unknown",
+            "completed" => "activated",
+            "dead" => "failed",
+            "canceled" => "canceled",
+            _ => "unknown",
+        }
+        .to_string();
+    }
+    if launch_status == d::launch_status::APPROVED {
+        "ready".to_string()
+    } else if matches!(
+        launch_status,
+        d::launch_status::RUNNING | d::launch_status::COMPLETED
+    ) {
+        "activated".to_string()
+    } else {
+        "not_ready".to_string()
+    }
+}
+
+async fn launch_allowed_actions(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    launch: &repo::LaunchRow,
+    campaign: &repo::CampaignRow,
+    execution_status: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut actions = vec!["read".to_string()];
+    if launch.status != d::launch_status::APPROVED || execution_status != "ready" {
+        return Ok(actions);
+    }
+    let Some(grant) = authz::mailbox_grant(tx, ctx, campaign.mail_account_id).await? else {
+        return Ok(actions);
+    };
+    let credential_call = ctx.principal_kind == contracts::PrincipalKind::Agent
+        || matches!(&ctx.auth, contracts::AuthMethod::ServiceCredential { .. });
+    let principal_allowed = if credential_call {
+        ctx.scopes
+            .contains(contracts::Scope::CampaignSubmitApproved)
+    } else {
+        ctx.principal_kind == contracts::PrincipalKind::Human
+    };
+    if principal_allowed && (grant.can_compose || grant.can_send) {
+        actions.push("execute_launch".to_string());
+    }
+    Ok(actions)
+}
+
+/// Check the live approved request, its immutable decision, and both sides'
+/// current mailbox authority. Called before queueing and again by activation.
+pub(super) async fn validate_approved_launch(
+    tx: &mut Tx<'_>,
+    launch: &repo::LaunchRow,
+    expected_request_id: Option<Uuid>,
+) -> Result<approvals_repo::ApprovalRequestRow, AppError> {
+    let Some(request) = approvals_repo::active_request_for_launch(tx, launch.id).await? else {
+        return Err(AppError::conflict("campaign launch has no active approval"));
+    };
+    if expected_request_id.is_some_and(|id| id != request.id)
+        || request.action_type != "campaign_launch"
+        || request.launch_id != Some(launch.id)
+        || request.requested_by != launch.requested_by
+        || request.status != "approved"
+    {
+        return Err(AppError::conflict(
+            "campaign launch approval is not current",
+        ));
+    }
+    let now = Utc::now();
+    if request.expires_at <= now || launch.expires_at <= now {
+        return Err(AppError::new(
+            ErrorCode::ApprovalExpired,
+            "campaign launch approval has expired",
+        ));
+    }
+    let Some(manifest_hash) = launch.manifest_hash.as_ref() else {
+        return Err(AppError::conflict("campaign launch has no frozen manifest"));
+    };
+    if manifest_hash.len() != 32 || request.snapshot_hash != *manifest_hash {
+        return Err(AppError::new(
+            ErrorCode::SnapshotMismatch,
+            "approval snapshot does not match the frozen launch manifest",
+        ));
+    }
+
+    let Some(decision) = approvals_repo::get_decision(tx, request.id).await? else {
+        return Err(AppError::conflict(
+            "approved campaign launch has no decision",
+        ));
+    };
+    if decision.decision != "approved"
+        || decision.version_at_decision.checked_add(1) != Some(request.version)
+        || decision.decided_by == launch.requested_by
+    {
+        return Err(AppError::conflict(
+            "campaign launch decision is no longer valid",
+        ));
+    }
+    let Some((approver_status, approver_kind, approver_role)) =
+        infrastructure::repo::sending::principal_state(tx, decision.decided_by).await?
+    else {
+        return Err(AppError::forbidden("campaign approver is unavailable"));
+    };
+    if approver_status != "active"
+        || approver_kind != "human"
+        || !matches!(approver_role.as_str(), "admin" | "manager")
+    {
+        return Err(AppError::forbidden(
+            "campaign approver is no longer authorized",
+        ));
+    }
+    let revision = repo::get_revision(tx, launch.revision_id)
+        .await?
+        .ok_or_else(|| AppError::internal("launch revision missing"))?;
+    let approver_grant = infrastructure::repo::sending::grant_for_principal(
+        tx,
+        decision.decided_by,
+        revision.mail_account_id,
+    )
+    .await?;
+    if !matches!(approver_grant, Some((_, _, _, true, _))) {
+        return Err(AppError::forbidden(
+            "campaign approver no longer has mailbox approval access",
+        ));
+    }
+
+    let Some((freeze_requester, source_credential_id)) =
+        repo::launch_freeze_attribution(tx, launch.id).await?
+    else {
+        return Err(AppError::forbidden(
+            "campaign launch requester attribution is unavailable",
+        ));
+    };
+    if freeze_requester != Some(launch.requested_by) {
+        return Err(AppError::forbidden(
+            "campaign launch requester attribution changed",
+        ));
+    }
+    let Some((requester_status, requester_kind, _)) =
+        infrastructure::repo::sending::principal_state(tx, launch.requested_by).await?
+    else {
+        return Err(AppError::forbidden("campaign requester is unavailable"));
+    };
+    if requester_status != "active" || !matches!(requester_kind.as_str(), "human" | "agent") {
+        return Err(AppError::forbidden(
+            "campaign requester is no longer active",
+        ));
+    }
+    if requester_kind == "agent" && source_credential_id.is_none() {
+        return Err(AppError::forbidden(
+            "campaign agent requester has no active credential",
+        ));
+    }
+    if let Some(credential_id) = source_credential_id
+        && !infrastructure::repo::auth::credential_authorizes(
+            tx,
+            credential_id,
+            Some(launch.requested_by),
+            &[contracts::Scope::CampaignCompose.as_str()],
+        )
+        .await?
+    {
+        return Err(AppError::forbidden(
+            "campaign requester credential is no longer authorized",
+        ));
+    }
+    let requester_grant = infrastructure::repo::sending::grant_for_principal(
+        tx,
+        launch.requested_by,
+        revision.mail_account_id,
+    )
+    .await?;
+    if !matches!(requester_grant, Some((_, true, _, _, _))) {
+        return Err(AppError::forbidden(
+            "campaign requester no longer has mailbox compose access",
+        ));
+    }
+    Ok(request)
+}
+
+/// Re-check the principal and credential that explicitly queued activation.
+/// False means this is an old approval-only activation job and it must finish
+/// as a no-op until a human or narrowly scoped agent authorizes execution.
+pub(super) async fn validate_activation_executor(
+    tx: &mut Tx<'_>,
+    campaign: &repo::CampaignRow,
+    job: &repo::LaunchActivationJob,
+) -> Result<bool, AppError> {
+    let Some(executor_id) = job.requested_by else {
+        return Ok(false);
+    };
+    let Some((status, kind, _)) =
+        infrastructure::repo::sending::principal_state(tx, executor_id).await?
+    else {
+        return Err(AppError::forbidden(
+            "campaign execution principal is unavailable",
+        ));
+    };
+    if status != "active" {
+        return Err(AppError::forbidden(
+            "campaign execution principal is no longer active",
+        ));
+    }
+    if let Some(credential_id) = job.source_credential_id {
+        if !infrastructure::repo::auth::credential_authorizes(
+            tx,
+            credential_id,
+            Some(executor_id),
+            &[contracts::Scope::CampaignSubmitApproved.as_str()],
+        )
+        .await?
+        {
+            return Err(AppError::forbidden(
+                "campaign execution credential is no longer authorized",
+            ));
+        }
+    } else if kind != "human" {
+        return Err(AppError::forbidden(
+            "campaign agent execution requires its current credential",
+        ));
+    }
+    if !matches!(kind.as_str(), "human" | "agent") {
+        return Err(AppError::forbidden(
+            "campaign execution requires a human or agent principal",
+        ));
+    }
+    let grant = infrastructure::repo::sending::grant_for_principal(
+        tx,
+        executor_id,
+        campaign.mail_account_id,
+    )
+    .await?;
+    if !matches!(grant, Some((_, true, _, _, _)) | Some((_, _, true, _, _))) {
+        return Err(AppError::forbidden(
+            "campaign execution principal no longer has mailbox access",
+        ));
+    }
+    Ok(true)
+}
+
+/// Queue the approved frozen launch once. Human REST callers authenticate as
+/// humans; credential callers need campaign.submit_approved and the current
+/// campaign mailbox compose or send grant.
+pub async fn execute_launch(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    launch_id: Uuid,
+    req: &contracts::campaigns::ExecuteLaunchRequest,
+) -> Result<contracts::campaigns::ExecuteLaunchResponse, AppError> {
+    let credential_call = ctx.principal_kind == contracts::PrincipalKind::Agent
+        || matches!(&ctx.auth, contracts::AuthMethod::ServiceCredential { .. });
+    if credential_call {
+        authz::require_scope(ctx, contracts::Scope::CampaignSubmitApproved)?;
+        if let contracts::AuthMethod::ServiceCredential { credential_id } = ctx.auth
+            && !infrastructure::repo::auth::credential_authorizes(
+                tx,
+                credential_id,
+                Some(ctx.principal_id),
+                &[contracts::Scope::CampaignSubmitApproved.as_str()],
+            )
+            .await?
+        {
+            return Err(AppError::forbidden(
+                "campaign execution credential is no longer authorized",
+            ));
+        }
+    } else {
+        authz::require_human(ctx)?;
+    }
+
+    let Some(launch) = repo::get_launch_for_update(tx, launch_id).await? else {
+        return Err(AppError::not_found("campaign launch not found"));
+    };
+    version_check(req.expected_version, launch.version)?;
+    if launch.status != d::launch_status::APPROVED {
+        return Err(AppError::conflict(format!(
+            "launch is {} and cannot be executed",
+            launch.status
+        )));
+    }
+    let expected_hash = decode_hex(&req.expected_manifest_hash)
+        .filter(|hash| hash.len() == 32)
+        .ok_or_else(|| AppError::validation("expected_manifest_hash must be sha256 hex", vec![]))?;
+    let current_hash = launch.manifest_hash.as_deref().unwrap_or_default();
+    if expected_hash.as_slice() != current_hash {
+        return Err(AppError::new(
+            ErrorCode::SnapshotMismatch,
+            "expected_manifest_hash does not match the frozen launch manifest",
+        ));
+    }
+    let revision = repo::get_revision(tx, launch.revision_id)
+        .await?
+        .ok_or_else(|| AppError::internal("launch revision missing"))?;
+    let campaign = repo::get_campaign(tx, revision.campaign_id)
+        .await?
+        .ok_or_else(|| AppError::internal("launch campaign missing"))?;
+    let caller_grant = authz::mailbox_grant(tx, ctx, campaign.mail_account_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::new(ErrorCode::MailboxAccessDenied, "no access to this mailbox")
+        })?;
+    if !caller_grant.can_compose && !caller_grant.can_send {
+        return Err(AppError::new(
+            ErrorCode::MailboxAccessDenied,
+            "no access to this mailbox",
+        ));
+    }
+    if credential_call {
+        let Some((freeze_requester, source_credential_id)) =
+            repo::launch_freeze_attribution(tx, launch.id).await?
+        else {
+            return Err(AppError::forbidden(
+                "campaign launch requester attribution is unavailable",
+            ));
+        };
+        if freeze_requester != Some(launch.requested_by) {
+            return Err(AppError::forbidden(
+                "campaign launch requester attribution changed",
+            ));
+        }
+        let requester_kind =
+            infrastructure::repo::sending::principal_state(tx, launch.requested_by)
+                .await?
+                .map(|(_, kind, _)| kind);
+        if requester_kind.as_deref() == Some("agent") {
+            let caller_credential_id = match ctx.auth {
+                contracts::AuthMethod::ServiceCredential { credential_id } => Some(credential_id),
+                _ => None,
+            };
+            if ctx.principal_id != launch.requested_by
+                || caller_credential_id != source_credential_id
+            {
+                return Err(AppError::forbidden(
+                    "agent execution must use the launch requester's original credential",
+                ));
+            }
+        }
+    }
+    let approval = validate_approved_launch(tx, &launch, None).await?;
+    let explicit_submission_at: DateTime<Utc> =
+        sqlx::query_scalar("SELECT date_trunc('microseconds', now())")
+            .fetch_one(tx.conn())
+            .await
+            .map_err(infrastructure::error::map_sqlx)?;
+
+    let mut enqueue_or_authorize = false;
+    let job = if let Some(existing) = repo::launch_activation_job(tx, launch_id).await? {
+        if existing
+            .approval_request_id
+            .as_deref()
+            .and_then(|value| Uuid::parse_str(value).ok())
+            != Some(approval.id)
+        {
+            return Err(AppError::conflict(
+                "existing activation job is bound to another approval",
+            ));
+        }
+        if existing.requested_by.is_some() {
+            validate_activation_executor(tx, &campaign, &existing).await?;
+        } else if matches!(existing.state.as_str(), "queued" | "retry_wait") {
+            infrastructure::repo::org::tag_job_requester(
+                tx,
+                existing.id,
+                ctx.principal_id,
+                match ctx.auth {
+                    contracts::AuthMethod::ServiceCredential { credential_id } => {
+                        Some(credential_id)
+                    }
+                    _ => None,
+                },
+            )
+            .await?;
+            enqueue_or_authorize = true;
+        } else {
+            return Err(AppError::conflict(
+                "explicit activation job has no executor attribution",
+            ));
+        }
+        existing.id
+    } else {
+        let id = repo::enqueue_dedup(
+            tx,
+            "campaigns.activate_launch",
+            serde_json::json!({
+                "campaign_launch_id": launch_id,
+                "approval_request_id": approval.id,
+                "explicit_submission_at": explicit_submission_at,
+            }),
+            Utc::now(),
+            &format!("explicit_activate_launch:{launch_id}"),
+        )
+        .await?;
+        infrastructure::repo::org::tag_job_requester(
+            tx,
+            id,
+            ctx.principal_id,
+            match ctx.auth {
+                contracts::AuthMethod::ServiceCredential { credential_id } => Some(credential_id),
+                _ => None,
+            },
+        )
+        .await?;
+        enqueue_or_authorize = true;
+        id
+    };
+    if enqueue_or_authorize && !repo::bump_launch_version(tx, launch_id, launch.version).await? {
+        return Err(AppError::new(
+            ErrorCode::VersionMismatch,
+            "campaign launch version changed during execution",
+        ));
+    }
+    let Some(job_row) = repo::launch_activation_job(tx, launch_id).await? else {
+        return Err(AppError::internal("activation job missing after enqueue"));
+    };
+    if job_row.explicit_submission_at.is_none() {
+        return Err(AppError::conflict(
+            "explicit activation job is missing its submission timestamp",
+        ));
+    }
+    let execution_status = execution_status_for_launch(&launch.status, Some(&job_row));
+    if enqueue_or_authorize {
+        audit::record(
+            tx,
+            audited(
+                ctx,
+                "campaign.execution_authorized",
+                "campaign_launch",
+                launch_id,
+                serde_json::json!({
+                    "approval_request_id": approval.id,
+                    "activation_job_id": job,
+                    "manifest_hash": hex_of(current_hash),
+                }),
+            ),
+        )
+        .await?;
+        outbox::emit(
+            tx,
+            "campaign.execution_queued",
+            "campaign_launch",
+            launch_id,
+            launch.version + 1,
+            serde_json::json!({
+                "campaign_id": campaign.id,
+                "approval_request_id": approval.id,
+                "activation_job_id": job,
+                "execution_status": execution_status,
+            }),
+        )
+        .await?;
+    }
+    Ok(contracts::campaigns::ExecuteLaunchResponse {
+        launch_id,
+        launch_status: launch.status,
+        execution_status,
+        job_id: job,
+        manifest_hash: hex_of(current_hash),
+        version: launch.version + if enqueue_or_authorize { 1 } else { 0 },
+    })
+}
+
 // --------------------------------------------------------------- create
 
 /// POST /campaigns/{id}/launches (B.3.8) — inside `idempotency::run`.
@@ -147,6 +627,7 @@ pub async fn create_launch(
             "campaign_launch_id": launch_id,
             "email_address_ids": req.email_address_ids,
             "variables": req.variables,
+            "tracking_requested": req.tracking_requested,
             "requester_context": requester_context_snapshot(ctx),
         }),
         Utc::now(),
@@ -218,6 +699,11 @@ pub async fn get_launch(
 ) -> Result<LaunchDetail, AppError> {
     let mut tx = db.begin(ctx.workspace_id).await?;
     let (launch, revision, campaign) = readable_launch_chain(&mut tx, ctx, launch_id).await?;
+    let activation_job = repo::launch_activation_job(&mut tx, launch_id).await?;
+    let execution_status = execution_status_for_launch(&launch.status, activation_job.as_ref());
+    let activation_job_id = activation_job.as_ref().map(|job| job.id);
+    let allowed_actions =
+        launch_allowed_actions(&mut tx, ctx, &launch, &campaign, &execution_status).await?;
 
     let counts = repo::enrollment_counts(&mut tx, launch_id).await?;
     let steps = repo::list_steps(&mut tx, revision.id).await?;
@@ -279,7 +765,54 @@ pub async fn get_launch(
             stopped: counts.stopped,
             suppressed: counts.suppressed,
         },
+        execution_status,
+        activation_job_id,
+        allowed_actions,
         messages,
+    })
+}
+
+/// Read-safe campaign launch status for agents; exposes enrollment ids/counts,
+/// never per-recipient addresses or frozen message bodies.
+pub async fn get_launch_status(
+    db: &infrastructure::db::Db,
+    ctx: &Ctx,
+    launch_id: Uuid,
+) -> Result<contracts::campaigns::CampaignLaunchStatus, AppError> {
+    super::campaign::require_read_scope_for_credentials(ctx)?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let (launch, revision, campaign) = readable_launch_chain(&mut tx, ctx, launch_id).await?;
+    let counts = repo::enrollment_counts(&mut tx, launch_id).await?;
+    let enrollment_ids = repo::list_enrollments(&mut tx, launch_id)
+        .await?
+        .into_iter()
+        .map(|enrollment| enrollment.id)
+        .collect();
+    let activation_job = repo::launch_activation_job(&mut tx, launch_id).await?;
+    let execution_status = execution_status_for_launch(&launch.status, activation_job.as_ref());
+    tx.commit().await?;
+    Ok(contracts::campaigns::CampaignLaunchStatus {
+        launch_id: launch.id,
+        campaign_id: campaign.id,
+        revision_id: revision.id,
+        mail_account_id: campaign.mail_account_id,
+        status: launch.status,
+        manifest_hash: launch.manifest_hash.as_deref().map(hex_of),
+        frozen_at: launch.frozen_at,
+        expires_at: launch.expires_at,
+        version: launch.version,
+        created_at: launch.created_at,
+        execution_status,
+        activation_job_id: activation_job.map(|job| job.id),
+        enrollments: EnrollmentSummary {
+            total: counts.total,
+            pending: counts.pending,
+            active: counts.active,
+            completed: counts.completed,
+            stopped: counts.stopped,
+            suppressed: counts.suppressed,
+        },
+        enrollment_ids,
     })
 }
 

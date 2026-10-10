@@ -41,9 +41,13 @@ describe("approvals API", () => {
     expect(res.data.status).toBe("pending");
   });
 
-  it("postApprovalDecision — If-Match + Idempotency-Key + expected_snapshot_hash (B.3.9)", async () => {
+  it("postApprovalDecision — records message approval without dispatching", async () => {
     const calls = mockFetch(200, {
-      data: { approval_status: "approved", execution_status: "queued" },
+      data: {
+        approval_status: "approved",
+        execution_status: "ready",
+        job_id: null,
+      },
     });
     const res = await postApprovalDecision(
       "a1",
@@ -62,8 +66,8 @@ describe("approvals API", () => {
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.decision).toBe("approved");
     expect(body.expected_snapshot_hash).toBe("cd".repeat(32));
-    // execution_status는 비동기 실행 — 발송 완료가 아니다.
-    expect(res.data.execution_status).toBe("queued");
+    expect(res.data.execution_status).toBe("ready");
+    expect(res.data.job_id).toBeNull();
   });
 
   it("revokeApproval — POST /{id}/revoke + If-Match", async () => {

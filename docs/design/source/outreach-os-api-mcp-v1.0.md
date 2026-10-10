@@ -273,7 +273,7 @@ Content-Type: application/json
 }
 ```
 
-첫 grant 생성은 `If-None-Match: *`로 명시한다. 다른 작업자가 먼저 생성하면 412다. Agent에게 `can_send`·`can_approve=true`를 설정하는 요청은 정책 위반으로 거절한다.
+첫 grant 생성은 `If-None-Match: *`로 명시한다. 다른 작업자가 먼저 생성하면 412다. Agent에게 `can_send=true`는 승인 제출의 mailbox ACL을 충족할 때만 허용하고, `can_approve=true`는 거절한다. Agent의 직접 REST 제출과 `mail.send`는 계속 금지한다.
 
 ### B.3.3 기업 생성·중복 조회
 

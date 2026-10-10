@@ -7,8 +7,9 @@ use axum::response::IntoResponse;
 use contracts::campaigns::{
     CampaignDetail, CampaignSummary, CancelLaunchRequest, CreateCampaignRequest,
     CreateCampaignResponse, CreateLaunchApprovalRequest, CreateLaunchRequest, CreateLaunchResponse,
-    CreateRevisionRequest, CreateRevisionResponse, LaunchApprovalRequestResponse, LaunchDetail,
-    LaunchSummary, PauseLaunchRequest, PreflightRequest, PreflightResponse,
+    CreateRevisionRequest, CreateRevisionResponse, ExecuteLaunchRequest, ExecuteLaunchResponse,
+    LaunchApprovalRequestResponse, LaunchDetail, LaunchSummary, PauseLaunchRequest,
+    PreflightRequest, PreflightResponse,
 };
 use contracts::{Envelope, Problem};
 use infrastructure::crypto;
@@ -32,6 +33,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(preflight))
         .routes(routes!(create_launch))
         .routes(routes!(get_launch))
+        .routes(routes!(execute_launch))
         .routes(routes!(create_launch_approval_request))
         .routes(routes!(pause_launch))
         .routes(routes!(cancel_launch))
@@ -291,6 +293,64 @@ async fn get_launch(
     .await?;
     let version = detail.launch.version;
     Ok((etag(version), axum::Json(envelope(detail, &ctx.request_id))))
+}
+
+#[utoipa::path(
+    post, path = "/campaign-launches/{id}/execute",
+    params(("id" = Uuid, Path, description = "Campaign launch id")),
+    request_body = ExecuteLaunchRequest,
+    responses(
+        (status = 202, description = "Approved launch activation queued", body = ExecuteLaunchResponse),
+        (status = 403, description = "Human principal or campaign mailbox grant required", body = Problem),
+        (status = 404, description = "Launch not found", body = Problem),
+        (status = 409, description = "Approval/snapshot/state mismatch or idempotency key reused", body = Problem),
+        (status = 412, description = "Launch version mismatch", body = Problem),
+        (status = 422, description = "Approval expired or policy blocked", body = Problem),
+    )
+)]
+async fn execute_launch(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    key: IdempotencyKey,
+    Path(id): Path<Uuid>,
+    Json(req): Json<ExecuteLaunchRequest>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    application::authz::require_human(&ctx)?;
+    let request_id = ctx.request_id.clone();
+    let hash = crypto::sha256_bytes(
+        &serde_json::to_vec(&serde_json::json!({"launch_id": id, "body": &req}))
+            .unwrap_or_default(),
+    );
+    let scope = idempotency::Scope {
+        workspace_id: ctx.workspace_id,
+        principal_or_capability: ctx.principal_id.to_string(),
+        endpoint: "POST /campaign-launches/{id}/execute".to_string(),
+        key: key.0,
+    };
+    let out = idempotency::run(&state.db, &scope, &hash, |mut tx| {
+        let ctx = ctx.clone();
+        async move {
+            let body = application::campaigns::execute_launch(&mut tx, &ctx, id, &req).await?;
+            Ok((tx, Stored { status: 202, body }))
+        }
+    })
+    .await?
+    .into_inner();
+    let mut headers = etag(out.body.version);
+    headers.insert(
+        axum::http::header::LOCATION,
+        axum::http::HeaderValue::from_str(&format!(
+            "/api/v1/campaign-launches/{}",
+            out.body.launch_id
+        ))
+        .unwrap(),
+    );
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        headers,
+        axum::Json(envelope(out.body, &request_id)),
+    ))
 }
 
 #[utoipa::path(

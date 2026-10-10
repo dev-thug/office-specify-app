@@ -103,6 +103,20 @@ pub async fn create(
     req: &CreateEmailTemplateRequest,
 ) -> Result<EmailTemplateResponse, AppError> {
     authz::require_scope(ctx, Scope::TemplatesWrite)?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let response = create_in_tx(&mut tx, ctx, req).await?;
+    tx.commit().await?;
+    Ok(response)
+}
+
+/// Transaction-bound form used by MCP's idempotency boundary. The logical
+/// template, audit row, outbox event and idempotency response share a commit.
+pub async fn create_in_tx(
+    tx: &mut Tx<'_>,
+    ctx: &Ctx,
+    req: &CreateEmailTemplateRequest,
+) -> Result<EmailTemplateResponse, AppError> {
+    authz::require_scope(ctx, Scope::TemplatesWrite)?;
     let name = req.name.trim();
     if name.is_empty() || name.chars().count() > 300 {
         return Err(AppError::validation(
@@ -113,10 +127,9 @@ pub async fn create(
             }],
         ));
     }
-    let mut tx = db.begin(ctx.workspace_id).await?;
-    let row = repo::create_template(&mut tx, name, ctx.principal_id).await?;
+    let row = repo::create_template(tx, name, ctx.principal_id).await?;
     audit::record(
-        &mut tx,
+        tx,
         AuditEntry::new(
             ctx.principal_id,
             "template.created",
@@ -127,7 +140,7 @@ pub async fn create(
     )
     .await?;
     outbox::emit(
-        &mut tx,
+        tx,
         "template.created",
         "email_template",
         row.id,
@@ -135,7 +148,6 @@ pub async fn create(
         serde_json::json!({"template_id": row.id}),
     )
     .await?;
-    tx.commit().await?;
     Ok(to_response(row))
 }
 

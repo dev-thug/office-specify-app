@@ -33,6 +33,7 @@ base64.workspace = true
 reqwest.workspace = true
 
 [dev-dependencies]
+worker.workspace = true
 sqlx.workspace = true
 chrono-tz.workspace = true
 rand.workspace = true

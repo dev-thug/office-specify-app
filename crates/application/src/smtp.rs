@@ -30,7 +30,27 @@ const SMTP_SECRET_PREFIX: &str = "secret://smtp";
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{valid_email, validate_custom_headers};
+    use super::{valid_email, validate_custom_headers, validate_request};
+    use contracts::smtp::CreateSmtpConnectionRequest;
+    use uuid::Uuid;
+
+    fn valid_create_request() -> CreateSmtpConnectionRequest {
+        CreateSmtpConnectionRequest {
+            name: "Office SMTP".into(),
+            mail_account_id: Uuid::new_v4(),
+            purpose: Some("marketing".into()),
+            host: "smtp.example.test".into(),
+            port: 587,
+            security: "starttls".into(),
+            username: "smtp-user".into(),
+            password: "smtp-secret".into(),
+            from_address: "news@example.test".into(),
+            from_name: "Office News".into(),
+            reply_to: None,
+            custom_headers: BTreeMap::new(),
+            sender_confirmed: true,
+        }
+    }
 
     #[test]
     fn rejects_case_insensitive_transport_owned_headers() {
@@ -67,6 +87,23 @@ mod tests {
     fn rejects_ambiguous_sender_addresses() {
         assert!(!valid_email("news@untrusted@example.test"));
         assert!(!valid_email("news name@example.test"));
+    }
+
+    #[test]
+    fn smtp_creation_allows_correspondence_but_rejects_transactional_purpose() {
+        let mut request = valid_create_request();
+        request.purpose = Some("correspondence".into());
+        assert!(validate_request(&request).is_ok());
+
+        request.purpose = Some("transactional".into());
+        assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn smtp_creation_accepts_an_omitted_purpose_for_legacy_clients() {
+        let mut request = valid_create_request();
+        request.purpose = None;
+        assert!(validate_request(&request).is_ok());
     }
 
     #[test]
@@ -137,6 +174,7 @@ fn response(row: repo::SmtpConnectionRow) -> Result<SmtpConnectionResponse, AppE
         sender_identity_id: row.sender_identity_id,
         version: row.version,
         has_password: row.has_password,
+        purpose: row.purpose,
     })
 }
 
@@ -241,6 +279,14 @@ fn validate_custom_headers(headers: &BTreeMap<String, String>) -> Result<(), App
 }
 
 fn validate_request(req: &CreateSmtpConnectionRequest) -> Result<(), AppError> {
+    let purpose = req.purpose.as_deref().unwrap_or("marketing");
+    if !matches!(purpose, "marketing" | "correspondence") {
+        return Err(invalid(
+            "purpose",
+            "invalid",
+            "purpose must be marketing or correspondence",
+        ));
+    }
     if req.name.trim().is_empty() || req.name.len() > 200 || req.name.chars().any(char::is_control)
     {
         return Err(invalid(
@@ -325,6 +371,7 @@ pub async fn create_tx(
 ) -> Result<SmtpConnectionResponse, AppError> {
     crate::marketing::revalidate_admin_session_tx(tx, ctx).await?;
     validate_request(req)?;
+    let purpose = req.purpose.as_deref().unwrap_or("marketing");
     let account = mailboxes::get_mail_account_scoped(tx, req.mail_account_id)
         .await?
         .ok_or_else(|| AppError::not_found("mail account not found"))?;
@@ -374,7 +421,7 @@ pub async fn create_tx(
         sender_identity_id,
         id,
         "delivery_provider",
-        "marketing",
+        purpose,
         req.name.trim(),
         &serde_json::json!({
             "custom_headers": true,
@@ -389,7 +436,7 @@ pub async fn create_tx(
         channel.id,
         ctx.principal_id,
         ReviewResult::Allowed.as_str(),
-        "marketing",
+        purpose,
         None,
         Some(&format!("smtp-sender-attestation:{sender_identity_id}")),
         Some("Administrator attested that this is a registered sender or authorized alias; SMTP verification checks credentials only."),
@@ -425,6 +472,7 @@ pub async fn create_tx(
             metadata: serde_json::json!({
                 "mail_account_id": account.id,
                 "channel_id": channel.id,
+                "purpose": purpose,
                 "sender_identity_id": sender_identity_id,
                 "sender_confirmed": true,
                 "credential_storage": "encrypted"
@@ -630,6 +678,7 @@ fn binding_to_row(row: repo::SmtpBindingRow) -> repo::SmtpConnectionRow {
         mail_account_id: row.mail_account_id,
         sender_identity_id: row.sender_identity_id,
         channel_id: row.channel_id,
+        purpose: row.purpose,
         name: row.name,
         host: row.host,
         port: row.port,

@@ -14,6 +14,7 @@ pub struct SmtpConnectionRow {
     pub mail_account_id: Uuid,
     pub sender_identity_id: Uuid,
     pub channel_id: Uuid,
+    pub purpose: String,
     pub name: String,
     pub host: String,
     pub port: i32,
@@ -37,6 +38,7 @@ pub struct SmtpBindingRow {
     pub mail_account_id: Uuid,
     pub sender_identity_id: Uuid,
     pub channel_id: Uuid,
+    pub purpose: String,
     pub name: String,
     pub host: String,
     pub port: i32,
@@ -66,9 +68,12 @@ pub struct SenderIdentityRow {
     pub status: String,
 }
 
-const PROFILE_COLS: &str = "id, workspace_id, mail_account_id, sender_identity_id,
-    channel_id, name, host, port, security, username, from_address, from_name,
-    reply_to, custom_headers, status, last_error_code, has_password, version, created_at";
+const PROFILE_COLS: &str = "sc.id, sc.workspace_id, sc.mail_account_id, sc.sender_identity_id,
+    sc.channel_id, sc.name, sc.host, sc.port, sc.security, sc.username,
+    sc.from_address, sc.from_name, sc.reply_to, sc.custom_headers, sc.status,
+    sc.last_error_code, sc.has_password, sc.version, sc.created_at,
+    (SELECT dc.purpose FROM delivery_channels dc
+      WHERE dc.workspace_id = sc.workspace_id AND dc.id = sc.channel_id) AS purpose";
 
 /// Return only SMTP profiles whose mailbox is readable and sendable by the
 /// caller. The API still gates the operation to a human administrator.
@@ -174,7 +179,7 @@ pub async fn insert_connection(
     custom_headers: &serde_json::Value,
 ) -> Result<SmtpConnectionRow, AppError> {
     sqlx::query_as::<_, SmtpConnectionRow>(&format!(
-        "INSERT INTO smtp_connections
+        "INSERT INTO smtp_connections AS sc
             (id, workspace_id, mail_account_id, sender_identity_id, channel_id,
              name, host, port, security, username, from_address, from_name,
              reply_to, custom_headers, status, has_password)
@@ -208,13 +213,14 @@ pub async fn get_for_update(tx: &mut Tx<'_>, id: Uuid) -> Result<Option<SmtpBind
                 sc.status, sc.last_error_code, sc.has_password, sc.version, sc.created_at,
                 ic.secret_ref, ic.status AS integration_status,
                 dc.enabled AS channel_enabled, dc.policy_status AS channel_policy_status,
-                si.status AS sender_status
+                dc.purpose AS purpose, si.status AS sender_status
            FROM smtp_connections sc
            JOIN integration_connections ic
              ON ic.workspace_id = sc.workspace_id AND ic.id = sc.id
            JOIN delivery_channels dc
              ON dc.workspace_id = sc.workspace_id AND dc.id = sc.channel_id
             AND dc.connection_id = sc.id AND dc.provider = 'delivery_provider'
+            AND dc.purpose IN ('marketing','correspondence')
            JOIN sender_identities si
              ON si.workspace_id = sc.workspace_id
             AND si.mail_account_id = sc.mail_account_id
@@ -242,13 +248,14 @@ pub async fn resolve_for_channel(
                 sc.status, sc.last_error_code, sc.has_password, sc.version, sc.created_at,
                 ic.secret_ref, ic.status AS integration_status,
                 dc.enabled AS channel_enabled, dc.policy_status AS channel_policy_status,
-                si.status AS sender_status
+                dc.purpose AS purpose, si.status AS sender_status
            FROM smtp_connections sc
            JOIN integration_connections ic
              ON ic.workspace_id = sc.workspace_id AND ic.id = sc.id
            JOIN delivery_channels dc
              ON dc.workspace_id = sc.workspace_id AND dc.id = sc.channel_id
             AND dc.connection_id = sc.id AND dc.provider = 'delivery_provider'
+            AND dc.purpose IN ('marketing','correspondence')
            JOIN sender_identities si
              ON si.workspace_id = sc.workspace_id
             AND si.mail_account_id = sc.mail_account_id
@@ -309,7 +316,7 @@ pub async fn record_verify_result(
     .await
     .map_err(map_sqlx)?;
     sqlx::query_as::<_, SmtpConnectionRow>(&format!(
-        "UPDATE smtp_connections
+        "UPDATE smtp_connections AS sc
             SET status = $3, last_error_code = $4, has_password = $5,
                 version = version + 1
           WHERE workspace_id = $1 AND id = $2
@@ -347,6 +354,7 @@ pub async fn activate_verified(
                AND ic.status IN ('pending','active')
                AND sc.has_password
                AND si.status = 'verified'
+               AND dc.purpose IN ('marketing','correspondence')
                AND dc.policy_status = 'allowed'
                AND (SELECT cr.result FROM channel_reviews cr
                      WHERE cr.workspace_id = sc.workspace_id
@@ -389,7 +397,8 @@ pub async fn activate_verified(
             AND dc.id = (SELECT channel_id FROM smtp_connections
                           WHERE workspace_id = $1 AND id = $2)
             AND dc.connection_id = $2
-            AND dc.provider = 'delivery_provider' AND dc.purpose = 'marketing'
+            AND dc.provider = 'delivery_provider'
+            AND dc.purpose IN ('marketing','correspondence')
             AND dc.policy_status = 'allowed'",
     )
     .bind(tx.workspace_id())
@@ -402,7 +411,7 @@ pub async fn activate_verified(
         return Ok(None);
     }
     sqlx::query_as::<_, SmtpConnectionRow>(&format!(
-        "UPDATE smtp_connections
+        "UPDATE smtp_connections AS sc
             SET status = 'active', last_error_code = NULL, version = version + 1
           WHERE workspace_id = $1 AND id = $2 AND has_password
           RETURNING {PROFILE_COLS}"
@@ -452,7 +461,7 @@ pub async fn disable(tx: &mut Tx<'_>, id: Uuid) -> Result<Option<SmtpConnectionR
     .await
     .map_err(map_sqlx)?;
     sqlx::query_as::<_, SmtpConnectionRow>(&format!(
-        "UPDATE smtp_connections
+        "UPDATE smtp_connections AS sc
             SET status = 'disabled', last_error_code = NULL, has_password = false,
                 version = version + 1
           WHERE workspace_id = $1 AND id = $2
