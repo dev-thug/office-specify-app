@@ -37,7 +37,7 @@ import {
   useDeliveryChannels,
   type DeliveryChannel,
 } from "@/lib/api/settings";
-import { MEETING_TYPES_PATH, type MeetingType } from "@/lib/api/meetings";
+import { MEETING_TYPES_LIST_LIMIT, MEETING_TYPES_PATH, MEETING_TYPES_QUERY_KEY, PRINCIPALS_PATH, principalDisplayName, type MeetingType, type PrincipalRef } from "@/lib/api/meetings";
 import { useCursorList } from "@/lib/api/use-cursor-list";
 
 import {
@@ -91,6 +91,7 @@ export function DraftSendingWorkflow({
   onChanged,
 }: DraftSendingWorkflowProps) {
   const t = useTranslations("sending.workflow");
+  const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
   const channelSelectId = useId();
   const meetingTypeSelectId = useId();
@@ -217,9 +218,15 @@ export function DraftSendingWorkflow({
   );
 
   const meetingTypesQuery = useCursorList<MeetingType>({
-    queryKey: ["sending", "meeting-types"],
+    queryKey: MEETING_TYPES_QUERY_KEY,
     path: MEETING_TYPES_PATH,
-    limit: 200,
+    limit: MEETING_TYPES_LIST_LIMIT,
+    enabled: Boolean(selectedDraftId),
+  });
+  const meetingTypePrincipals = useCursorList<PrincipalRef>({
+    queryKey: ["meetings", "principals"],
+    path: PRINCIPALS_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
     enabled: Boolean(selectedDraftId),
   });
   const meetingTypes = useMemo(
@@ -229,6 +236,14 @@ export function DraftSendingWorkflow({
       ),
     [meetingTypesQuery.data]
   );
+  const meetingTypeHostNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const person of meetingTypePrincipals.data?.pages.flatMap((page) => page.data) ?? []) {
+      const name = principalDisplayName(person);
+      if (name) names.set(person.id, name);
+    }
+    return names;
+  }, [meetingTypePrincipals.data]);
 
   const mailAccountsQuery = useMailAccounts();
   const mailAccount = (mailAccountsQuery.data?.data ?? []).find(
@@ -567,16 +582,26 @@ export function DraftSendingWorkflow({
                     className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                     value={meetingTypeId}
                     onChange={(event) => setMeetingTypeId(event.target.value)}
-                    disabled={meetingTypesQuery.isLoading || pending === "freeze"}
+                    disabled={meetingTypesQuery.isLoading || meetingTypesQuery.isError || pending === "freeze"}
                   >
                     <option value="">{t("noMeetingType")}</option>
                     {meetingTypes.map((meetingType: MeetingType) => (
                       <option key={meetingType.id} value={meetingType.id}>
-                        {meetingType.name}
+                        {meetingType.name} · {t("meetingTypeDuration", { count: meetingType.duration_minutes })}
+                        {meetingTypeHostNames.get(meetingType.host_principal_id) ? ` · ${t("meetingTypeHost", { name: meetingTypeHostNames.get(meetingType.host_principal_id)! })}` : ""}
                       </option>
                     ))}
                   </select>
                 </div>
+                {meetingTypesQuery.isLoading ? <p role="status" className="mt-1 text-xs text-muted-foreground">{t("meetingTypesLoading")}</p> : null}
+                {meetingTypesQuery.isError ? (
+                  <div role="alert" className="mt-1 flex items-center gap-2 text-xs text-destructive">
+                    <p>{t("meetingTypesLoadFailed")}</p>
+                    <Button type="button" variant="link" size="xs" className="h-auto p-0 text-destructive" onClick={() => void meetingTypesQuery.refetch()}>{tCommon("retry")}</Button>
+                  </div>
+                ) : null}
+                {meetingTypesQuery.isSuccess && meetingTypes.length === 0 ? <p role="status" className="mt-1 text-xs text-muted-foreground">{t("noActiveMeetingTypes")} <Link href="/app/meeting-types" className="underline underline-offset-4">{t("manageMeetingTypes")}</Link></p> : null}
+                {meetingTypesQuery.hasNextPage ? <Button type="button" variant="link" size="xs" className="mt-1 h-auto w-fit p-0" disabled={meetingTypesQuery.isFetchingNextPage} onClick={() => void meetingTypesQuery.fetchNextPage()}>{meetingTypesQuery.isFetchingNextPage ? t("loadingMoreMeetingTypes") : t("loadMoreMeetingTypes")}</Button> : null}
               </div>
               {channelsQuery.isLoading ? (
                 <p className="text-xs text-muted-foreground">{t("channelsLoading")}</p>

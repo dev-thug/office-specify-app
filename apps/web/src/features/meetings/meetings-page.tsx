@@ -20,7 +20,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BOOKINGS_PATH,
+  MEETING_TYPES_LIST_LIMIT,
   PRINCIPALS_PATH,
+  principalDisplayName,
   type Booking,
   type BookingStatus,
   type PrincipalRef,
@@ -60,6 +62,7 @@ type RangePreset = "upcoming" | "past" | "all";
  */
 export function MeetingsPage() {
   const t = useTranslations("meetings");
+  const tCommon = useTranslations("common");
   const tStatus = useTranslations("status");
   const locale = useLocale();
 
@@ -102,6 +105,7 @@ export function MeetingsPage() {
   const principalsQuery = useCursorList<PrincipalRef>({
     queryKey: ["meetings", "principals"],
     path: PRINCIPALS_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
     staleTime: 60_000,
   });
 
@@ -124,11 +128,15 @@ export function MeetingsPage() {
   const principalName = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of principals) {
-      if (p.display_name) map.set(p.id, p.display_name);
+      const name = principalDisplayName(p);
+      if (name) map.set(p.id, name);
     }
     return (id: string | undefined) =>
-      (id && map.get(id)) || (id ? `${id.slice(0, 8)}…` : "—");
-  }, [principals]);
+      (id && map.get(id)) || (id ? tCommon("nameUnavailable") : "—");
+  }, [principals, tCommon]);
+
+  const selectedBooking = allBookings.find((row) => row.id === selectedId);
+  const selectedHostName = selectedBooking?.host_display_name ?? principalName(selectedBooking?.host_principal_id);
 
   const columns: ColumnDef<Booking>[] = [
     {
@@ -279,7 +287,7 @@ export function MeetingsPage() {
               <SelectItem value="all">{t("filters.hostAll")}</SelectItem>
               {principals.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
-                  {p.display_name ?? p.id}
+                  {principalDisplayName(p) ?? tCommon("nameUnavailable")}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -337,6 +345,7 @@ export function MeetingsPage() {
 
       <BookingDetailSheet
         bookingId={selectedId}
+        hostName={selectedHostName}
         onOpenChange={(open) => !open && setSelectedId(null)}
       />
       <BookingLinkDialog open={linkOpen} onOpenChange={setLinkOpen} />

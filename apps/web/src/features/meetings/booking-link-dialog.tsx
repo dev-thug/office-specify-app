@@ -2,6 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -28,9 +29,14 @@ import { ApiError } from "@/lib/api/problem";
 import { idempotencyKey } from "@/lib/api/client";
 import {
   createBookingLink,
+  MEETING_TYPES_LIST_LIMIT,
   MEETING_TYPES_PATH,
+  MEETING_TYPES_QUERY_KEY,
+  PRINCIPALS_PATH,
+  principalDisplayName,
   type BookingLink,
   type MeetingType,
+  type PrincipalRef,
 } from "@/lib/api/meetings";
 import { useCursorList } from "@/lib/api/use-cursor-list";
 import { meetingsErrorMessage } from "@/features/meetings/error-message";
@@ -62,9 +68,15 @@ export function BookingLinkDialog({
   const idemRef = useRef(idempotencyKey());
 
   const typesQuery = useCursorList<MeetingType>({
-    queryKey: ["meetings", "types", "active"],
+    queryKey: MEETING_TYPES_QUERY_KEY,
     path: MEETING_TYPES_PATH,
-    params: { status: "active" },
+    limit: MEETING_TYPES_LIST_LIMIT,
+    enabled: open,
+  });
+  const principalsQuery = useCursorList<PrincipalRef>({
+    queryKey: ["meetings", "principals"],
+    path: PRINCIPALS_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
     enabled: open,
   });
 
@@ -72,6 +84,15 @@ export function BookingLinkDialog({
     () => (typesQuery.data?.pages.flatMap((p) => p.data) ?? []).filter((meetingType) => meetingType.status === "active"),
     [typesQuery.data]
   );
+  const selectedType = types.find((meetingType) => meetingType.id === typeId);
+  const principalNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const person of principalsQuery.data?.pages.flatMap((page) => page.data) ?? []) {
+      const name = principalDisplayName(person);
+      if (name) names.set(person.id, name);
+    }
+    return names;
+  }, [principalsQuery.data]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -175,22 +196,34 @@ export function BookingLinkDialog({
           <div className="flex flex-col gap-4">
             <div className="grid gap-1.5">
               <Label htmlFor="link-type">{t("link.meetingType")}</Label>
-              <Select value={typeId} onValueChange={setTypeId}>
+              <Select value={typeId} onValueChange={setTypeId} disabled={typesQuery.isLoading || types.length === 0}>
                 <SelectTrigger id="link-type" className="w-full">
                   <SelectValue placeholder={t("link.selectType")} />
                 </SelectTrigger>
                 <SelectContent>
+                  {typesQuery.isSuccess && typeId && !types.some((meetingType) => meetingType.id === typeId) ? (
+                    <SelectItem value={typeId} disabled>{t("link.savedTypeUnavailable")}</SelectItem>
+                  ) : null}
                   {types.map((mt) => (
                     <SelectItem key={mt.id} value={mt.id}>
                       {mt.name} · {t("types.minutes", { count: mt.duration_minutes })}
+                      {principalNames.get(mt.host_principal_id) ? ` · ${t("link.optionHost", { name: principalNames.get(mt.host_principal_id)! })}` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {!typesQuery.isPending && types.length === 0 ? (
-                <p className="text-2xs text-muted-foreground">
-                  {t("link.noTypes")}
-                </p>
+              {typesQuery.isLoading ? <p role="status" className="text-2xs text-muted-foreground">{t("link.loadingTypes")}</p> : null}
+              {typesQuery.isError ? (
+                <div role="alert" className="flex items-center gap-2 text-2xs text-destructive">
+                  <p>{t("link.typesLoadFailed")}</p>
+                  <Button type="button" variant="link" size="xs" className="h-auto p-0 text-destructive" onClick={() => void typesQuery.refetch()}>{tCommon("retry")}</Button>
+                </div>
+              ) : null}
+              {typesQuery.isSuccess && types.length === 0 ? <p className="text-2xs text-muted-foreground">{t("link.noTypes")}{" "}<Link href="/app/meeting-types" className="underline underline-offset-4">{t("link.manageMeetingTypes")}</Link></p> : null}
+              {typesQuery.hasNextPage ? (
+                <Button type="button" variant="link" size="xs" className="h-auto w-fit p-0" disabled={typesQuery.isFetchingNextPage} onClick={() => void typesQuery.fetchNextPage()}>
+                  {typesQuery.isFetchingNextPage ? t("link.loadingMoreTypes") : t("link.loadMoreTypes")}
+                </Button>
               ) : null}
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -240,7 +273,7 @@ export function BookingLinkDialog({
           {!issued ? (
             <Button
               type="button"
-              disabled={!typeId || mutation.isPending}
+              disabled={!typeId || !selectedType || !typesQuery.isSuccess || mutation.isPending}
               onClick={() => mutation.mutate()}
             >
               {mutation.isPending ? t("link.issuing") : t("link.issue")}

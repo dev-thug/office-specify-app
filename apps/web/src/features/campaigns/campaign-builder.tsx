@@ -73,7 +73,7 @@ import {
   summarizePreflight,
   withMeetingTypeBinding,
 } from "./rules";
-import { MEETING_TYPES_PATH, type MeetingType } from "@/lib/api/meetings";
+import { MEETING_TYPES_LIST_LIMIT, MEETING_TYPES_PATH, MEETING_TYPES_QUERY_KEY, PRINCIPALS_PATH, principalDisplayName, type MeetingType, type PrincipalRef } from "@/lib/api/meetings";
 import { useIdempotencyKey } from "./use-idempotency-key";
 
 export type BuilderMode = "create" | "revision" | "clone";
@@ -270,9 +270,14 @@ export function CampaignBuilder({
   const gateBlocked = gateReasons.length > 0 || createdBlocking.length > 0;
 
   const meetingTypeList = useCursorList<MeetingType>({
-    queryKey: ["campaigns", "meeting-types"],
+    queryKey: MEETING_TYPES_QUERY_KEY,
     path: MEETING_TYPES_PATH,
-    limit: 200,
+    limit: MEETING_TYPES_LIST_LIMIT,
+  });
+  const meetingTypePrincipals = useCursorList<PrincipalRef>({
+    queryKey: ["meetings", "principals"],
+    path: PRINCIPALS_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
   });
   const meetingTypeRows = useMemo(
     () =>
@@ -281,6 +286,14 @@ export function CampaignBuilder({
       ),
     [meetingTypeList.data]
   );
+  const meetingTypeHostNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const person of meetingTypePrincipals.data?.pages.flatMap((page) => page.data) ?? []) {
+      const name = principalDisplayName(person);
+      if (name) names.set(person.id, name);
+    }
+    return names;
+  }, [meetingTypePrincipals.data]);
 
   // 템플릿·버전 선택 — 버전은 템플릿 선택 시 lazy 조회한다.
   const templates = useCursorList<EmailTemplate>({
@@ -899,9 +912,7 @@ export function CampaignBuilder({
                     </SelectContent>
                   </Select>
                   {s.versionId && !(versionsByTemplate[s.templateId] ?? []).some((v) => v.template_version_id === s.versionId) ? (
-                    <p className="font-mono text-2xs text-muted-foreground">
-                      {shortHash(s.versionId, 18)}
-                    </p>
+                    <p className="text-2xs text-muted-foreground">{t("savedVersionUnavailable")}</p>
                   ) : null}
                 </div>
               </div>
@@ -944,14 +955,13 @@ export function CampaignBuilder({
                 <SelectItem value="none">{t("noMeetingType")}</SelectItem>
                 {meetingTypeId && !selectedMeetingType ? (
                   <SelectItem value={meetingTypeId} disabled>
-                    {t("savedMeetingTypeUnavailable", {
-                      id: shortHash(meetingTypeId, 12),
-                    })}
+                    {meetingTypeList.isLoading ? t("loadingSavedMeetingType") : t("savedMeetingTypeUnavailable")}
                   </SelectItem>
                 ) : null}
                 {meetingTypeRows.map((meetingType) => (
                   <SelectItem key={meetingType.id} value={meetingType.id}>
-                    {meetingType.name} · {meetingType.duration_minutes} min
+                    {meetingType.name} · {t("meetingTypeDuration", { count: meetingType.duration_minutes })}
+                    {meetingTypeHostNames.get(meetingType.host_principal_id) ? ` · ${t("meetingTypeHost", { name: meetingTypeHostNames.get(meetingType.host_principal_id)! })}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -982,11 +992,16 @@ export function CampaignBuilder({
             ) : null}
             {meetingTypeList.isSuccess && meetingTypeRows.length === 0 && !meetingTypeId ? (
               <p className="text-2xs text-muted-foreground">
-                {t("noActiveMeetingTypes")} {" "}
+                {t("noActiveMeetingTypes")}{" "}
                 <Link href="/app/meeting-types" className="underline underline-offset-4">
                   {t("manageMeetingTypes")}
                 </Link>
               </p>
+            ) : null}
+            {meetingTypeList.hasNextPage ? (
+              <Button type="button" variant="link" size="xs" className="h-auto w-fit p-0" disabled={meetingTypeList.isFetchingNextPage} onClick={() => void meetingTypeList.fetchNextPage()}>
+                {meetingTypeList.isFetchingNextPage ? t("loadingMoreMeetingTypes") : t("loadMoreMeetingTypes")}
+              </Button>
             ) : null}
           </div>
           {isZohoCampaignsChannel ? (
@@ -1160,9 +1175,7 @@ export function CampaignBuilder({
             <dd>
               {selectedMeetingType?.name ??
                 (meetingTypeId
-                  ? t("savedMeetingTypeUnavailable", {
-                      id: shortHash(meetingTypeId, 12),
-                    })
+                  ? t("savedMeetingTypeUnavailable")
                   : t("noMeetingType"))}
             </dd>
             <dt className="text-muted-foreground">{t("step4")}</dt>

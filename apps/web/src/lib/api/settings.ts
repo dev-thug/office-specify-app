@@ -43,6 +43,7 @@ export interface Principal {
   kind: PrincipalKind | string;
   user_id: string | null;
   name: string;
+  display_name?: string | null;
   /** users.email 조인 — 서버가 포함하면 표시, 없으면 생략. */
   email?: string | null;
   role: WorkspaceRole | string;

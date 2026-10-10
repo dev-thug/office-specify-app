@@ -101,6 +101,8 @@
     "submitting": "Processing…",
     "selfBadge": "My request",
     "targetId": "Target",
+    "technicalDetails": "Technical details",
+    "recipientUnavailable": "Email address unavailable",
     "refresh": "Reload latest",
     "policyOutcome": {
       "pass": "Pass",

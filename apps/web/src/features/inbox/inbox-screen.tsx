@@ -30,6 +30,7 @@ import {
   THREAD_STATUSES,
   useEmailThreads,
   useMailAccounts,
+  usePrincipals,
   type EmailThreadSummary,
   type ThreadStatus,
 } from "@/lib/api/inbox";
@@ -69,6 +70,15 @@ export function InboxScreen() {
   const [searchInput, setSearchInput] = useState("");
   const q = useDebouncedValue(searchInput.trim(), 300);
 
+  const principalsQuery = usePrincipals();
+  const principalNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const principal of principalsQuery.data?.data ?? []) {
+      const name = principal.name?.trim() || principal.display_name?.trim();
+      if (name) names.set(principal.id, name);
+    }
+    return names;
+  }, [principalsQuery.data]);
   const accountsQuery = useMailAccounts();
   const accounts = useMemo(
     () => accountsQuery.data?.data ?? [],
@@ -207,6 +217,7 @@ export function InboxScreen() {
 
       <ThreadList
         threads={threads}
+        principalNames={principalNames}
         loading={threadsQuery.isPending}
         error={threadsQuery.error}
         onRetry={() => threadsQuery.refetch()}
@@ -222,6 +233,7 @@ export function InboxScreen() {
 
 interface ThreadListProps {
   threads: EmailThreadSummary[];
+  principalNames: Map<string, string>;
   loading: boolean;
   error: Error | ApiError | null;
   onRetry: () => void;
@@ -234,6 +246,7 @@ interface ThreadListProps {
 
 function ThreadList({
   threads,
+  principalNames,
   loading,
   error,
   onRetry,
@@ -263,7 +276,7 @@ function ThreadList({
             ))
           : threads.map((thread) => (
               <li key={thread.id}>
-                <ThreadRow thread={thread} unread={isThreadUnread(thread)} />
+                <ThreadRow thread={thread} unread={isThreadUnread(thread)} principalNames={principalNames} />
               </li>
             ))}
       </ul>

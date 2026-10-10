@@ -71,8 +71,8 @@
     "openDetail": "상세 보기",
     "detail": {
       "title": "작업 상세",
-      "id": "작업 ID",
-      "kind": "종류",
+      "description": "작업 상태·활동과 관련 리소스를 확인합니다.",
+       "kind": "종류",
       "state": "상태",
       "payloadVersion": "페이로드 버전",
       "attempts": "시도 횟수",
@@ -115,11 +115,12 @@
       "action": "행동",
       "actor": "실행자",
       "targetType": "대상",
-      "targetId": "대상 ID",
-      "requestId": "요청 ID"
+       "requestId": "요청 ID"
     },
     "details": "세부 메타데이터",
-    "emptyTitle": "감사 기록이 없습니다",
+    "auditEventId": "감사 이벤트 ID {id}",
+    "systemActor": "시스템",
+     "emptyTitle": "감사 기록이 없습니다",
     "emptyDescription": "권한이 허용하는 범위의 감사 로그가 표시됩니다."
   },
   "integrations": {
@@ -206,12 +207,16 @@
     "calendar": {
       "host": "호스트",
       "calendar": "캘린더",
+      "officeCalendar": "Office 내부 캘린더",
       "status": "상태",
       "busy": "busy 계산 포함",
       "busyYes": "포함",
       "busyNo": "제외",
       "emptyTitle": "연결된 캘린더가 없습니다",
-      "emptyDescription": "호스트별 캘린더는 설정에서 연결합니다."
+      "emptyDescription": "호스트별 캘린더는 설정에서 연결합니다.",
+      "calendarNameUnavailable": "캘린더 이름 정보 없음",
+      "showCalendarId": "공급자 캘린더 ID 보기",
+      "calendarId": "공급자 캘린더 ID"
     }
   }
 }

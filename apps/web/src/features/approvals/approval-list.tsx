@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getMe } from "@/lib/api/auth";
+import { usePrincipals } from "@/lib/api/settings";
 import {
   APPROVALS_PATH,
   type ApprovalListItem,
@@ -44,23 +45,39 @@ const KINDS = [
   "suppression_release",
 ] as const;
 
-function requesterName(row: ApprovalListItem): string {
+function requesterName(
+  row: ApprovalListItem,
+  principalNames: Map<string, string>,
+  unavailable: string
+): string {
   return (
-    row.requester_display_name ??
-    row.requester?.display_name ??
-    row.requested_by
+    row.requester_display_name?.trim() ||
+    row.requester?.display_name?.trim() ||
+    row.requester?.name?.trim() ||
+    principalNames.get(row.requested_by) ||
+    unavailable
   );
 }
 
 export function ApprovalList() {
   const t = useTranslations("approvals.list");
   const tKind = useTranslations("approvals.kind");
+  const tc = useTranslations("common");
   const tStatus = useTranslations("status");
   const locale = useLocale();
 
   const [status, setStatus] = useState<string>("pending");
   const [kind, setKind] = useState<string>("all");
   const [mineOnly, setMineOnly] = useState(false);
+  const principalsQuery = usePrincipals();
+  const principalNames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const principal of principalsQuery.data?.pages.flatMap((page) => page.data) ?? []) {
+      const name = principal.name?.trim() || principal.display_name?.trim();
+      if (name) map.set(principal.id, name);
+    }
+    return map;
+  }, [principalsQuery.data]);
 
   // "pending·종류별 목록"(B.2) — 상태·종류는 문서화된 필드명으로 서버에 넘긴다.
   const list = useCursorList<ApprovalListItem>({
@@ -111,7 +128,7 @@ export function ApprovalList() {
           href={`/app/approvals/${row.id}`}
           className="font-medium text-foreground underline-offset-4 hover:underline"
         >
-          {requesterName(row)}
+          {requesterName(row, principalNames, tc("nameUnavailable"))}
         </Link>
       ),
     },

@@ -41,6 +41,7 @@ interface AgentRunsTableProps {
 export function AgentRunsTable({ agentNames }: AgentRunsTableProps) {
   const t = useTranslations("agents.runs");
   const tDetail = useTranslations("agents.detail");
+  const tc = useTranslations("common");
   const tStatus = useTranslations("status");
   const format = useFormatter();
   const [status, setStatus] = useState<AgentRunStatus | "all">("all");
@@ -62,7 +63,7 @@ export function AgentRunsTable({ agentNames }: AgentRunsTableProps) {
       header: t("columns.agent"),
       cell: (run) => (
         <span className="text-muted-foreground">
-          {agentNames?.get(run.principal_id) ?? run.principal_id.slice(0, 8)}
+          {agentNames?.get(run.principal_id) ?? tc("nameUnavailable")}
         </span>
       ),
     },

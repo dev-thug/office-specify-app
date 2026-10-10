@@ -73,7 +73,7 @@
     "submitting": "Saving…",
     "createdToast": "Created version {no}",
     "subjectRequired": "Enter a subject.",
-    "bodyRequired": "Enter a text body."
+    "bodyRequired": "Enter an email body."
   },
   "preview": {
     "title": "Preview",
@@ -107,12 +107,13 @@
   },
   "authoring": {
     "canvas": "Email body",
-    "modes": "Editor mode",
-    "compose": "Compose",
     "html": "HTML code",
+    "editHtml": "Edit HTML",
+    "backToCanvas": "Back to email canvas",
     "preview": "Recipient preview",
     "sampleOnly": "Sample data only · not saved as recipient values",
     "canvasHint": "Write the email your recipient will read",
+    "htmlSourceHint": "Edit the HTML source. Unsupported markup is blocked when you save.",
     "formatting": "Text formatting",
     "bold": "Bold",
     "italic": "Italic",
@@ -145,10 +146,10 @@
     "sampleCompany": "Example Company",
     "sampleContact": "Jina Kim",
     "sampleSender": "Office Team",
-    "autoText": "Generated from HTML",
-    "manualText": "Edited separately",
-    "textHint": "Used by mail clients that display plain text.",
-    "regenerateText": "Regenerate from HTML"
+    "legacyTextNotice": "The original plain text is being preserved. Editing the email canvas will generate new plain text from the HTML.",
+    "legacyTextTitle": "Original plain-text version",
+    "legacyTextDescription": "This copy stays with the version until you edit the email body. Choose generated text to replace it now.",
+    "useGeneratedText": "Use text generated from HTML"
   },
   "zoho": {
     "title": "Zoho templates",

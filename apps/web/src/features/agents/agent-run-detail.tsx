@@ -32,11 +32,13 @@ interface AgentRunDetailProps {
   runId: string;
   /** principal_id → 표시 이름. */
   agentNames?: Map<string, string>;
+  principalNames?: Map<string, string>;
 }
 
 /** 실행 상세 — 진행 상태·도구 호출·budget/usage·중단 (UI10). */
-export function AgentRunDetail({ runId, agentNames }: AgentRunDetailProps) {
+export function AgentRunDetail({ runId, agentNames, principalNames }: AgentRunDetailProps) {
   const t = useTranslations("agents.detail");
+  const tc = useTranslations("common");
   const tScreens = useTranslations("screens");
   const format = useFormatter();
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -113,9 +115,11 @@ export function AgentRunDetail({ runId, agentNames }: AgentRunDetailProps) {
               <span className="font-medium">{run.objective}</span>
             </Field>
             <Field label={t("agent")}>
-              {agentNames?.get(run.principal_id) ?? run.principal_id}
+              {agentNames?.get(run.principal_id) ?? tc("nameUnavailable")}
             </Field>
-            <Field label={t("requestedBy")}>{run.requested_by}</Field>
+            <Field label={t("requestedBy")}>
+              {principalNames?.get(run.requested_by) ?? tc("nameUnavailable")}
+            </Field>
             <Field label={t("createdAt")}>
               {format.dateTime(new Date(run.created_at), {
                 dateStyle: "medium",

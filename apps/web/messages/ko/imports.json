@@ -1,7 +1,7 @@
 {
   "list": {
     "columns": {
-      "id": "가져오기",
+      "type": "유형",
       "status": "상태",
       "summary": "검증 결과",
       "createdAt": "생성 시각",
@@ -14,6 +14,8 @@
     "new": "새 가져오기",
     "export": "보내기 요청",
     "detail": "상세",
+    "typeImport": "가져오기",
+    "typeExport": "내보내기",
     "loadFailed": "가져오기 목록을 불러오지 못했습니다"
   },
   "wizard": {
@@ -128,6 +130,7 @@
     "submitting": "요청 중…",
     "success": "보내기를 요청했습니다",
     "failed": "보내기 요청에 실패했습니다",
+    "technicalDetails": "기술 세부 정보",
     "jobId": "작업 ID"
   }
 }

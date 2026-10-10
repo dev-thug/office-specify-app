@@ -32,6 +32,7 @@ import { useIsAdmin } from "@/features/settings/use-me";
 export function CalendarsScreen() {
   const t = useTranslations("settings.calendars");
   const tSettings = useTranslations("settings");
+  const tc = useTranslations("common");
   const locale = useLocale();
   const isAdmin = useIsAdmin();
   const queryClient = useQueryClient();
@@ -48,7 +49,8 @@ export function CalendarsScreen() {
   const names = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of principals.data?.pages.flatMap((pg) => pg.data) ?? []) {
-      map.set(p.id, p.name);
+      const name = p.name?.trim() || p.display_name?.trim();
+      if (name) map.set(p.id, name);
     }
     return map;
   }, [principals.data]);
@@ -83,7 +85,7 @@ export function CalendarsScreen() {
       header: t("columns.host"),
       cell: (row) => (
         <span className="text-sm">
-          {names.get(row.host_principal_id) ?? row.host_principal_id.slice(0, 8)}
+          {names.get(row.host_principal_id) ?? tc("nameUnavailable")}
         </span>
       ),
     },
@@ -91,11 +93,17 @@ export function CalendarsScreen() {
       key: "calendar",
       header: t("columns.calendar"),
       cell: (row) => (
-        <span className="font-mono text-xs">
-          {row.provider === "office_calendar"
-            ? t("officeCalendar")
-            : row.provider_calendar_id}
-        </span>
+        row.provider === "office_calendar" ? (
+          <span className="font-mono text-xs">{t("officeCalendar")}</span>
+        ) : (
+          <div className="flex flex-col gap-1 text-xs">
+            <span className="text-muted-foreground">{t("calendarNameUnavailable")}</span>
+            <details>
+              <summary className="cursor-pointer text-muted-foreground">{t("showCalendarId")}</summary>
+              <code className="break-all">{row.provider_calendar_id}</code>
+            </details>
+          </div>
+        )
       ),
     },
     {

@@ -15,13 +15,19 @@ import {
 } from "@/lib/api/templates";
 import { ApiError } from "@/lib/api/problem";
 
+import { DEFAULT_EMAIL_VARIABLES } from "./email-authoring";
 import { useApiErrorMessage } from "./api-error-message";
+
+const SYSTEM_EMAIL_VARIABLE_NAMES = new Set<string>(
+  DEFAULT_EMAIL_VARIABLES.filter((variable) => variable.system).map((variable) => variable.name)
+);
 
 /** 스키마의 각 변수에 샘플 값을 채운 JSON 문자열을 만든다. */
 export function sampleVariablesJson(version: TemplateVersion | null): string {
   const props = version?.variable_schema?.properties ?? {};
   const out: Record<string, unknown> = {};
   for (const [name, prop] of Object.entries(props)) {
+    if (SYSTEM_EMAIL_VARIABLE_NAMES.has(name)) continue;
     if (prop.default !== undefined && prop.default !== null) {
       out[name] = prop.default;
     } else if (prop.format === "uri" || prop.type === "url") {

@@ -120,10 +120,13 @@ export function ExportDialog({
         {jobId !== null ? (
           <div className="grid gap-4">
             <p className="text-sm">{t("success")}</p>
-            <dl className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1.5 rounded-2xl border border-border bg-app-panel-muted px-4 py-3 text-sm">
-              <dt className="text-muted-foreground">{t("jobId")}</dt>
-              <dd className="break-all font-mono text-2xs">{jobId}</dd>
-            </dl>
+            <details className="rounded-2xl border border-border bg-app-panel-muted px-4 py-3 text-sm">
+              <summary className="cursor-pointer font-medium">{t("technicalDetails")}</summary>
+              <dl className="mt-2 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1.5">
+                <dt className="text-muted-foreground">{t("jobId")}</dt>
+                <dd className="break-all font-mono text-2xs">{jobId}</dd>
+              </dl>
+            </details>
             <DialogFooter>
               <Button type="button" onClick={() => handleOpenChange(false)}>
                 {tCommon("close")}

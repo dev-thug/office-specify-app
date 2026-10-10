@@ -33,7 +33,7 @@ export interface ApprovalListItem {
   requested_by: string;
   target_id?: string;
   requester_display_name?: string;
-  requester?: { id?: string; display_name?: string; kind?: string } | null;
+  requester?: { id?: string; name?: string; display_name?: string; kind?: string } | null;
   /** 구체적 대상 FK — action_type 에 따라 하나만 채워진다 (DDL CHECK). */
   launch_id?: string | null;
   outbound_message_id?: string | null;

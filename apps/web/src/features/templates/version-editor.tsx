@@ -25,7 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import {
   createTemplateVersion,
   type CreateTemplateVersionInput,
@@ -64,6 +63,15 @@ interface VersionEditorProps {
   onOpenChange: (open: boolean) => void;
   onCreated: (id: string) => void;
   initialSeed?: VersionEditorSeed | null;
+}
+
+function emailTextToHtml(value: string): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .filter(paragraph => paragraph.length > 0)
+    .map(paragraph => "<p>" + paragraph.split("\n").map(escapeEmailText).join("<br>") + "</p>")
+    .join("");
 }
 
 /** A new editor session starts blank, while an import seed initializes only that session. */
@@ -172,17 +180,28 @@ function VersionEditorForm({
   const idem = useIdempotencyKey();
 
   const [subject, setSubject] = useState(initialSeed?.subject ?? "");
-  const [bodyText, setBodyText] = useState(initialSeed?.bodyText ?? "");
-  const [bodyHtml, setBodyHtml] = useState(initialSeed?.bodyHtml ?? "");
+  const seededBodyText = initialSeed?.bodyText ?? "";
+  const seededBodyHtml = initialSeed?.bodyHtml?.trim()
+    ? initialSeed.bodyHtml
+    : emailTextToHtml(seededBodyText);
+  const [bodyText, setBodyText] = useState(seededBodyText);
+  const [bodyHtml, setBodyHtml] = useState(seededBodyHtml);
+  const [legacyTextDismissed, setLegacyTextDismissed] = useState(false);
+  const legacyTextFallback =
+    !legacyTextDismissed &&
+    bodyHtml === seededBodyHtml &&
+    seededBodyText.trim() &&
+    (!initialSeed?.bodyHtml?.trim() ||
+      (typeof document !== "undefined" && seededBodyText !== emailHtmlToText(seededBodyHtml)))
+      ? seededBodyText
+      : null;
   const [rows, setRows] = useState<VariableRow[]>(() => initialSeed ? rowsForSeed(initialSeed) : []);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   const canvas = useRef<EmailCanvasHandle>(null);
   const subjectInput = useRef<HTMLInputElement>(null);
-  const textInput = useRef<HTMLTextAreaElement>(null);
-  const insertTarget = useRef<"subject" | "text" | "body">("body");
-  const [autoText, setAutoText] = useState(!initialSeed);
+  const insertTarget = useRef<"subject" | "body">("body");
   const [samples, setSamples] = useState<Record<string, string>>({
     "company.name": a("sampleCompany"), "contact.name": a("sampleContact"),
     "sender.display_name": a("sampleSender"),
@@ -198,33 +217,30 @@ function VersionEditorForm({
   }
   function updateHtml(html: string) {
     setBodyHtml(html);
+    setBodyText(emailHtmlToText(html));
+    setLegacyTextDismissed(true);
     registerPresets(html);
-    if (autoText) setBodyText(emailHtmlToText(html));
   }
   function insertPreset(preset: typeof DEFAULT_EMAIL_VARIABLES[number]) {
     setRows(current => current.some(row => row.name.trim() === preset.name) ? current : [...current, {
       ...newRow(), name: preset.name, type: preset.type, maxLength: preset.maxLength, required: true,
     }]);
     const value = "{{" + preset.name + "}}";
-    const target = insertTarget.current;
-    const input = target === "subject" ? subjectInput.current : target === "text" ? textInput.current : null;
+    const input = insertTarget.current === "subject" ? subjectInput.current : null;
     if (input) {
       const start = input.selectionStart ?? input.value.length;
       const next = input.value.slice(0, start) + value + input.value.slice(input.selectionEnd ?? start);
-      if (target === "subject") setSubject(next);
-      else { setBodyText(next); setAutoText(false); }
+      setSubject(next);
       input.focus();
       requestAnimationFrame(() => input.setSelectionRange(start + value.length, start + value.length));
-    } else { canvas.current?.insertVariable(preset.name); }
+    } else {
+      canvas.current?.insertVariable(preset.name);
+    }
   }
   function insertBookingCta() {
     const label = a("bookingCtaLabel");
     registerPresets("{{meeting.booking_url}}");
     canvas.current?.insertBookingCta(label);
-    if (!autoText) {
-      const plainText = label + " ({{meeting.booking_url}})";
-      setBodyText((current) => current ? current + "\n\n" + plainText : plainText);
-    }
   }
   const sampleSubject = subject.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}/g, (token, name: string) => samples[name] ?? token);
   const sampleHtml = typeof document === "undefined" ? "" : renderSampleEmail(bodyHtml || "<p>" + escapeEmailText(bodyText).replaceAll("\n", "<br>") + "</p>", samples);
@@ -239,7 +255,8 @@ function VersionEditorForm({
   function validate(): boolean {
     const errs: string[] = [];
     if (!subject.trim()) errs.push(t("subjectRequired"));
-    if (!bodyText.trim()) errs.push(t("bodyRequired"));
+    const savedBodyText = legacyTextFallback ?? emailHtmlToText(bodyHtml);
+    if (!savedBodyText.trim()) errs.push(t("bodyRequired"));
     if (cleanEmailHtml(bodyHtml).removed) errs.push(a("unsupportedHtml"));
     const seen = new Set<string>();
     for (const row of rows) {
@@ -260,7 +277,7 @@ function VersionEditorForm({
     setError(null);
     const input: CreateTemplateVersionInput = {
       subject: subject.trim(),
-      body_text: bodyText,
+      body_text: legacyTextFallback ?? emailHtmlToText(bodyHtml),
       body_html: bodyHtml.trim() ? bodyHtml : null,
       variable_schema: buildVariableSchema(rows),
     };
@@ -277,8 +294,8 @@ function VersionEditorForm({
       setSubject("");
       setBodyText("");
       setBodyHtml("");
+      setLegacyTextDismissed(false);
       setRows([]);
-      setAutoText(true);
       onOpenChange(false);
       onCreated(res.data.template_version_id);
     } catch (err) {
@@ -323,22 +340,25 @@ function VersionEditorForm({
             <div className="flex min-w-0 flex-col gap-4">
               <EmailCanvas ref={canvas} html={bodyHtml} previewHtml={sampleHtml} previewSubject={sampleSubject}
                 onChange={updateHtml} onFocus={() => { insertTarget.current = "body"; }} />
-              <div className="grid gap-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Label htmlFor="tv-body-text">{t("bodyText")}</Label>
-                  <span className="text-2xs text-muted-foreground">{a(autoText ? "autoText" : "manualText")}</span>
-                </div>
-                <Textarea ref={textInput} id="tv-body-text" required rows={3} value={bodyText}
-                  onFocus={() => { insertTarget.current = "text"; }}
-                  onChange={event => { setBodyText(event.target.value); setAutoText(false); registerPresets(event.target.value); }}
-                  placeholder={t("bodyTextPlaceholder")} />
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-2xs text-muted-foreground">{a("textHint")}</p>
-                  {!autoText ? <Button type="button" size="xs" variant="ghost" onClick={() => {
-                    setBodyText(emailHtmlToText(bodyHtml)); setAutoText(true);
-                  }}>{a("regenerateText")}</Button> : null}
-                </div>
-              </div>
+              {legacyTextFallback !== null ? (
+                <Alert variant="warning">
+                  <TriangleAlertIcon />
+                  <AlertDescription className="grid gap-2">
+                    <p>{a("legacyTextNotice")}</p>
+                    <details>
+                      <summary className="cursor-pointer text-xs font-medium">{a("legacyTextTitle")}</summary>
+                      <p className="mt-2 text-2xs text-muted-foreground">{a("legacyTextDescription")}</p>
+                      <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-muted/40 p-3 text-xs">{legacyTextFallback}</pre>
+                    </details>
+                    <div>
+                      <Button type="button" size="xs" variant="ghost" onClick={() => {
+                        setBodyText(emailHtmlToText(bodyHtml));
+                        setLegacyTextDismissed(true);
+                      }}>{a("useGeneratedText")}</Button>
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
             </div>
             <aside className="flex min-w-0 flex-col gap-5 rounded-xl border bg-muted/20 p-4">
               <div>

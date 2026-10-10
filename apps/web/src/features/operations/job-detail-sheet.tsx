@@ -31,9 +31,10 @@ import {
   requestJobRetry,
   type JobDetail,
 } from "@/lib/api/operations";
+import { usePrincipals } from "@/lib/api/settings";
 import { jobPrimaryAction } from "@/features/operations/job-rules";
 import { apiErrorText } from "@/features/settings/api-error";
-import { formatDateTime, shortId } from "@/features/settings/format";
+import { formatDateTime } from "@/features/settings/format";
 
 interface JobDetailSheetProps {
   jobId: string | null;
@@ -53,7 +54,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 export function JobDetailSheet({ jobId, open, onOpenChange }: JobDetailSheetProps) {
   const t = useTranslations("operations.jobs");
   const tOps = useTranslations("operations");
+  const tc = useTranslations("common");
   const locale = useLocale();
+  const principals = usePrincipals();
   const queryClient = useQueryClient();
   const [retryReason, setRetryReason] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -89,6 +92,11 @@ export function JobDetailSheet({ jobId, open, onOpenChange }: JobDetailSheetProp
 
   const job: JobDetail | undefined = detail.data?.data;
   const action = job ? jobPrimaryAction(job) : "none";
+  const requester = job?.requested_by
+    ? principals.data?.pages
+        .flatMap((page) => page.data)
+        .find((principal) => principal.id === job.requested_by)
+    : undefined;
 
   function submitRetry(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -101,9 +109,7 @@ export function JobDetailSheet({ jobId, open, onOpenChange }: JobDetailSheetProp
       <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
         <SheetHeader>
           <SheetTitle>{t("detail.title")}</SheetTitle>
-          <SheetDescription className="font-mono text-xs">
-            {jobId ?? ""}
-          </SheetDescription>
+          <SheetDescription>{t("detail.description")}</SheetDescription>
         </SheetHeader>
         <div className="flex flex-col gap-4 px-4 pb-6">
           {detail.isPending ? (
@@ -130,7 +136,11 @@ export function JobDetailSheet({ jobId, open, onOpenChange }: JobDetailSheetProp
                 <Row label={t("detail.finishedAt")}>{formatDateTime(job.finished_at, locale)}</Row>
                 <Row label={t("detail.leaseOwner")}>{job.lease_owner ?? "—"}</Row>
                 <Row label={t("detail.leaseExpires")}>{formatDateTime(job.lease_expires_at, locale)}</Row>
-                <Row label={t("detail.requestedBy")}>{shortId(job.requested_by)}</Row>
+                <Row label={t("detail.requestedBy")}>
+                  {job.requested_by
+                    ? requester?.name?.trim() || requester?.display_name?.trim() || tc("nameUnavailable")
+                    : "—"}
+                </Row>
                 <Row label={t("detail.payloadVersion")}>{job.payload_version}</Row>
                 {job.external_effect ? (
                   <Row label={t("detail.externalEffect")}>

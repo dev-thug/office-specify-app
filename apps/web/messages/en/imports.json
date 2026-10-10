@@ -1,7 +1,7 @@
 {
   "list": {
     "columns": {
-      "id": "Import",
+      "type": "Type",
       "status": "Status",
       "summary": "Validation",
       "createdAt": "Created at",
@@ -14,6 +14,8 @@
     "new": "New import",
     "export": "Request export",
     "detail": "Detail",
+    "typeImport": "Import",
+    "typeExport": "Export",
     "loadFailed": "Could not load imports"
   },
   "wizard": {
@@ -128,6 +130,7 @@
     "submitting": "Requesting…",
     "success": "Export requested",
     "failed": "Export request failed",
+    "technicalDetails": "Technical details",
     "jobId": "Job ID"
   }
 }

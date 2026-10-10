@@ -223,11 +223,12 @@ function GrantRow({
   onSave: () => void;
 }) {
   const t = useTranslations("settings.mailAccounts.grants");
+  const tc = useTranslations("common");
   return (
     <li className="flex flex-col gap-2 rounded-2xl border border-border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium">
-          {principal?.name ?? grant.principal_name ?? grant.principal_id.slice(0, 8)}
+          {principal?.name?.trim() || principal?.display_name?.trim() || grant.principal_name?.trim() || tc("nameUnavailable")}
         </span>
         {!readOnly ? (
           <Button

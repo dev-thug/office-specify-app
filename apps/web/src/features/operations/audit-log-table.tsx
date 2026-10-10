@@ -19,12 +19,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useAuditLogs, type AuditLogEntry } from "@/lib/api/operations";
-import { formatDateTime, shortId } from "@/features/settings/format";
+import { usePrincipals } from "@/lib/api/settings";
+import { formatDateTime } from "@/features/settings/format";
 
 export function AuditLogTable() {
   const t = useTranslations("operations.audit");
   const tJobs = useTranslations("operations.jobs");
+  const tc = useTranslations("common");
   const locale = useLocale();
+  const principals = usePrincipals();
   const [action, setAction] = useState("");
   const [targetType, setTargetType] = useState("");
   const [selected, setSelected] = useState<AuditLogEntry | null>(null);
@@ -54,25 +57,18 @@ export function AuditLogTable() {
     {
       key: "actor",
       header: t("columns.actor"),
-      cell: (row) => (
-        <span className="font-mono text-xs" title={row.actor_principal_id ?? undefined}>
-          {shortId(row.actor_principal_id)}
-        </span>
-      ),
+      cell: (row) => {
+        if (!row.actor_principal_id) return <span>{t("systemActor")}</span>;
+        const principal = principals.data?.pages
+          .flatMap((page) => page.data)
+          .find((item) => item.id === row.actor_principal_id);
+        return <span>{principal?.name?.trim() || principal?.display_name?.trim() || tc("nameUnavailable")}</span>;
+      },
     },
     {
       key: "targetType",
       header: t("columns.targetType"),
       cell: (row) => <span className="font-mono text-xs">{row.target_type}</span>,
-    },
-    {
-      key: "targetId",
-      header: t("columns.targetId"),
-      cell: (row) => (
-        <span className="font-mono text-xs" title={row.target_id ?? undefined}>
-          {shortId(row.target_id)}
-        </span>
-      ),
     },
     {
       key: "requestId",
@@ -151,7 +147,7 @@ function AuditDetailDialog({
         <DialogHeader>
           <DialogTitle className="font-mono text-sm">{entry?.action}</DialogTitle>
           <DialogDescription className="font-mono text-xs">
-            {entry?.id}
+            {entry ? t("auditEventId", { id: entry.id }) : ""}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-2">

@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CompanyFormDialog } from "@/features/companies/company-form-dialog";
 import { MergeRequestDialog } from "@/features/companies/merge-request-dialog";
-import { useMe, useHumanPrincipals } from "@/features/companies/owner-select";
+import { principalName, useMe, useHumanPrincipals } from "@/features/companies/owner-select";
 import { companyListParams, companiesPath, requestCrmExport, type Company, type CompanyCreated, type CompanyDuplicateCandidate, type LifecycleStage } from "@/lib/api/companies";
 import { idempotencyKey } from "@/lib/api/client";
 import { useCursorList } from "@/lib/api/use-cursor-list";
@@ -84,7 +84,7 @@ export function CompaniesScreen() {
     { key: "country", header: t("list.columns.country"), cell: (row) => row.country_code ?? "—" },
     { key: "industry", header: t("list.columns.industry"), cell: (row) => row.industry ?? "—" },
     { key: "stage", header: t("list.columns.stage"), cell: (row) => <StatusBadge status={row.lifecycle_stage} /> },
-    { key: "owner", header: t("list.columns.owner"), cell: (row) => row.owner_display_name ?? principals.data?.find((p) => p.id === row.owner_principal_id)?.display_name ?? t("list.unassigned") },
+    { key: "owner", header: t("list.columns.owner"), cell: (row) => row.owner_display_name?.trim() || principalName(principals.data?.find((p) => p.id === row.owner_principal_id), row.owner_principal_id) || (row.owner_principal_id ? tc("nameUnavailable") : t("list.unassigned")) },
     { key: "activity", header: t("list.columns.lastActivity"), cell: (row) => row.last_activity_summary ? <span title={formatDateTime(row.last_activity_at, locale)}>{row.last_activity_summary}</span> : "—" },
     { key: "created", header: t("list.columns.created"), cell: (row) => formatDateTime(row.created_at, locale) },
   ];
@@ -92,15 +92,14 @@ export function CompaniesScreen() {
   async function exportCurrentFilter() {
     setExporting(true);
     try {
-      const result = await requestCrmExport({
+      await requestCrmExport({
         fields: ["company.name", "company.domain", "company.industry", "company.country_code", "company.website_url", "company.lifecycle_stage"],
         filters: {
           ...(debounced ? { q: debounced } : {}),
           ...(stage !== ALL ? { lifecycle_stage: stage } : {}),
         },
       }, { idempotencyKey: idempotencyKey() });
-      const jobId = result.data.import_id ?? result.data.job_id;
-      toast.success(`${t("list.exportQueued")}${jobId ? ` (${jobId})` : ""}`);
+      toast.success(t("list.exportQueued"));
     } catch {
       toast.error(t("list.exportError"));
     } finally {
@@ -158,7 +157,7 @@ export function CompaniesScreen() {
             <SelectTrigger aria-label={t("list.ownerFilter")}><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL}>{t("list.allOwners")}</SelectItem>
-              {(principals.data ?? []).map((person) => <SelectItem key={person.id} value={person.id}>{person.display_name ?? person.id}</SelectItem>)}
+              {(principals.data ?? []).map((person) => <SelectItem key={person.id} value={person.id}>{principalName(person, person.id) ?? tc("nameUnavailable")}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>

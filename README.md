@@ -27,7 +27,7 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 | Area | What Office provides |
 | --- | --- |
 | CRM | Contact and company records, search, notes, activity, and CSV imports. |
-| Email content | A visual editor and HTML source editor, variable schema, recipient preview, and immutable template versions. |
+| Email content | One rendered email canvas with a toggle to HTML source, variable presets and schema, recipient preview, and reusable immutable template versions. |
 | Office campaigns | Contact selection, consent and suppression checks, preflight, human approval, and one-step dispatch through a configured channel. SMTP campaigns are composed and recorded by Office; SMTP setup requires an active Office mail account. |
 | Zoho Campaigns | An optional, independent route that exports an approved launch to Zoho Campaigns. It is not needed for SMTP delivery. |
 | Inbox | Mailbox-bound Zoho Mail correspondence, kept separate from campaign transport. |
@@ -41,6 +41,33 @@ blocked unless current communication-basis evidence and sender/provider policy
 checks pass. Suppressed addresses are skipped. A send with an uncertain provider
 outcome remains `unknown` and is never resubmitted automatically. Office does
 not run automatic email follow-ups or drip sequences.
+
+### Writing email templates
+
+Open **Templates**, choose a template, and create a version. Write directly in
+the rendered email canvas or use **Edit HTML** to edit the same content as
+source. Switching modes preserves the content. Insert the provided variables
+and meeting button as needed, then use recipient preview to inspect sample
+values before saving. Saved versions are immutable; create another version to
+reuse and revise an existing one.
+
+Office generates the plain-text email alternative from the canvas. If an
+imported version already has a different plain-text alternative, the editor
+shows a notice and preserves it until you edit the canvas or explicitly choose
+the generated text.
+
+### Choosing a meeting type
+
+First configure an internal calendar under **Settings → Calendars**, then create
+a meeting type and host availability under **Meeting types**. Booking links,
+campaigns, and email drafts offer active meeting types. Creating or updating a
+type refreshes these selectors together; an empty selector provides a link to
+setup, and a failed request offers a retry. The creation form uses the signed-in
+host's calendar.
+
+Lists and selectors show record names and status rather than raw UUIDs. Where a
+name is unavailable, Office says so; identifiers remain available only where
+needed for navigation or explicit technical details.
 
 ## Quick local start
 

@@ -225,7 +225,9 @@ export interface Principal {
   id: string;
   kind: "human" | "agent" | "system" | string;
   role?: string;
-  display_name?: string;
+  /** Some API versions return `name`; display_name is the UI-oriented alias. */
+  name?: string | null;
+  display_name?: string | null;
   status?: string;
   [key: string]: unknown;
 }
@@ -392,7 +394,15 @@ export async function patchTask(
 
 /** owner 표시명·지정용 주체 목록 — GET /principals (조직 조회). */
 export async function listPrincipals(): Promise<ApiResult<Principal[]>> {
-  return apiFetch<Principal[]>("/api/v1/principals");
+  const result = await apiFetch<Principal[]>("/api/v1/principals");
+  return {
+    ...result,
+    data: result.data.map((principal) => ({
+      ...principal,
+      display_name:
+        principal.display_name?.trim() || principal.name?.trim() || undefined,
+    })),
+  };
 }
 
 export async function requestCrmExport(

@@ -103,8 +103,8 @@ const COLLISION_KEY: Record<CollisionKind, string> = {
 
 export function ThreadDetailScreen({ threadId }: { threadId: string }) {
   const t = useTranslations("inbox");
-  const ts = useTranslations("status");
   const tc = useTranslations("common");
+  const ts = useTranslations("status");
   const queryClient = useQueryClient();
 
   const detailQuery = useEmailThread(threadId, { refetchIntervalMs: POLL_MS });
@@ -376,7 +376,12 @@ export function ThreadDetailScreen({ threadId }: { threadId: string }) {
         <StatusBadge status={thread.status} />
         <span className="text-xs text-muted-foreground">
           {t("detail.assignee")}:{" "}
-          {thread.assigned_principal_name ?? t("list.unassigned")}
+          {thread.assigned_principal_name?.trim() ||
+            (thread.assigned_principal_id
+              ? (principals.find((principal) => principal.id === thread.assigned_principal_id)?.name?.trim() ||
+                principals.find((principal) => principal.id === thread.assigned_principal_id)?.display_name?.trim() ||
+                tc("nameUnavailable"))
+              : t("list.unassigned"))}
         </span>
       </header>
 

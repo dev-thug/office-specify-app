@@ -14,6 +14,7 @@ import {
 /** 에이전트 principal 목록 — principals 응답에서 kind=agent 만 표시한다 (UI10). */
 export function AgentsTable() {
   const t = useTranslations("agents.agentsList");
+  const tc = useTranslations("common");
   const query = useAgentPrincipals();
 
   const rows = (query.data?.pages.flatMap((p) => p.data) ?? []).filter(
@@ -25,7 +26,11 @@ export function AgentsTable() {
     {
       key: "name",
       header: t("columns.name"),
-      cell: (p) => <span className="font-medium">{p.display_name}</span>,
+      cell: (p) => (
+        <span className="font-medium">
+          {p.display_name?.trim() || p.name?.trim() || tc("nameUnavailable")}
+        </span>
+      ),
     },
     {
       key: "status",
@@ -47,13 +52,6 @@ export function AgentsTable() {
         ) : (
           <span className="text-muted-foreground">{t("noScopes")}</span>
         ),
-    },
-    {
-      key: "id",
-      header: t("columns.id"),
-      cell: (p) => (
-        <span className="font-mono text-2xs text-muted-foreground">{p.id}</span>
-      ),
     },
   ];
 

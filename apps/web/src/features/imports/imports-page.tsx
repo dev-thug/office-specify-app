@@ -61,10 +61,10 @@ function ImportsTable() {
 
   const columns: ColumnDef<ImportJob>[] = [
     {
-      key: "id",
-      header: t("columns.id"),
+      key: "kind",
+      header: t("columns.type"),
       cell: (job) => (
-        <span className="font-mono text-ui">{importJobId(job).slice(0, 8)}</span>
+        <span>{job.kind === "export" ? t("typeExport") : t("typeImport")}</span>
       ),
     },
     {

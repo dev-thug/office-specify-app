@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/lib/api/problem";
 import { getDashboardSummary } from "@/lib/api/dashboard";
+import { listPrincipals } from "@/lib/api/companies";
 import { getJob, putEmergencyStop, requestJobRetry } from "@/lib/api/operations";
 import {
   createLocalCalendarConnection,
@@ -199,5 +200,13 @@ describe("에러 매핑", () => {
       expect(apiErr.status).toBe(412);
       expect(apiErr.problem.retryable).toBe(true);
     }
+  });
+});
+
+describe("principal display names", () => {
+  it("normalizes the API name field for display-name consumers", async () => {
+    mockFetch(200, { data: [{ id: "principal-1", name: "Ada Example" }] });
+    const result = await listPrincipals();
+    expect(result.data[0]?.display_name).toBe("Ada Example");
   });
 });

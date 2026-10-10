@@ -40,15 +40,18 @@ import {
 
 interface BookingDetailSheetProps {
   bookingId: string | null;
+  hostName?: string;
   onOpenChange: (open: boolean) => void;
 }
 
 /** 예약 상세 — 상태·외부 sync·참석 결과·변경/취소 액션 (UI09). */
 export function BookingDetailSheet({
   bookingId,
+  hostName,
   onOpenChange,
 }: BookingDetailSheetProps) {
   const t = useTranslations("meetings");
+  const tCommon = useTranslations("common");
   const locale = useLocale();
   const queryClient = useQueryClient();
   const displayTz = detectTimezone();
@@ -168,7 +171,7 @@ export function BookingDetailSheet({
                   </>
                 ) : null}
                 <dt className="text-muted-foreground">{t("detail.host")}</dt>
-                <dd>{booking.host_display_name ?? booking.host_principal_id}</dd>
+                <dd>{booking.host_display_name ?? hostName ?? tCommon("nameUnavailable")}</dd>
                 {booking.meeting_type_name ? (
                   <>
                     <dt className="text-muted-foreground">

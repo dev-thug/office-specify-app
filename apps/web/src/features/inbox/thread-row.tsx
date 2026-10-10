@@ -12,10 +12,12 @@ import { cn } from "@/lib/utils";
 interface ThreadRowProps {
   thread: EmailThreadSummary;
   unread: boolean;
+  principalNames: Map<string, string>;
 }
 
-export function ThreadRow({ thread, unread }: ThreadRowProps) {
+export function ThreadRow({ thread, unread, principalNames }: ThreadRowProps) {
   const t = useTranslations("inbox");
+  const tc = useTranslations("common");
   const format = useFormatter();
 
   const counterpart =
@@ -62,7 +64,10 @@ export function ThreadRow({ thread, unread }: ThreadRowProps) {
           <span className="flex-1" />
         )}
         <span className="shrink-0">
-          {thread.assigned_principal_name ?? t("list.unassigned")}
+          {thread.assigned_principal_name?.trim() ||
+            (thread.assigned_principal_id
+              ? principalNames.get(thread.assigned_principal_id) ?? tc("nameUnavailable")
+              : t("list.unassigned"))}
         </span>
         <time
           dateTime={when}

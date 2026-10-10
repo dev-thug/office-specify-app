@@ -18,7 +18,3 @@ export function formatDate(iso: string | null | undefined, locale: string): stri
 }
 
 /** UUID 등 긴 식별자의 표시용 축약 — 앞 8자만 보인다. */
-export function shortId(id: string | null | undefined): string {
-  if (!id) return "—";
-  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
-}

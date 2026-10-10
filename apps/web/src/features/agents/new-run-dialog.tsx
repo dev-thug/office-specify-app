@@ -121,7 +121,7 @@ export function NewRunDialog({ open, onOpenChange }: NewRunDialogProps) {
             <Label htmlFor="run-agent">{t("agent")}</Label>
             <Select value={agentId} onValueChange={setSelectedAgentId} disabled={agentsQuery.isPending || agents.length === 0}>
               <SelectTrigger id="run-agent"><SelectValue placeholder={t("selectAgent")} /></SelectTrigger>
-              <SelectContent>{agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.display_name}</SelectItem>)}</SelectContent>
+              <SelectContent>{agents.map((agent) => <SelectItem key={agent.id} value={agent.id}>{agent.display_name?.trim() || agent.name?.trim() || tCommon("nameUnavailable")}</SelectItem>)}</SelectContent>
             </Select>
             {agentsQuery.isError ? <p role="alert" className="text-xs text-destructive">{t("error")}</p> : null}
             {!agentsQuery.isPending && agents.length === 0 ? <p className="text-xs text-muted-foreground">{t("noAgents")}</p> : null}

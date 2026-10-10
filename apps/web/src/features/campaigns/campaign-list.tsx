@@ -23,6 +23,7 @@ import {
   type CampaignStatus,
 } from "@/lib/api/campaigns";
 import { useCursorList } from "@/lib/api/use-cursor-list";
+import { useMailAccounts } from "@/lib/api/settings";
 
 import { formatDateTime } from "./format";
 
@@ -37,10 +38,20 @@ const STATUSES: CampaignStatus[] = [
 
 export function CampaignList() {
   const t = useTranslations("campaigns.list");
+  const tCommon = useTranslations("common");
   const tStatus = useTranslations("status");
   const locale = useLocale();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<string>("all");
+  const mailAccounts = useMailAccounts();
+  const mailboxNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const account of mailAccounts.data?.pages.flatMap((page) => page.data) ?? []) {
+      const label = [account.name?.trim(), account.primary_address?.trim()].filter(Boolean).join(" · ");
+      if (label) names.set(account.id, label);
+    }
+    return names;
+  }, [mailAccounts.data]);
 
   const list = useCursorList<CampaignListItem>({
     queryKey: ["campaigns", "list"],
@@ -99,11 +110,8 @@ export function CampaignList() {
       header: t("colMailbox"),
       className: "w-40",
       cell: (row) => (
-        <span
-          className="font-mono text-2xs text-muted-foreground"
-          title={row.mail_account_id}
-        >
-          {row.mail_account_id.slice(0, 8)}…
+        <span className="text-2xs text-muted-foreground">
+          {mailboxNames.get(row.mail_account_id) ?? tCommon("nameUnavailable")}
         </span>
       ),
     },

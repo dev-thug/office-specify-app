@@ -41,6 +41,7 @@ import {
   patchDeliveryChannel,
   useChannelReviews,
   useDeliveryChannels,
+  usePrincipals,
   useMailAccounts,
   type ChannelPurpose,
   type ChannelReview,
@@ -50,7 +51,7 @@ import {
 } from "@/lib/api/settings";
 import { channelToggleDisabled } from "@/features/operations/gate-rules";
 import { apiErrorText } from "@/features/settings/api-error";
-import { formatDateTime, shortId } from "@/features/settings/format";
+import { formatDateTime } from "@/features/settings/format";
 import { useIsAdmin } from "@/features/settings/use-me";
 
 const PURPOSES: ChannelPurpose[] = ["correspondence", "marketing", "transactional"];
@@ -224,7 +225,9 @@ function ReviewsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const t = useTranslations("operations.integrations.reviews");
+  const tc = useTranslations("common");
   const locale = useLocale();
+  const principals = usePrincipals();
   const reviews = useChannelReviews(channel?.id);
   const rows = reviews.data?.pages.flatMap((p) => p.data) ?? [];
   const page = reviews.data?.pages.at(-1)?.page;
@@ -238,11 +241,12 @@ function ReviewsDialog({
     {
       key: "reviewedBy",
       header: t("reviewedBy"),
-      cell: (row) => (
-        <span className="font-mono text-xs" title={row.reviewed_by}>
-          {shortId(row.reviewed_by)}
-        </span>
-      ),
+      cell: (row) => {
+        const principal = principals.data?.pages
+          .flatMap((page) => page.data)
+          .find((item) => item.id === row.reviewed_by);
+        return <span>{principal?.name?.trim() || principal?.display_name?.trim() || tc("nameUnavailable")}</span>;
+      },
     },
     {
       key: "reviewedAt",

@@ -12,6 +12,7 @@
   "loading": "Loading…",
   "accountMenu": "Account menu",
   "unknownUser": "Unknown user",
+  "nameUnavailable": "Name unavailable",
   "requestId": "Request ID",
   "notFound": {
     "title": "Page not found",

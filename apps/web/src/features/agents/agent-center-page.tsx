@@ -25,7 +25,8 @@ export function AgentCenterPage() {
   const agentNames = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of agentsQuery.data?.pages.flatMap((pg) => pg.data) ?? []) {
-      if (p.kind === "agent") map.set(p.id, p.display_name);
+      const name = p.display_name?.trim() || p.name?.trim();
+      if (p.kind === "agent" && name) map.set(p.id, name);
     }
     return map;
   }, [agentsQuery.data]);

@@ -327,7 +327,7 @@ describe("DraftSendingWorkflow", () => {
     const meetingSelect = await screen.findByLabelText(
       "Booking link meeting type (optional)"
     );
-    await screen.findByRole("option", { name: "Sales introduction" });
+    await screen.findByRole("option", { name: "Sales introduction · 30 min" });
     fireEvent.change(meetingSelect, { target: { value: "meeting-1" } });
     expect(Array.from((channelSelect as HTMLSelectElement).options).map((o) => o.value)).not.toContain("channel-other");
 

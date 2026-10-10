@@ -73,7 +73,7 @@
     "submitting": "저장 중…",
     "createdToast": "버전 {no}을(를) 만들었습니다",
     "subjectRequired": "제목을 입력하세요.",
-    "bodyRequired": "텍스트 본문을 입력하세요."
+    "bodyRequired": "메일 본문을 입력하세요."
   },
   "preview": {
     "title": "미리보기",
@@ -107,12 +107,13 @@
   },
   "authoring": {
     "canvas": "메일 본문",
-    "modes": "편집 모드",
-    "compose": "작성",
     "html": "HTML 코드",
-    "preview": "받는 화면",
+    "editHtml": "HTML 편집",
+    "backToCanvas": "메일 캔버스로 돌아가기",
+    "preview": "받는 사람 이메일 미리보기",
     "sampleOnly": "샘플 데이터 · 실제 수신자 값으로 저장되지 않습니다",
     "canvasHint": "수신자가 읽을 메일을 작성하세요",
+    "htmlSourceHint": "HTML 소스를 편집합니다. 지원하지 않는 마크업은 저장할 수 없습니다.",
     "formatting": "글자 서식",
     "bold": "굵게",
     "italic": "기울임",
@@ -145,10 +146,10 @@
     "sampleCompany": "예시 기업",
     "sampleContact": "김담당",
     "sampleSender": "Office 팀",
-    "autoText": "HTML에서 자동 생성",
-    "manualText": "별도로 편집됨",
-    "textHint": "텍스트로 메일을 표시하는 환경에서 사용됩니다.",
-    "regenerateText": "HTML에서 다시 생성"
+    "legacyTextNotice": "원본 일반 텍스트 본문을 보존하고 있습니다. 메일 캔버스를 편집하면 HTML에서 새 텍스트를 생성합니다.",
+    "legacyTextTitle": "기존 일반 텍스트 버전",
+    "legacyTextDescription": "본문을 편집하기 전까지 이 텍스트를 버전과 함께 보존합니다. 지금 바꾸려면 HTML에서 생성한 텍스트를 선택하세요.",
+    "useGeneratedText": "HTML에서 생성한 텍스트 사용"
   },
   "zoho": {
     "title": "Zoho 템플릿",

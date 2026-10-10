@@ -5,6 +5,8 @@ import {
   variablesOutsideSchema,
   type VariableRow,
 } from "@/features/templates/version-editor";
+import { sampleVariablesJson } from "@/features/templates/render-preview";
+import type { TemplateVersion } from "@/lib/api/templates";
 
 const row = (partial: Partial<VariableRow>): VariableRow => ({
   key: "k",
@@ -62,5 +64,21 @@ describe("variablesOutsideSchema", () => {
     expect(
       variablesOutsideSchema(rows, "{{ company.name }}", "본문 없음")
     ).toEqual([]);
+  });
+});
+
+describe("sampleVariablesJson", () => {
+  it("omits server-owned meeting and unsubscribe URLs from render samples", () => {
+    const version = {
+      variable_schema: buildVariableSchema([
+        row({ name: "contact.name" }),
+        row({ name: "meeting.booking_url", type: "uri" }),
+        row({ name: "compliance.unsubscribe_url", type: "uri" }),
+      ]),
+    } as TemplateVersion;
+
+    expect(JSON.parse(sampleVariablesJson(version))).toEqual({
+      "contact.name": "sample-contact.name",
+    });
   });
 });

@@ -20,6 +20,7 @@ import {
 } from "@/features/contacts/contact-compose-dialog";
 import { ContactFormDialog } from "@/features/contacts/contact-form-dialog";
 import { NotesPanel } from "@/features/companies/notes-panel";
+import { principalName, useHumanPrincipals } from "@/features/companies/owner-select";
 import { TasksPanel } from "@/features/companies/tasks-panel";
 import { addContactEmail, getContact, isSuppressed, setPrimaryEmail, type ContactEmail } from "@/lib/api/contacts";
 import { idempotencyKey } from "@/lib/api/client";
@@ -28,6 +29,8 @@ import { ApiError } from "@/lib/api/problem";
 
 export function ContactDetailScreen({ contactId }: { contactId: string }) {
   const t = useTranslations("contacts");
+  const tc = useTranslations("common");
+  const principals = useHumanPrincipals();
   const queryClient = useQueryClient();
   const etag = useRef<string | undefined>(undefined);
   const [editOpen, setEditOpen] = useState(false);
@@ -108,7 +111,7 @@ export function ContactDetailScreen({ contactId }: { contactId: string }) {
               <div className="grid gap-1"><dt className="text-xs text-muted-foreground">{t("detail.companyLabel")}</dt><dd>{contact.company_id ? <Link className="underline-offset-4 hover:underline" href={`/app/companies/${encodeURIComponent(contact.company_id)}`}>{contact.company_name ?? t("list.linkedCompany")}</Link> : t("detail.noCompany")}</dd></div>
               <Field label={t("detail.jobTitleLabel")} value={contact.job_title} />
               <Field label={t("detail.departmentLabel")} value={contact.department} />
-              <Field label={t("detail.ownerLabel")} value={contact.owner_display_name ?? "—"} />
+              <Field label={t("detail.ownerLabel")} value={contact.owner_display_name?.trim() || principalName(principals.data?.find((p) => p.id === contact.owner_principal_id), contact.owner_principal_id) || (contact.owner_principal_id ? tc("nameUnavailable") : t("detail.unassigned"))} />
             </dl>
           </CardContent>
         </Card>

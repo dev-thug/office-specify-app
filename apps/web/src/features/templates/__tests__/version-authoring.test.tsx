@@ -19,13 +19,12 @@ describe("version authoring", () => {
     vi.stubGlobal("fetch", fetcher);
     editor();
     fireEvent.change(screen.getByLabelText("Subject", {exact:true}), {target:{value:"Greeting"}});
-    fireEvent.click(screen.getByRole("tab", {name:"HTML code"}));
+    fireEvent.click(screen.getByRole("button", {name:"Edit HTML"}));
     const html = screen.getByRole("textbox", {name:"HTML code"});
     fireEvent.focus(html);
     fireEvent.click(screen.getByRole("button", {name:"Insert Contact name"}));
     fireEvent.click(screen.getByRole("button", {name:"Insert Contact name"}));
     fireEvent.change(html, {target:{value:'<p>Hello <strong>{{contact.name}}</strong></p>'}});
-    expect(screen.getByLabelText("Body (text)")).toHaveValue("Hello {{contact.name}}");
     fireEvent.click(screen.getByRole("button", {name:"Save version"}));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
     const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
@@ -39,13 +38,15 @@ describe("version authoring", () => {
     const fetcher = vi.fn();vi.stubGlobal("fetch",fetcher);
     editor();
     fireEvent.change(screen.getByLabelText("Subject", {exact:true}), {target:{value:"Unsafe"}});
-    fireEvent.click(screen.getByRole("tab", {name:"HTML code"}));
+    fireEvent.click(screen.getByRole("button", {name:"Edit HTML"}));
     fireEvent.change(screen.getByRole("textbox", {name:"HTML code"}), {target:{value:'<p>Safe</p><script>bad()</script><img src="https://tracker.test">'}});
-    fireEvent.click(screen.getByRole("tab", {name:"Recipient preview"}));
+    fireEvent.click(screen.getByRole("button", {name:"Recipient preview"}));
     const frame = screen.getByTitle("Recipient email preview");
     expect(frame).toHaveAttribute('sandbox','');
     expect(frame.getAttribute('srcdoc')).not.toContain('<script>');
     expect(frame.getAttribute('srcdoc')).not.toContain('tracker.test');
+    fireEvent.click(screen.getByRole("button", {name:"Close"}));
+    await waitFor(() => expect(screen.getByRole("button", {name:"Save version"})).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", {name:"Save version"}));
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -59,7 +60,6 @@ describe("version authoring", () => {
     </NextIntlClientProvider>);
 
     await waitFor(() => expect(screen.getByLabelText("Subject", {exact:true})).toHaveValue("Zoho welcome"));
-    expect(screen.getByLabelText("Body (text)")).toHaveValue("Hello {{contact.name}}");
     fireEvent.click(screen.getByRole("button", {name:"Save version"}));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
     const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
@@ -82,7 +82,7 @@ describe("version authoring", () => {
     </NextIntlClientProvider>);
 
     await waitFor(() => expect(screen.getByLabelText("Subject", {exact:true})).toHaveValue(""));
-    expect(screen.getByLabelText("Body (text)")).toHaveValue("");
+    expect(screen.getByRole("textbox", {name:"Email message"}).innerHTML).toBe("");
   });
 });
 
@@ -99,7 +99,7 @@ describe("meeting booking CTA", () => {
           bodyHtml:'<p><a href="{{compliance.unsubscribe_url}}">Unsubscribe</a></p>',
         }} />
     </NextIntlClientProvider>);
-    fireEvent.click(screen.getByRole("tab", {name:"HTML code"}));
+    fireEvent.click(screen.getByRole("button", {name:"Edit HTML"}));
     const html = screen.getByRole("textbox", {name:"HTML code"});
     fireEvent.focus(html);
     fireEvent.click(screen.getByRole("button", {name:"Insert meeting booking button"}));
@@ -116,5 +116,65 @@ describe("meeting booking CTA", () => {
       type:"string", format:"uri", maxLength:2048,
     });
     expect(request.variable_schema.required).toEqual(["compliance.unsubscribe_url", "meeting.booking_url"]);
+  });
+});
+
+
+describe("unified email editor", () => {
+  it("keeps rendered and raw HTML edits in one pane and derives saved plain text", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({data:{template_version_id:"version-unified",version_no:1,content_hash:"hash"}}), {status:201,headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch", fetcher);
+    editor();
+
+    expect(screen.queryByRole("textbox", {name:"Body (text)"})).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Subject", {exact:true}), {target:{value:"Unified draft"}});
+    const canvas = screen.getByRole("textbox", {name:"Email message"});
+    canvas.innerHTML = "<p>First draft</p>";
+    fireEvent.input(canvas);
+
+    fireEvent.click(screen.getByRole("button", {name:"Edit HTML"}));
+    const source = screen.getByRole("textbox", {name:"HTML code"});
+    expect(source).toHaveValue("<p>First draft</p>");
+    fireEvent.change(source, {target:{value:"<p>Final draft</p>"}});
+    fireEvent.click(screen.getByRole("button", {name:"Back to email canvas"}));
+    expect(screen.getByRole("textbox", {name:"Email message"}).innerHTML).toBe("<p>Final draft</p>");
+
+    fireEvent.click(screen.getByRole("button", {name:"Save version"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(request.body_html).toBe("<p>Final draft</p>");
+    expect(request.body_text).toBe("Final draft");
+  });
+
+  it("converts a plaintext-only seed into the editable email canvas before saving", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({data:{template_version_id:"version-text-seed",version_no:1,content_hash:"hash"}}), {status:201,headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch", fetcher);
+    render(<NextIntlClientProvider locale="en" messages={{common, templates}}>
+      <VersionEditor templateId="template-1" open onOpenChange={vi.fn()} onCreated={vi.fn()}
+        initialSeed={{subject:"Plain seed",bodyText:"\n  Hello\n\n\nWorld  \n",bodyHtml:null}} />
+    </NextIntlClientProvider>);
+
+    expect(screen.getByRole("textbox", {name:"Email message"}).innerHTML).toBe("<p><br>  Hello</p><p>World  <br></p>");
+    fireEvent.click(screen.getByRole("button", {name:"Save version"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(request.body_html).toBe("<p><br>  Hello</p><p>World  <br></p>");
+    expect(request.body_text).toBe("\n  Hello\n\n\nWorld  \n");
+  });
+
+  it("shows and preserves legacy manual text alongside HTML until the canvas is edited", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({data:{template_version_id:"version-legacy",version_no:1,content_hash:"hash"}}), {status:201,headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch", fetcher);
+    render(<NextIntlClientProvider locale="en" messages={{common, templates}}>
+      <VersionEditor templateId="template-1" open onOpenChange={vi.fn()} onCreated={vi.fn()}
+        initialSeed={{subject:"Legacy seed",bodyText:"Plain copy preserved for old clients",bodyHtml:"<p>Rich copy</p>"}} />
+    </NextIntlClientProvider>);
+
+    expect(screen.getByText("The original plain text is being preserved. Editing the email canvas will generate new plain text from the HTML.")).toBeInTheDocument();
+    expect(screen.getByText("Plain copy preserved for old clients")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name:"Save version"}));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(request.body_text).toBe("Plain copy preserved for old clients");
   });
 });

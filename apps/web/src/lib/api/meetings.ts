@@ -69,6 +69,8 @@ export interface MeetingTypePatchInput {
 }
 
 export const MEETING_TYPES_PATH = "/api/v1/meeting-types";
+export const MEETING_TYPES_QUERY_KEY = ["meetings", "types"] as const;
+export const MEETING_TYPES_LIST_LIMIT = 200;
 
 export function createMeetingType(
   input: MeetingTypeCreateInput,
@@ -315,6 +317,7 @@ export function recordBookingAttendance(
 
 export interface PrincipalRef {
   id: string;
+  name?: string | null;
   display_name?: string | null;
   kind?: string;
   role?: string;
@@ -322,10 +325,16 @@ export interface PrincipalRef {
   [key: string]: unknown;
 }
 
+
+export function principalDisplayName(principal: PrincipalRef | undefined): string | undefined {
+  return principal?.name?.trim() || principal?.display_name?.trim() || undefined;
+}
+
 export const PRINCIPALS_PATH = "/api/v1/principals";
 
 export interface CalendarConnectionRef {
   id: string;
+  name?: string | null;
   host_principal_id?: string;
   provider?: string;
   provider_calendar_id?: string;

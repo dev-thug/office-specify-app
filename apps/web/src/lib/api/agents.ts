@@ -106,7 +106,9 @@ export interface CreateAgentRunInput {
 export interface AgentPrincipal {
   id: string;
   kind: string;
-  display_name: string;
+  /** Wire responses may use name while some API variants use display_name. */
+  name?: string | null;
+  display_name?: string | null;
   status: string;
   role?: string;
   scopes?: string[];

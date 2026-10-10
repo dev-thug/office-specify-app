@@ -171,7 +171,7 @@ describe("Zoho Email API template library", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit remote template" }));
 
     expect(await screen.findByText("This native template is kept in source mode to preserve its layout")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Compose" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit HTML" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Zoho template content")).toHaveValue(nativeSource);
     const nativePreview = screen.getByTitle("Native source preview");
     expect(nativePreview).toHaveAttribute("sandbox", "");
@@ -184,7 +184,7 @@ describe("Zoho Email API template library", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit remote template" }));
     fireEvent.click(await screen.findByRole("button", { name: "Convert source for visual editing" }));
-    expect(screen.getByRole("tab", { name: "Compose" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit HTML" })).toBeInTheDocument();
   });
 
   it("requires explicit merge-field decisions and warns before importing a compatible copy", async () => {
@@ -256,7 +256,7 @@ describe("Zoho Email API template library", () => {
     harness(fetcher);
     fireEvent.click(await screen.findByRole("button", { name: "Create remote template" }));
     fireEvent.change(screen.getByLabelText("Zoho template name"), { target: { value: "New copy" } });
-    fireEvent.click(screen.getByRole("tab", { name: "HTML code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit HTML" }));
     fireEvent.change(screen.getByRole("textbox", { name: "HTML code" }), { target: { value: "<p>Copied</p>" } });
     fireEvent.click(screen.getByRole("button", { name: "Create in Zoho" }));
     expect(await screen.findByText("Could not save this Zoho template.")).toBeInTheDocument();
@@ -331,7 +331,7 @@ describe("Zoho Email API template library", () => {
     harness(fetcher);
     fireEvent.click(await screen.findByRole("button", { name: "Create remote template" }));
     fireEvent.change(screen.getByLabelText("Zoho template name"), { target: { value: "Ambiguous" } });
-    fireEvent.click(screen.getByRole("tab", { name: "HTML code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit HTML" }));
     fireEvent.change(screen.getByRole("textbox", { name: "HTML code" }), { target: { value: "<p>Ambiguous</p>" } });
     fireEvent.click(screen.getByRole("button", { name: "Create in Zoho" }));
 
@@ -347,7 +347,7 @@ describe("Zoho Email API template library", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create remote template" }));
     fireEvent.change(screen.getByLabelText("Zoho template name"), { target: { value: "Ambiguous" } });
-    fireEvent.click(screen.getByRole("tab", { name: "HTML code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit HTML" }));
     fireEvent.change(screen.getByRole("textbox", { name: "HTML code" }), { target: { value: "<p>Ambiguous</p>" } });
     fireEvent.click(screen.getByRole("button", { name: "Create in Zoho" }));
     await waitFor(() => expect(posts).toBe(2));

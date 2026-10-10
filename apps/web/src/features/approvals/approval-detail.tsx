@@ -40,6 +40,7 @@ import {
   type ApprovalSnapshotMessage,
 } from "@/lib/api/approvals";
 import { readEtag } from "@/lib/api/mutate";
+import { usePrincipals } from "@/lib/api/settings";
 import { ApiError } from "@/lib/api/problem";
 
 import { useApiErrorMessage } from "./api-error-message";
@@ -55,7 +56,9 @@ import { useIdempotencyKey } from "./use-idempotency-key";
 export function ApprovalDetail({ approvalId }: { approvalId: string }) {
   const t = useTranslations("approvals.detail");
   const tKind = useTranslations("approvals.kind");
+  const tc = useTranslations("common");
   const locale = useLocale();
+  const principals = usePrincipals();
   const qc = useQueryClient();
   const errorMessage = useApiErrorMessage("approvals");
 
@@ -196,6 +199,23 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
   const stateKey = approvalStateKey(
     req.status === "pending" && expired ? "expired" : req.status
   );
+  const requesterName =
+    req.requester_display_name?.trim() ||
+    req.requester?.display_name?.trim() ||
+    req.requester?.name?.trim() ||
+    principals.data?.pages
+      .flatMap((page) => page.data)
+      .find((principal) => principal.id === req.requested_by)?.name?.trim() ||
+    principals.data?.pages
+      .flatMap((page) => page.data)
+      .find((principal) => principal.id === req.requested_by)?.display_name?.trim() ||
+    tc("nameUnavailable");
+  const targetId =
+    req.target_id ??
+    req.launch_id ??
+    req.outbound_message_id ??
+    req.booking_change_id ??
+    req.suppression_id;
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-6 py-6">
@@ -337,9 +357,7 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm sm:grid-cols-[auto_1fr_auto_1fr]">
           <dt className="text-muted-foreground">{t("requester")}</dt>
           <dd className="font-medium">
-            {req.requester_display_name ??
-              req.requester?.display_name ??
-              req.requested_by}
+            {requesterName}
             {self ? (
               <Badge variant="outline" className="ml-2">
                 {t("selfBadge")}
@@ -362,16 +380,17 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
           <dd className="font-mono text-ui" title={snapshotHash}>
             {shortHash(snapshotHash)}
           </dd>
-          <dt className="text-muted-foreground">{t("targetId")}</dt>
-          <dd className="font-mono text-ui">
-            {req.target_id ?? req.launch_id ??
-              req.outbound_message_id ??
-              req.booking_change_id ??
-              req.suppression_id ??
-              "—"}
-          </dd>
         </dl>
       </section>
+      {targetId ? (
+        <details className="rounded-2xl border border-border bg-card px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">{t("technicalDetails")}</summary>
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+            <dt className="text-muted-foreground">{t("targetId")}</dt>
+            <dd className="break-all font-mono text-ui">{targetId}</dd>
+          </dl>
+        </details>
+      ) : null}
 
       {nativeExportRequired ? (
         <section className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4">
@@ -512,7 +531,7 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
                           {t("messageN", { order: m.step_order ?? i + 1 })}
                         </span>
                         <span className="text-muted-foreground">
-                          → {m.to ?? m.email_address_id ?? "—"}
+                          → {m.to ?? t("recipientUnavailable")}
                         </span>
                       </div>
                       {m.subject ? (

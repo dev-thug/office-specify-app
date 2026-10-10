@@ -40,7 +40,9 @@ import {
   type CampaignLaunch,
   type LaunchMessageSnapshot,
 } from "@/lib/api/campaigns";
-import { useDeliveryChannels, type DeliveryChannel } from "@/lib/api/settings";
+import { useDeliveryChannels, useMailAccounts, type DeliveryChannel } from "@/lib/api/settings";
+import { MEETING_TYPES_LIST_LIMIT, PRINCIPALS_PATH, principalDisplayName, type PrincipalRef } from "@/lib/api/meetings";
+import { useCursorList } from "@/lib/api/use-cursor-list";
 import { readEtag } from "@/lib/api/mutate";
 import { ApiError } from "@/lib/api/problem";
 
@@ -57,6 +59,7 @@ import { MarketingExportPanel } from "@/features/marketing/export-panel";
 
 export function CampaignDetail({ campaignId }: { campaignId: string }) {
   const t = useTranslations("campaigns.detail");
+  const tCommon = useTranslations("common");
   const tList = useTranslations("campaigns.list");
   const tGate = useTranslations("campaigns.channelGate");
   const tReason = useTranslations("campaigns.reasonCodes");
@@ -74,8 +77,23 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
     retry: false,
   });
   const deliveryChannels = useDeliveryChannels();
+  const mailAccountsQuery = useMailAccounts();
+  const principalsQuery = useCursorList<PrincipalRef>({
+    queryKey: ["meetings", "principals"],
+    path: PRINCIPALS_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
+  });
 
   const campaign = detail.data;
+  const mailAccounts = mailAccountsQuery.data?.pages.flatMap((page) => page.data) ?? [];
+  const principals = principalsQuery.data?.pages.flatMap((page) => page.data) ?? [];
+  const mailbox = mailAccounts.find((account) => account.id === campaign?.mail_account_id);
+  const mailboxLabel = mailbox
+    ? [mailbox.name?.trim(), mailbox.primary_address?.trim()].filter(Boolean).join(" · ")
+    : "";
+  const ownerLabel = principalDisplayName(
+    principals.find((principal) => principal.id === campaign?.owner_principal_id)
+  );
   const revision = useMemo(
     () =>
       campaign?.revision ??
@@ -244,15 +262,11 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
             </>
           ) : null}
           <dt className="text-muted-foreground">{t("mailbox")}</dt>
-          <dd className="font-mono text-ui">
-            {campaign.mail_account_id}
-          </dd>
+          <dd>{mailboxLabel || tCommon("nameUnavailable")}</dd>
           {campaign.owner_principal_id ? (
             <>
               <dt className="text-muted-foreground">{t("owner")}</dt>
-              <dd className="font-mono text-ui">
-                {campaign.owner_principal_id}
-              </dd>
+              <dd>{ownerLabel ?? tCommon("nameUnavailable")}</dd>
             </>
           ) : null}
           <dt className="text-muted-foreground">{tList("colCreated")}</dt>
@@ -330,11 +344,8 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
                     <span className="font-medium">
                       {t("stepN", { order: s.step_order })}
                     </span>
-                    <span
-                      className="font-mono text-2xs text-muted-foreground"
-                      title={s.template_version_id}
-                    >
-                      {shortHash(s.template_version_id, 18)}
+                    <span className="text-2xs text-muted-foreground">
+                      {t("savedTemplateVersion")}
                     </span>
                     <span className="text-2xs text-muted-foreground">
                       {s.delay_hours > 0
@@ -534,9 +545,7 @@ function LaunchRow({
           ) : (
             <ChevronRightIcon className="size-4 shrink-0" aria-hidden />
           )}
-          <span className="font-mono text-ui font-medium" title={launch.id}>
-            {t("colLaunch")} {shortHash(launch.id, 8)}
-          </span>
+          <span className="text-sm font-medium">{t("colLaunch")}</span>
           <StatusBadge status={launch.status} />
         </button>
         <span className="text-2xs text-muted-foreground">

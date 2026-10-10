@@ -43,9 +43,8 @@ export function useHumanPrincipals() {
 }
 
 export function principalName(p: Principal | undefined, id: string | null | undefined): string | null {
-  if (!id) return null;
-  if (!p) return null;
-  return p.display_name ?? null;
+  if (!id || !p) return null;
+  return p.display_name?.trim() || p.name?.trim() || null;
 }
 
 interface OwnerSelectProps {
@@ -83,11 +82,14 @@ export function OwnerSelect({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={UNASSIGNED}>{unassignedLabel}</SelectItem>
+        {value && value !== UNASSIGNED && !items.some((p) => p.id === value) ? (
+          <SelectItem value={value} disabled>{t("nameUnavailable")}</SelectItem>
+        ) : null}
         {items.map((p) => (
           <SelectItem key={p.id} value={p.id}>
             {p.id === meId && meLabel
-              ? `${p.display_name ?? p.id} (${meLabel})`
-              : (p.display_name ?? p.id)}
+              ? `${principalName(p, p.id) ?? t("nameUnavailable")} (${meLabel})`
+              : (principalName(p, p.id) ?? t("nameUnavailable"))}
           </SelectItem>
         ))}
         {principals.isError ? (

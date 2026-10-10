@@ -18,9 +18,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { idempotencyKey } from "@/lib/api/client";
+import { getMe } from "@/lib/api/auth";
 import { readEtag } from "@/lib/api/mutate";
 import { useCursorList } from "@/lib/api/use-cursor-list";
-import { CALENDAR_CONNECTIONS_PATH, MEETING_TYPES_PATH, createMeetingType, getHostAvailability, putHostAvailability, updateMeetingType, type CalendarConnectionRef, type MeetingType, type MeetingTypeCreateInput, type MeetingTypePatchInput, type PrincipalRef } from "@/lib/api/meetings";
+import { CALENDAR_CONNECTIONS_PATH, MEETING_TYPES_PATH, MEETING_TYPES_LIST_LIMIT, MEETING_TYPES_QUERY_KEY, createMeetingType, getHostAvailability, principalDisplayName, putHostAvailability, updateMeetingType, type CalendarConnectionRef, type MeetingType, type MeetingTypeCreateInput, type MeetingTypePatchInput, type PrincipalRef } from "@/lib/api/meetings";
 import { ApiError } from "@/lib/api/problem";
 import { detectTimezone, formatDateTime } from "@/features/meetings/datetime";
 
@@ -34,8 +35,14 @@ export function MeetingTypesScreen() {
   const [tab, setTab] = useState("types");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MeetingType | null>(null);
-  const [hostId, setHostId] = useState("");
   const [calendarId, setCalendarId] = useState("");
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: async () => (await getMe()).data,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const currentPrincipalId = me.data?.principal_id ?? "";
   const [form, setForm] = useState<EditableMeetingType>({
     name: "",
     description: "",
@@ -49,13 +56,29 @@ export function MeetingTypesScreen() {
   const [error, setError] = useState<string | null>(null);
   const idem = useRef(idempotencyKey());
 
-  const list = useCursorList<MeetingType>({ queryKey: ["meetings", "types"], path: MEETING_TYPES_PATH });
+  const list = useCursorList<MeetingType>({
+    queryKey: MEETING_TYPES_QUERY_KEY,
+    path: MEETING_TYPES_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
+  });
   const types = list.data?.pages.flatMap((page) => page.data ?? []) ?? [];
-  const principals = useCursorList<PrincipalRef>({ queryKey: ["meetings", "principals"], path: "/api/v1/principals" });
-  const calendars = useCursorList<CalendarConnectionRef>({ queryKey: ["meetings", "calendar-connections"], path: CALENDAR_CONNECTIONS_PATH });
+  const principals = useCursorList<PrincipalRef>({
+    queryKey: ["meetings", "principals"],
+    path: "/api/v1/principals",
+    limit: MEETING_TYPES_LIST_LIMIT,
+  });
+  const calendars = useCursorList<CalendarConnectionRef>({
+    queryKey: ["meetings", "calendar-connections"],
+    path: CALENDAR_CONNECTIONS_PATH,
+    limit: MEETING_TYPES_LIST_LIMIT,
+  });
   const humans = principals.data?.pages.flatMap((page) => page.data ?? []).filter((person) => person.kind === "human" && person.status !== "disabled") ?? [];
   const activeCalendars = calendars.data?.pages.flatMap((page) => page.data ?? []).filter((calendar) => calendar.status === "active") ?? [];
-  const hostCalendars = activeCalendars.filter((calendar) => calendar.host_principal_id === hostId);
+  const hostCalendars = activeCalendars.filter((calendar) => calendar.host_principal_id === currentPrincipalId);
+  const currentHuman = humans.find((person) => person.id === currentPrincipalId);
+  const currentHostLabel = principalDisplayName(currentHuman) ?? me.data?.display_name ?? common("nameUnavailable");
+  const defaultCalendarId = hostCalendars[0]?.id ?? "";
+  const selectedCalendarId = calendarId || defaultCalendarId;
   const lastPage = list.data?.pages.at(-1);
 
   const columns: ColumnDef<MeetingType>[] = [
@@ -64,15 +87,14 @@ export function MeetingTypesScreen() {
     { key: "buffers", header: t("colBuffers"), cell: (row) => `${row.buffer_before_minutes} / ${row.buffer_after_minutes}` },
     { key: "notice", header: t("colNotice"), cell: (row) => t("minutes", { count: row.minimum_notice_minutes }) },
     { key: "horizon", header: t("colHorizon"), cell: (row) => t("days", { count: row.booking_horizon_days }) },
-    { key: "host", header: t("colHost"), cell: (row) => humans.find((person) => person.id === row.host_principal_id)?.display_name ?? row.host_principal_id.slice(0, 8) },
+    { key: "host", header: t("colHost"), cell: (row) => principalDisplayName(humans.find((person) => person.id === row.host_principal_id)) ?? common("nameUnavailable") },
     { key: "status", header: t("colStatus"), cell: (row) => <StatusBadge status={row.status} /> },
     { key: "actions", header: t("colActions"), cell: (row) => <Button variant="outline" size="xs" onClick={() => openEdit(row)}>{t("edit")}</Button> },
   ];
 
   function openCreate() {
     setEditing(null);
-    setHostId(humans[0]?.id ?? "");
-    setCalendarId(activeCalendars.find((calendar) => calendar.host_principal_id === humans[0]?.id)?.id ?? "");
+    setCalendarId(defaultCalendarId);
     setForm({ name: "", description: "", duration_minutes: 30, buffer_before_minutes: 10, buffer_after_minutes: 10, minimum_notice_minutes: 1440, booking_horizon_days: 30 });
     setError(null);
     setDialogOpen(true);
@@ -80,7 +102,6 @@ export function MeetingTypesScreen() {
 
   function openEdit(item: MeetingType) {
     setEditing(item);
-    setHostId(item.host_principal_id);
     setCalendarId(item.calendar_connection_id);
     setForm({
       name: item.name,
@@ -119,7 +140,7 @@ export function MeetingTypesScreen() {
         };
         await updateMeetingType(editing.id, patch, { etag: editing.version ?? 0, idempotencyKey: idem.current });
       } else {
-        if (!hostId || !calendarId) {
+        if (!currentPrincipalId || !selectedCalendarId) {
           setError(t("calendarNone"));
           return;
         }
@@ -127,13 +148,13 @@ export function MeetingTypesScreen() {
           ...form,
           name: form.name.trim(),
           description: form.description?.trim() || undefined,
-          calendar_connection_id: calendarId,
+          calendar_connection_id: selectedCalendarId,
         };
         await createMeetingType(input, { idempotencyKey: idem.current });
       }
       idem.current = idempotencyKey();
       setDialogOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["meetings", "types"] });
+      await queryClient.invalidateQueries({ queryKey: MEETING_TYPES_QUERY_KEY });
     } catch (cause) {
       const apiError = cause instanceof ApiError ? cause : null;
       setError(apiError?.status === 412 || apiError?.status === 428 ? t("conflictBody") : apiError?.problem.detail ?? t("errors.generic"));
@@ -174,9 +195,13 @@ export function MeetingTypesScreen() {
             <div className="grid gap-1"><Label htmlFor="meeting-type-name">{t("fieldName")}</Label><Input id="meeting-type-name" required value={form.name} onChange={(event) => setForm((state) => ({ ...state, name: event.target.value }))} maxLength={300} /></div>
             <div className="grid gap-1"><Label htmlFor="meeting-type-description">{t("fieldDescription")}</Label><Input id="meeting-type-description" value={form.description ?? ""} onChange={(event) => setForm((state) => ({ ...state, description: event.target.value }))} maxLength={2000} /></div>
             {!editing ? <>
-              <div className="grid gap-1"><Label htmlFor="meeting-type-host">{t("fieldHost")}</Label><Select value={hostId} onValueChange={(value) => { setHostId(value); setCalendarId(""); }}><SelectTrigger id="meeting-type-host"><SelectValue placeholder={t("fieldHost")} /></SelectTrigger><SelectContent>{humans.map((person) => <SelectItem key={person.id} value={person.id}>{person.display_name ?? person.id}</SelectItem>)}</SelectContent></Select></div>
-              <div className="grid gap-1"><Label htmlFor="meeting-type-calendar">{t("fieldCalendar")}</Label><Select value={calendarId} onValueChange={setCalendarId}><SelectTrigger id="meeting-type-calendar"><SelectValue placeholder={t("fieldCalendar")} /></SelectTrigger><SelectContent>{hostCalendars.map((calendar) => <SelectItem key={calendar.id} value={calendar.id}>{calendar.provider === "office_calendar" ? t("calendarOffice") : calendar.provider_calendar_id ?? calendar.id}</SelectItem>)}</SelectContent></Select></div>
-              {hostCalendars.length === 0 ? <p className="text-xs text-muted-foreground">{t("calendarNone")}</p> : null}
+              <div className="grid gap-1"><Label htmlFor="meeting-type-host">{t("fieldHost")}</Label><Input id="meeting-type-host" readOnly value={currentHostLabel} /><p className="text-2xs text-muted-foreground">{t("fieldHostCurrent")}</p></div>
+              <div className="grid gap-1"><Label htmlFor="meeting-type-calendar">{t("fieldCalendar")}</Label><Select value={selectedCalendarId} onValueChange={setCalendarId} disabled={!currentPrincipalId || calendars.isLoading || calendars.isError}><SelectTrigger id="meeting-type-calendar"><SelectValue placeholder={t("fieldCalendar")} /></SelectTrigger><SelectContent>{hostCalendars.map((calendar) => <SelectItem key={calendar.id} value={calendar.id}>{calendar.provider === "office_calendar" ? t("calendarOffice") : calendar.name ?? calendar.provider ?? common("nameUnavailable")}</SelectItem>)}</SelectContent></Select>
+                {calendars.isLoading ? <p role="status" className="text-xs text-muted-foreground">{common("table.loading")}</p> : null}
+                {calendars.isError ? <div role="alert" className="flex items-center gap-2 text-xs text-destructive"><p>{t("calendarLoadFailed")}</p><Button type="button" variant="link" size="xs" className="h-auto p-0 text-destructive" onClick={() => void calendars.refetch()}>{common("retry")}</Button></div> : null}
+                {calendars.isSuccess && hostCalendars.length === 0 ? <p className="text-xs text-muted-foreground">{t("calendarNone")}</p> : null}
+                {calendars.hasNextPage ? <Button type="button" variant="link" size="xs" className="h-auto w-fit p-0" disabled={calendars.isFetchingNextPage} onClick={() => void calendars.fetchNextPage()}>{calendars.isFetchingNextPage ? common("table.loading") : common("table.loadMore")}</Button> : null}
+              </div>
             </> : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberField id="meeting-type-duration" label={t("fieldDuration")} min={5} max={480} value={form.duration_minutes} onChange={(value) => setNumber("duration_minutes", value)} />
@@ -187,7 +212,7 @@ export function MeetingTypesScreen() {
             </div>
             {editing ? <div className="grid gap-1"><Label htmlFor="meeting-type-status">{t("fieldStatus")}</Label><Select value={String(form.status ?? "active")} onValueChange={(value) => setForm((state) => ({ ...state, status: value as "active" | "disabled" }))}><SelectTrigger id="meeting-type-status"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">{t("statusActive")}</SelectItem><SelectItem value="disabled">{t("statusDisabled")}</SelectItem></SelectContent></Select></div> : null}
             {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{common("cancel")}</Button><Button type="submit" disabled={pending || !form.name.trim() || (!editing && (!hostId || !calendarId))}>{pending ? t("saving") : t("save")}</Button></DialogFooter>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{common("cancel")}</Button><Button type="submit" disabled={pending || !form.name.trim() || (!editing && (!currentPrincipalId || !selectedCalendarId))}>{pending ? t("saving") : t("save")}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -270,7 +295,7 @@ function AvailabilityEditor({ hosts, t, locale }: { hosts: PrincipalRef[]; t: Re
 
   return <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4">
     <div className="grid gap-3 sm:grid-cols-2">
-      <div className="grid gap-1"><Label htmlFor="availability-host">{t("host")}</Label><Select value={hostId} onValueChange={(value) => { setHostId(value); setRulesDraft(null); setExceptionsDraft(null); setTimezoneOverride(null); setError(null); }}><SelectTrigger id="availability-host"><SelectValue placeholder={t("host")} /></SelectTrigger><SelectContent>{hosts.map((host) => <SelectItem key={host.id} value={host.id}>{host.display_name ?? host.id}</SelectItem>)}</SelectContent></Select></div>
+      <div className="grid gap-1"><Label htmlFor="availability-host">{t("host")}</Label><Select value={hostId} onValueChange={(value) => { setHostId(value); setRulesDraft(null); setExceptionsDraft(null); setTimezoneOverride(null); setError(null); }}><SelectTrigger id="availability-host"><SelectValue placeholder={t("host")} /></SelectTrigger><SelectContent>{hosts.map((host) => <SelectItem key={host.id} value={host.id}>{principalDisplayName(host) ?? common("nameUnavailable")}</SelectItem>)}</SelectContent></Select></div>
       <div className="grid gap-1"><Label htmlFor="availability-timezone">{t("timezone")}</Label><Input id="availability-timezone" value={timezone} onChange={(event) => setTimezoneOverride(event.target.value)} /></div>
     </div>
     {availability.isPending && hostId ? <Skeleton className="h-36 w-full rounded-xl" /> : null}

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { ActivityFeed } from "@/features/companies/activity-feed";
 import { CompanyFormDialog } from "@/features/companies/company-form-dialog";
+import { principalName, useHumanPrincipals } from "@/features/companies/owner-select";
 import { ContactFormDialog } from "@/features/contacts/contact-form-dialog";
 import { MergeRequestDialog } from "@/features/companies/merge-request-dialog";
 import { NotesPanel } from "@/features/companies/notes-panel";
@@ -38,6 +39,7 @@ export function CompanyDetailScreen({ companyId }: { companyId: string }) {
   const tc = useTranslations("common");
   const locale = useLocale();
   const queryClient = useQueryClient();
+  const principals = useHumanPrincipals();
   const etag = useRef<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState("overview");
   const [editOpen, setEditOpen] = useState(false);
@@ -124,7 +126,7 @@ export function CompanyDetailScreen({ companyId }: { companyId: string }) {
                   <Field label={t("detail.fields.industry")} value={company.industry} />
                   <Field label={t("detail.fields.country")} value={company.country_code} />
                   <div className="grid gap-1"><dt className="text-xs text-muted-foreground">{t("detail.fields.stage")}</dt><dd><StatusBadge status={company.lifecycle_stage} /></dd></div>
-                  <Field label={t("detail.fields.owner")} value={company.owner_display_name ?? (company.owner_principal_id ? company.owner_principal_id.slice(0, 8) : t("detail.unassigned"))} />
+                  <Field label={t("detail.fields.owner")} value={company.owner_display_name?.trim() || principalName(principals.data?.find((p) => p.id === company.owner_principal_id), company.owner_principal_id) || (company.owner_principal_id ? tc("nameUnavailable") : t("detail.unassigned"))} />
                   <Field label={t("detail.fields.createdAt")} value={formatDateTime(company.created_at, locale)} />
                   <Field label={t("detail.fields.updatedAt")} value={formatDateTime(company.updated_at, locale)} />
                 </dl>

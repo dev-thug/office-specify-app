@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CompanyPicker } from "@/features/companies/company-picker";
-import { useMe, useHumanPrincipals } from "@/features/companies/owner-select";
+import { principalName, useMe, useHumanPrincipals } from "@/features/companies/owner-select";
 import { ContactFormDialog } from "@/features/contacts/contact-form-dialog";
 import { formatDateTime } from "@/features/companies/utils";
 import { requestCrmExport } from "@/lib/api/companies";
@@ -71,22 +71,21 @@ export function ContactsScreen() {
     { key: "title", header: t("list.columns.jobTitle"), cell: (row) => row.job_title ?? "—" },
     { key: "status", header: t("list.columns.status"), cell: (row) => <StatusBadge status={row.status} /> },
     { key: "email", header: t("list.columns.primaryEmail"), cell: (row) => row.emails?.find((email) => email.is_primary)?.address ?? "—" },
-    { key: "owner", header: t("list.columns.owner"), cell: (row) => row.owner_display_name ?? row.owner_principal_id?.slice(0, 8) ?? t("list.allOwners") },
+    { key: "owner", header: t("list.columns.owner"), cell: (row) => row.owner_display_name?.trim() || principalName(principals.data?.find((p) => p.id === row.owner_principal_id), row.owner_principal_id) || (row.owner_principal_id ? tc("nameUnavailable") : t("detail.unassigned")) },
     { key: "created", header: t("list.columns.created"), cell: (row) => formatDateTime(row.created_at, locale) },
   ];
 
   async function exportCurrentFilter() {
     setExporting(true);
     try {
-      const result = await requestCrmExport({
+      await requestCrmExport({
         fields: ["company.name", "contact.name", "contact.job_title", "contact.department", "contact.status", "contact.email", "contact.email_label"],
         filters: {
           ...(query.trim() ? { q: query.trim() } : {}),
           ...(company?.id ? { company_ids: [company.id] } : {}),
         },
       }, { idempotencyKey: idempotencyKey() });
-      const jobId = result.data.import_id ?? result.data.job_id;
-      toast.success(`${t("list.exportQueued")}${jobId ? ` (${jobId})` : ""}`);
+      toast.success(t("list.exportQueued"));
     } catch {
       toast.error(t("list.exportError"));
     } finally {
@@ -110,7 +109,7 @@ export function ContactsScreen() {
           <SelectTrigger aria-label={t("list.ownerFilter")}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>{t("list.allOwners")}</SelectItem>
-            {(principals.data ?? []).map((person) => <SelectItem key={person.id} value={person.id}>{person.display_name ?? person.id}</SelectItem>)}
+            {(principals.data ?? []).map((person) => <SelectItem key={person.id} value={person.id}>{principalName(person, person.id) ?? tc("nameUnavailable")}</SelectItem>)}
           </SelectContent>
         </Select>
         <div className="grid gap-1">

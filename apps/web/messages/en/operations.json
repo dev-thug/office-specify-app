@@ -71,8 +71,8 @@
     "openDetail": "Open detail",
     "detail": {
       "title": "Job detail",
-      "id": "Job ID",
-      "kind": "Kind",
+      "description": "Review the job state, activity, and related resources.",
+       "kind": "Kind",
       "state": "State",
       "payloadVersion": "Payload version",
       "attempts": "Attempts",
@@ -115,11 +115,12 @@
       "action": "Action",
       "actor": "Actor",
       "targetType": "Target",
-      "targetId": "Target ID",
-      "requestId": "Request ID"
+       "requestId": "Request ID"
     },
     "details": "Detail metadata",
-    "emptyTitle": "No audit records",
+    "auditEventId": "Audit event ID {id}",
+    "systemActor": "System",
+     "emptyTitle": "No audit records",
     "emptyDescription": "Audit logs within your permitted scope appear here."
   },
   "integrations": {
@@ -206,12 +207,16 @@
     "calendar": {
       "host": "Host",
       "calendar": "Calendar",
+      "officeCalendar": "Office internal calendar",
       "status": "Status",
       "busy": "Included in busy",
       "busyYes": "Included",
       "busyNo": "Excluded",
       "emptyTitle": "No calendars connected",
-      "emptyDescription": "Per-host calendars are connected in settings."
+      "emptyDescription": "Per-host calendars are connected in settings.",
+      "calendarNameUnavailable": "Calendar name unavailable",
+      "showCalendarId": "Show provider calendar ID",
+      "calendarId": "Provider calendar ID"
     }
   }
 }

@@ -101,6 +101,8 @@
     "submitting": "처리 중…",
     "selfBadge": "내 요청",
     "targetId": "대상",
+    "technicalDetails": "기술 세부 정보",
+    "recipientUnavailable": "이메일 주소 정보 없음",
     "refresh": "최신 상태 불러오기",
     "policyOutcome": {
       "pass": "통과",

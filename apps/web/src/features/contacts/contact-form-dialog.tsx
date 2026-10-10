@@ -67,7 +67,7 @@ function ContactFormBody({
   const [jobTitle, setJobTitle] = useState(contact?.job_title ?? "");
   const [department, setDepartment] = useState(contact?.department ?? "");
   const [company, setCompany] = useState<Company | null>(
-    contact?.company_id ? { id: contact.company_id, name: contact.company_name ?? contact.company_id } as Company : defaultCompany ?? null
+    contact?.company_id ? { id: contact.company_id, name: contact.company_name?.trim() || tc("nameUnavailable") } as Company : defaultCompany ?? null
   );
   const [ownerId, setOwnerId] = useState<string | null>(contact?.owner_principal_id ?? null);
   const [pending, setPending] = useState(false);
@@ -139,7 +139,7 @@ function ContactFormBody({
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="contact-owner">{t("owner")}</Label>
-          {contact ? <Input id="contact-owner" disabled value={contact.owner_display_name ?? ownerId ?? t("ownerUnassigned")} /> : <OwnerSelect id="contact-owner" value={ownerId} onChange={setOwnerId} unassignedLabel={t("ownerUnassigned")} />}
+          <OwnerSelect id="contact-owner" value={ownerId} onChange={setOwnerId} unassignedLabel={t("ownerUnassigned")} disabled={editing} />
           {contact ? <p className="text-2xs text-muted-foreground">{t("ownerFixed")}</p> : null}
         </div>
         {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

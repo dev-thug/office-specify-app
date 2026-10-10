@@ -24,7 +24,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -74,8 +73,11 @@ export function SecurityScreen() {
       cell: (row) => (
         <span className="flex items-center gap-2 text-sm">
           <MonitorSmartphoneIcon className="size-4 text-muted-foreground" aria-hidden />
-          <span className="font-mono text-xs">{row.id.slice(0, 8)}…</span>
-          {row.current ? <Badge variant="info-subtle">{t("sessions.current")}</Badge> : null}
+          <span className="text-sm">
+            {row.current
+              ? t("sessions.currentSessionLabel", { time: formatDateTime(row.created_at, locale) })
+              : t("sessions.otherSessionLabel", { time: formatDateTime(row.created_at, locale) })}
+          </span>
         </span>
       ),
     },

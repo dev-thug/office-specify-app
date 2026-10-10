@@ -220,6 +220,7 @@ export interface PrincipalSummary {
   id: string;
   kind: "human" | "agent" | "system" | string;
   name: string;
+  display_name?: string | null;
   role: string;
   status: "invited" | "active" | "disabled" | string;
   [key: string]: unknown;

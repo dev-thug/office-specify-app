@@ -6,6 +6,13 @@ import { BoldIcon, ItalicIcon, LinkIcon, ListIcon, ListOrderedIcon } from "lucid
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import styles from "./email-canvas.module.css";
 import { cleanEmailHtml, emailPreviewDocument, escapeEmailText, safeEmailLink } from "./email-authoring";
 
@@ -22,7 +29,8 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
   onFocus: () => void;
 }>(function EmailCanvas({ html, previewHtml, previewSubject, onChange, onFocus }, ref) {
   const t = useTranslations("templates.authoring");
-  const [mode, setMode] = useState("compose");
+  const [mode, setMode] = useState<"compose" | "html">("compose");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [link, setLink] = useState("");
   const [linkError, setLinkError] = useState(false);
@@ -125,24 +133,16 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
   return (
     <section className="overflow-hidden rounded-xl border bg-card" aria-label={t("canvas")}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 p-2">
-        <div role="tablist" aria-label={t("modes")} className="flex gap-1">
-          {["compose", "html", "preview"].map(value => (
-            <Button key={value} role="tab" aria-selected={mode === value} aria-controls={"email-panel-" + value}
-              id={"email-tab-" + value} type="button" size="sm" variant={mode === value ? "secondary" : "ghost"}
-              tabIndex={mode === value ? 0 : -1}
-              onKeyDown={event => {
-                const values = ["compose", "html", "preview"];
-                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-                event.preventDefault();
-                const index = event.key === "Home" ? 0 : event.key === "End" ? 2 : (values.indexOf(mode) + (event.key === "ArrowRight" ? 1 : 2)) % 3;
-                const next = values[index]!; setMode(next);
-                document.getElementById("email-tab-" + next)?.focus();
-              }} onClick={() => setMode(value)}>{t(value)}</Button>
-          ))}
+        <div className="flex items-center gap-1">
+          <Button type="button" size="sm" variant={mode === "html" ? "secondary" : "ghost"}
+            aria-pressed={mode === "html"} onClick={() => setMode(current => current === "compose" ? "html" : "compose")}>
+            {mode === "compose" ? t("editHtml") : t("backToCanvas")}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewOpen(true)}>{t("preview")}</Button>
         </div>
-        <span className="px-2 text-2xs text-muted-foreground">{t(mode === "preview" ? "sampleOnly" : "canvasHint")}</span>
+        <span className="px-2 text-2xs text-muted-foreground">{t(mode === "html" ? "htmlSourceHint" : "canvasHint")}</span>
       </div>
-      <div hidden={mode !== "compose"} role="tabpanel" id="email-panel-compose" aria-labelledby="email-tab-compose">
+      <div hidden={mode !== "compose"}>
         <div role="toolbar" aria-label={t("formatting")} className="flex gap-1 border-b px-3 py-2">
           {tools.map(({command: name, label, Icon}) => (
             <Button key={name} type="button" size="icon-sm" variant="ghost" aria-label={t(label)}
@@ -179,15 +179,25 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
             className={styles.canvas + " min-h-64 px-6 py-5 shadow-xs outline-none empty:before:pointer-events-none empty:before:content-[attr(data-placeholder)] focus-visible:ring-2 focus-visible:ring-ring [&_p]:mb-4 [&_a]:underline [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_table]:max-w-full [&_td]:p-1"} />
         </div>
       </div>
-      <div hidden={mode !== "html"} role="tabpanel" id="email-panel-html" aria-labelledby="email-tab-html">
+      <div hidden={mode !== "html"}>
         <Textarea ref={code} id="tv-body-html" aria-label={t("html")} value={html}
           onFocus={onFocus} onChange={event => onChange(event.target.value)} spellCheck={false}
           className="min-h-80 resize-y rounded-none border-0 font-mono text-ui shadow-none" />
       </div>
-      {mode === "preview" ? <div role="tabpanel" id="email-panel-preview" aria-labelledby="email-tab-preview">
-        <div className="border-b px-6 py-4"><p className="text-2xs text-muted-foreground">{t("sampleRecipient")}</p><p className="mt-1 text-sm font-medium">{previewSubject || t("noSubject")}</p></div>
-        <iframe title={t("previewFrame")} sandbox="" referrerPolicy="no-referrer" srcDoc={emailPreviewDocument(previewHtml)} className="h-80 w-full bg-background" />
-      </div> : null}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{t("preview")}</DialogTitle>
+            <DialogDescription>{t("sampleOnly")}</DialogDescription>
+          </DialogHeader>
+          <div className="border-b px-6 py-4">
+            <p className="text-2xs text-muted-foreground">{t("sampleRecipient")}</p>
+            <p className="mt-1 text-sm font-medium">{previewSubject || t("noSubject")}</p>
+          </div>
+          <iframe title={t("previewFrame")} sandbox="" referrerPolicy="no-referrer"
+            srcDoc={emailPreviewDocument(previewHtml)} className="h-80 w-full bg-background" />
+        </DialogContent>
+      </Dialog>
       {cleaned.removed ? <p role="alert" className="border-t px-4 py-3 text-xs text-destructive">{t("unsupportedHtml")}</p> : null}
     </section>
   );

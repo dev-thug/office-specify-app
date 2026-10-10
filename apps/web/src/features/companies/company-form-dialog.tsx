@@ -427,11 +427,7 @@ function CompanyFormBody({
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="company-owner">{t("owner")}</Label>
-            {editing ? (
-              <Input id="company-owner" value={form.owner_principal_id ?? t("ownerUnassigned")} disabled />
-            ) : (
-              <OwnerSelect id="company-owner" value={form.owner_principal_id} onChange={(v) => set("owner_principal_id", v)} unassignedLabel={t("ownerUnassigned")} meLabel={t("ownerMe")} />
-            )}
+            <OwnerSelect id="company-owner" value={form.owner_principal_id} onChange={(v) => set("owner_principal_id", v)} unassignedLabel={t("ownerUnassigned")} meLabel={t("ownerMe")} disabled={editing} />
             <p className="text-2xs text-muted-foreground">{editing ? t("ownerFixed") : t("ownerHint")}</p>
           </div>
         </div>

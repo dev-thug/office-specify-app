@@ -234,6 +234,8 @@
     "officeSetupSuccess": "Office internal calendar is ready for meeting types.",
     "officeCalendar": "Office internal calendar",
     "officeProvider": "Office internal calendar",
+    "calendarNameUnavailable": "Calendar name unavailable",
+    "showCalendarId": "Show calendar ID",
     "zohoTitle": "Zoho Calendar",
     "zohoDescription": "Connect a Zoho calendar through OAuth to check availability against an external calendar.",
     "connectZoho": "Connect Zoho calendar",
@@ -257,6 +259,8 @@
     "sessions": {
       "title": "Your sessions",
       "current": "Current session",
+      "currentSessionLabel": "Current session · signed in {time}",
+      "otherSessionLabel": "Session · signed in {time}",
       "revoke": "Revoke",
       "revokeTitle": "Revoke session",
       "revokeDescription": "This session's authentication is rejected immediately.",
