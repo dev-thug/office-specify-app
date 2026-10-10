@@ -1,5 +1,11 @@
 # Cross-module integration contracts (binding for Wave B)
 
+> **Historical contract snapshot:** this document preserves the Wave B design
+> contract. Provider capability and runtime status are tracked separately. The
+> native Zoho Campaigns integration described by historical design records is
+> retired; current Office campaigns use SMTP, with unsubscribe and booking
+> behavior handled locally. See [current Zoho integration status](zoho-integration-status.md).
+
 Modules never call each other's application functions in Wave B. They integrate through **(a) shared tables** (all exist from migration 0001),
 **(b) durable jobs** (`jobs::enqueue`, handler owned by exactly one module) and **(c) outbox events** (`outbox::emit`, consumed via the
 worker's `EventConsumer` registry with `processed_events` dedupe). Payloads carry IDs + versions only — never bodies, addresses or secrets (§16.2).

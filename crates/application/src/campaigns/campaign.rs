@@ -281,6 +281,12 @@ pub(crate) async fn validate_revision_input(
                     code: "requires_purpose_marketing".to_string(),
                 });
             }
+            if c.provider != "delivery_provider" {
+                violations.push(Violation {
+                    field: "delivery_channel_id".to_string(),
+                    code: "requires_office_smtp_provider".to_string(),
+                });
+            }
             if c.mail_account_id != mail_account_id {
                 violations.push(Violation {
                     field: "delivery_channel_id".to_string(),

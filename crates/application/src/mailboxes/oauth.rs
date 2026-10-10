@@ -10,7 +10,7 @@
 //!
 //! Runtime configuration never invents an OAuth client ID. The legacy fake
 //! Mail/Calendar exchange is available only to explicit Config::test fixtures.
-//! Real Campaigns OAuth is implemented separately in the marketing module.
+//! Zoho Mail credentials and scopes remain isolated to this connection flow.
 
 use std::sync::Arc;
 
@@ -51,7 +51,7 @@ pub fn zoho_client_id(config: &Config) -> Option<String> {
         .zoho
         .mail_client_id
         .clone()
-        .filter(|value| infrastructure::providers::zoho_campaigns::valid_client_id(value))
+        .filter(|value| infrastructure::providers::zoho::valid_client_id(value))
         .or_else(|| {
             config
                 .zoho
@@ -74,16 +74,15 @@ fn redirect_uri(config: &Config) -> String {
         .unwrap_or_else(|| format!("{}/api/v1/integrations/zoho/callback", public_base(config)))
 }
 
-/// Resolve validated Mail OAuth credentials without touching the separate
-/// Campaigns credential or its broader marketing scopes.
+/// Resolve and validate the Zoho Mail credentials used by this connection flow.
 pub fn mail_oauth_config(
     config: &Config,
-) -> Result<infrastructure::providers::zoho_campaigns::CampaignsOAuthConfig, AppError> {
-    let mail = infrastructure::providers::zoho_campaigns::CampaignsOAuthConfig {
+) -> Result<infrastructure::providers::zoho::MailOAuthConfig, AppError> {
+    let mail = infrastructure::providers::zoho::MailOAuthConfig {
         client_id: config.zoho.mail_client_id.clone(),
         client_secret: config.zoho.mail_client_secret.clone(),
         redirect_uri: config.zoho.mail_redirect_uri.clone(),
-        allow_local_redirect: config.zoho.campaigns.allow_local_redirect,
+        allow_local_redirect: config.zoho.allow_local_redirect,
     };
     mail.validate().map_err(|_| {
         AppError::dependency_unavailable(
@@ -596,9 +595,7 @@ fn authorization_url(
     Ok(url.to_string())
 }
 
-fn reqwest_url(
-    value: &str,
-) -> Result<infrastructure::providers::zoho_campaigns::http::ProviderUrl, AppError> {
+fn reqwest_url(value: &str) -> Result<infrastructure::providers::zoho::ProviderUrl, AppError> {
     value
         .parse()
         .map_err(|_| AppError::internal("invalid Zoho authorization endpoint"))
@@ -1187,9 +1184,9 @@ mod tests {
         assert!(mail_oauth_config(&config).is_err());
 
         config.zoho.mail_client_id = Some("1000.mail-client".into());
-        config.zoho.mail_client_secret = Some(
-            infrastructure::providers::zoho_campaigns::SecretValue::new("mail-client-secret"),
-        );
+        config.zoho.mail_client_secret = Some(infrastructure::providers::SecretValue::new(
+            "mail-client-secret",
+        ));
         config.zoho.mail_redirect_uri =
             Some("https://office.example/api/v1/integrations/zoho/callback".into());
         assert!(mail_oauth_config(&config).is_ok());

@@ -1,5 +1,11 @@
 # Office Zoho Campaigns Implementation Plan
 
+> **Retired historical plan:** this plan describes a native Zoho Campaigns
+> integration that has since been retired. Keep it for design history; do not
+> execute it as current work. Office campaigns now use SMTP, and Office handles
+> unsubscribe and booking links locally. See [current integration
+> status](../../design/zoho-integration-status.md) and the [SMTP runbook](../../runbooks/smtp.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Office의 승인된 단일 단계 마케팅 캠페인을 Zoho Campaigns 무료 계정에 연결하고, 동의한 연락처 동기화·즉시 발송·결과 폴링을 지원한다.

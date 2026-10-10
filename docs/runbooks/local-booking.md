@@ -80,9 +80,8 @@ do not invoke an external calendar provider.
 
 Booking links are not meeting invites: Office does not add guests to a Google
 or Zoho event, send a calendar attachment, or synchronize changes to those
-services. Any email campaign you separately send through SMTP remains a
-separate Office workflow; local booking does not require an SMTP or Zoho
-Campaigns connection.
+services. Any email campaign you send through Office SMTP remains a separate
+workflow; local booking does not require mail setup.
 
 ## Verify with a local test
 

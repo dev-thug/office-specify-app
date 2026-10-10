@@ -6,8 +6,7 @@ use axum::{
     routing::any,
 };
 use infrastructure::providers::{
-    SendOutcome,
-    zoho_campaigns::SecretValue,
+    SecretValue, SendOutcome,
     zoho_mail_client::{
         ZohoMailClient, ZohoMailClientError, ZohoMailCompose, ZohoMailListOptions, ZohoMailSearch,
     },

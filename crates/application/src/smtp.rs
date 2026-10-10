@@ -15,10 +15,9 @@ use infrastructure::{
     config::Config,
     db::{Db, Tx},
     providers::{
-        DeliveryCapabilities, DeliveryProvider, ProviderError, SendOutcome, SendRequest,
-        SentLookup,
+        DeliveryCapabilities, DeliveryProvider, ProviderError, SecretValue, SendOutcome,
+        SendRequest, SentLookup,
         smtp::{SmtpConfig, SmtpDeliveryProvider, SmtpSecurity},
-        zoho_campaigns::SecretValue,
     },
     repo::{mailboxes, smtp as repo},
     secrets::{FileSecretStore, SecretStore},

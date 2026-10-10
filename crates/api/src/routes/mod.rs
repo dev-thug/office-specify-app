@@ -11,15 +11,12 @@ pub mod crm;
 pub mod imports;
 pub mod inbox;
 pub mod mailboxes;
-pub mod marketing;
-pub mod marketing_delivery;
 pub mod operations;
 pub mod org;
 pub mod research;
 pub mod sending;
 pub mod smtp;
 pub mod templates;
-pub mod zoho_templates;
 
 use utoipa_axum::router::OpenApiRouter;
 
@@ -30,9 +27,6 @@ pub fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(org::router())
         .merge(mailboxes::router())
-        .merge(marketing::router())
-        .merge(marketing_delivery::router())
-        .merge(zoho_templates::router())
         .merge(crm::router())
         .merge(research::router())
         .merge(imports::router())
@@ -54,7 +48,6 @@ pub fn public_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .merge(booking::public_router())
         .merge(compliance::public_router())
-        .merge(marketing_delivery::public_router())
 }
 
 /// `/webhooks/v1` — provider webhook ingress (inbox/sending workers fill).

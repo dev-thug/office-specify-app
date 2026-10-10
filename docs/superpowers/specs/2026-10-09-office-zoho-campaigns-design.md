@@ -1,5 +1,11 @@
 # Office — Zoho Campaigns 마케팅 연동 설계
 
+> **퇴역한 역사 문서:** 여기에 설명된 Zoho Campaigns 연동은 퇴역했습니다.
+> 설계 이력 보존을 위해 유지하며 현재 설정이나 구현 지침으로 사용하지 마세요.
+> Office 캠페인은 이제 SMTP를 사용하고 수신 거부와 예약 링크는 Office가
+> 처리합니다. [현재 연동 상태](../../design/zoho-integration-status.md)와
+> [SMTP runbook](../../runbooks/smtp.md)을 참고하세요.
+
 상태: 사용자 승인 — 2026-10-09. 이 문서는 구현 완료나 실제 계정 검증을 의미하지 않는다.
 
 확인된 계정 조건: `https://campaigns.zoho.com/`, Campaigns 무료 플랜,

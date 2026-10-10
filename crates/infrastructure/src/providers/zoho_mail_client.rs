@@ -5,7 +5,7 @@
 //! constructor accepts loopback HTTP origins. JSON responses are capped at
 //! 1 MiB, redirects are disabled, and sends are never retried.
 
-use super::{SendOutcome, zoho_campaigns::SecretValue};
+use super::{SecretValue, SendOutcome};
 use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;

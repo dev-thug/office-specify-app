@@ -9,18 +9,20 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 
 - [Local development](docs/runbooks/local-development.md) — prerequisites,
   database setup, migrations, first admin, and service startup.
+- [Upgrade from retired Zoho Campaigns](docs/runbooks/local-development.md#upgrade-from-the-retired-zoho-campaigns-integration) — stop old services,
+  clean obsolete provider secrets, migrate, and restart.
 - [SMTP setup](docs/runbooks/smtp.md) — configure Office-owned campaigns to send
   through an authenticated SMTP relay.
+- [Zoho integration status](docs/design/zoho-integration-status.md) — current
+  Zoho Mail and SMTP behavior, plus the retired Campaigns integration record.
 - [Local booking setup](docs/runbooks/local-booking.md) — set up the internal
   calendar, availability, meeting types, and private booking links.
-- [Zoho Campaigns setup](docs/runbooks/zoho-campaigns.md) — optional native
-  Campaigns connection, separate from SMTP.
 - [Unknown-send reconciliation](docs/runbooks/unknown-send-reconciliation.md)
   and [database restore](docs/runbooks/restore.md) — operator recovery guides.
 - [Source design](docs/design/source/outreach-os-design-v1.0.md),
   [API and MCP contracts](docs/design/integration-contracts.md), and the
-  [acceptance matrix](docs/design/test-matrix.md) — implementation constraints
-  and evidence.
+  [acceptance matrix](docs/design/test-matrix.md) are historical design and
+  test references; consult the current integration status for supported routes.
 
 ## Features
 
@@ -40,9 +42,8 @@ the same icon. Escape closes the instructions and returns focus to the button.
 | --- | --- |
 | CRM | Contact and company records, search, notes, activity, and CSV imports. |
 | Email content | One rendered email canvas with a toggle to HTML source, variable presets and schema, recipient preview, and reusable immutable template versions. |
-| Office campaigns | Contact selection, consent and suppression checks, preflight, human approval, and one-step dispatch through a configured channel. SMTP campaigns are composed and recorded by Office; SMTP setup requires an active Office mail account. |
-| Zoho Campaigns | An optional, independent route that exports an approved launch to Zoho Campaigns. It is not needed for SMTP delivery. |
-| Inbox | Mailbox-bound Zoho Mail correspondence, kept separate from campaign transport. |
+| Office campaigns | Contact selection, consent and suppression checks, preflight, human approval, and one-step dispatch through authenticated SMTP. Office records the campaign and handles its unsubscribe links locally; SMTP setup requires an active Office mail account. |
+| Inbox | Zoho Mail OAuth correspondence, kept separate from SMTP campaign transport. |
 | Meetings | Internal meeting types, host availability, booking links, and persisted booking, reschedule, and cancellation records. The local calendar does not use OAuth. |
 | Access and operations | Admin, Manager, Member, Agent, and System principals; mailbox grants; approvals; emergency stop; job and delivery status; audit records; and recovery runbooks. |
 | MCP | A Streamable HTTP endpoint with workspace-scoped service credentials and policy-checked tools for CRM research, proposals, drafts, bookings, and campaign workflows. Agents cannot directly submit arbitrary email or decide approvals. |
@@ -185,32 +186,32 @@ the encrypted SecretStore. See the [SMTP runbook](docs/runbooks/smtp.md) and
 deployment.
 
 The app and internal local calendar can run without OAuth. A fresh workspace
-has no Office mail account, though, and the current supported way to provision
-one is **Settings → Mail accounts → Connect mailbox** through Zoho Mail OAuth.
-An SMTP login does not create this Office account. The connecting Admin gets an
-initial mailbox grant; another Admin setting up SMTP needs `can_send` on the
-selected account, granted through **Manage grants**. SMTP uses its own relay
-credentials after that mailbox prerequisite is met. This Zoho Mail OAuth flow
-is separate from Zoho Campaigns OAuth, which SMTP does not require. Configure
-the exact Zoho callback URL and server-side client credentials for whichever
-OAuth connection you enable. None of the local app, local calendar, or SMTP
-setup requires a public tunnel. The native Zoho Campaigns bulk route does
-require an externally reachable HTTPS origin for Zoho to fetch Office's frozen
-HTML. Do not treat mock or local SMTP acceptance as proof of inbox delivery,
-sender authentication, or live Zoho behavior.
+has no Office mail account, and the supported way to provision one is
+**Settings → Mail accounts → Connect mailbox** through Zoho Mail OAuth. This
+connection provisions the Office mailbox for correspondence and Inbox access;
+it does not provide SMTP credentials. The connecting Admin gets an initial
+mailbox grant; another Admin setting up SMTP needs `can_send` on the selected
+account, granted through **Manage grants**. Office campaigns use the separately
+configured SMTP relay credentials. Configure the exact Zoho Mail callback URL
+and server-side client credentials when connecting Zoho Mail. None of the local
+app, local calendar, or SMTP setup requires a public tunnel. For deployed
+recipient booking and unsubscribe links, `PUBLIC_BASE_URL` must use a reachable
+HTTPS origin. Do not treat mock or local SMTP acceptance as proof of inbox
+delivery, sender authentication, or live Zoho behavior.
 
 ## Current boundaries
 
-Office is designed to fail closed around outbound effects. Campaign webhook
-verification and external calendar sync remain release gates; configured OAuth
-does not by itself verify a live account, sender identity, delivery, or booking
-behavior.
-The internal calendar stores Office booking data and does not create external
-calendar invitations. Marketing policy, provider permission, sender
-authentication, OAuth-client compatibility, and backup/restore release checks
-must be reviewed before production use. See the [source design's release
-gates](docs/design/source/outreach-os-design-v1.0.md) for the required
-evidence.
+Office is designed to fail closed around outbound effects. The former native
+Zoho Campaigns integration is retired. The regular upgrade migration disables
+persisted Campaigns connections and channels and retires their queued jobs;
+historical migrations remain in the normal install and upgrade sequence.
+Office no longer submits Zoho Campaigns campaigns, exports contacts or content,
+runs scheduled Campaigns synchronization, imports or propagates external
+opt-outs, or exposes a Campaigns webhook route. Office campaigns continue over
+authenticated SMTP, and Office-local unsubscribe and booking links remain
+active. The internal calendar stores Office booking data and does not create
+external calendar invitations. Before production use, verify current consent
+policy, relay sender authorization, inbox delivery, and backup/restore behavior.
 
 ## License
 

@@ -2,6 +2,14 @@
 
 This maps the approved source design §18.1 to tests currently present across the Rust crates. **Coverage records test presence and scope, not the latest pass/fail result.** `Covered` means a named automated test directly exercises the stated behavior; `Partial` means the test covers only part of the acceptance scenario; `Gate only` means the fail-closed path is tested while the gated success path remains disabled; `Missing` means no matching test was found. No absent test is marked complete.
 
+> **Retirement note:** Campaigns OAuth, provider export, opt-out synchronization,
+> and native-send rows below describe historical implementation and test
+> coverage. They do not indicate current supported routes or live readiness.
+> The native Zoho Campaigns integration is retired; Office campaigns use SMTP,
+> with unsubscribe and booking behavior handled locally. The regular upgrade
+> migration disables persisted Campaigns connections/channels and retires
+> their queued jobs. See [current integration status](zoho-integration-status.md).
+
 Run database-backed tests against a dedicated test database as described in the [local development runbook](../runbooks/local-development.md). Frontend unit tests are listed after the matrix but do not substitute for these server-side and PostgreSQL checks.
 
 | ID | Source requirement | Coverage | Existing test(s) | Gap / limit |
@@ -60,7 +68,8 @@ Final local verification: Rust workspace **427 passed, zero skipped**; web **376
 
 Provider tests use synthetic loopback servers. They do not verify real Zoho
 credentials, account entitlements, sender authentication, native unsubscribe
-behavior, or delivery. Marketing send remains application-disabled.
+behavior, or delivery. The historical Zoho Campaigns send path is retired;
+Office marketing delivery currently uses authenticated SMTP.
 
 | Area | Verification evidence |
 |---|---|
@@ -71,11 +80,11 @@ behavior, or delivery. Marketing send remains application-disabled.
 | Browser | Real local API login and template/version persistence; mocked cloud-template import uses the authenticated fixture workspace. Preview external requests are intercepted and must remain zero. |
 | SecretStore | Concurrent independent instances preserve all encrypted entries with atomic replacement and private file mode. |
 
-See [integration status](zoho-integration-status.md) for intentionally unwired
-SDK operations and [the setup runbook](../runbooks/zoho-campaigns.md) for live-account
-prerequisites. Provider SDK method availability is not an application feature.
+See [integration status](zoho-integration-status.md) for current behavior and
+historical provider details. Provider SDK method availability is not an
+application feature.
 
-## Office-owned templates / native Campaigns verification (2026-10-10)
+## Historical Office-owned templates / native Campaigns verification (2026-10-10)
 
 The native Campaigns path is exercised with real Office HTTP APIs and a stateful
 loopback provider, not live Zoho credentials. Coverage includes immutable local

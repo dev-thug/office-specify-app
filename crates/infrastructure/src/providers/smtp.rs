@@ -1,6 +1,6 @@
 use super::{
-    DeliveryCapabilities, DeliveryProvider, ProviderError, SendOutcome, SendRequest, SentLookup,
-    zoho_campaigns::SecretValue,
+    DeliveryCapabilities, DeliveryProvider, ProviderError, SecretValue, SendOutcome, SendRequest,
+    SentLookup,
 };
 use async_trait::async_trait;
 use lettre::{
@@ -627,7 +627,7 @@ mod tests {
             port,
             security: SmtpSecurity::Starttls,
             username: "smtp-user".into(),
-            password: super::super::zoho_campaigns::SecretValue::new(SMTP_PASSWORD),
+            password: super::super::SecretValue::new(SMTP_PASSWORD),
             from_address: "hello@news.specify.app".into(),
             from_name: "ニュース Office".into(),
             reply_to: Some("support@specify.app".into()),

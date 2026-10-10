@@ -954,6 +954,7 @@ pub async fn list_delivery_channels(
     sqlx::query_as::<_, DeliveryChannelRow>(&format!(
         "SELECT {CHANNEL_COLS} FROM delivery_channels dc
               WHERE dc.workspace_id = $1
+                AND dc.provider <> 'zoho_campaigns'
                 AND ($2::uuid IS NULL OR EXISTS (
                         SELECT 1 FROM mail_account_grants g
                          WHERE g.workspace_id = dc.workspace_id

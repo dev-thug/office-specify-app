@@ -5,10 +5,25 @@
 //! `SendOutcome::Unknown` is a first-class outcome: callers must mark the
 //! business row `unknown` and reconcile via `lookup_sent`; never auto-retry.
 
+#[derive(Clone)]
+pub struct SecretValue(String);
+impl SecretValue {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+impl std::fmt::Debug for SecretValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
 pub mod fake;
 pub mod office_calendar;
 pub mod zoho;
-pub mod zoho_campaigns;
 pub use office_calendar::{CalendarProviderRouter, OfficeCalendarProvider};
 
 use async_trait::async_trait;
@@ -341,5 +356,4 @@ pub trait DeliveryProvider: Send + Sync {
 }
 
 pub mod smtp;
-pub mod zoho_email_api;
 pub mod zoho_mail_client;

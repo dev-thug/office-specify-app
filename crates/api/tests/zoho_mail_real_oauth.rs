@@ -2,7 +2,7 @@ use api::{AppState, testing::TestApp};
 use infrastructure::{
     config::Config,
     db::{Db, ROLE_API},
-    providers::zoho_campaigns::SecretValue,
+    providers::SecretValue,
     testing::{TEST_PASSWORD, TestWorld, seed_workspace},
 };
 use reqwest::StatusCode;

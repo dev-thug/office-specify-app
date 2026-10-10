@@ -394,8 +394,8 @@ async fn dispatch_phase_a(
         cancel(tx, job, &o, policy::CODE_CHANNEL_MISSING).await?;
         return Ok(PhaseA::Done);
     };
-    if chan.provider == "zoho_campaigns" {
-        cancel(tx, job, &o, "ZOHO_CAMPAIGNS_REQUIRES_BULK_EXPORT").await?;
+    if chan.purpose == "marketing" && chan.provider != "delivery_provider" {
+        cancel(tx, job, &o, "UNSUPPORTED_MARKETING_PROVIDER").await?;
         return Ok(PhaseA::Done);
     }
     let provider_can_send = if chan.provider == "zoho_mail" {

@@ -2,6 +2,12 @@
 
 **Purpose:** document provider capabilities available for Office integration, not what this repository has implemented. Checked against Zoho’s official documentation on 2026-10-10. The account context is Zoho Mail paid plus `campaigns.zoho.com` Forever Free. Plan entitlements and API contracts are separate.
 
+> **Historical reference:** the native Zoho Campaigns and Email API integrations
+> described here have been retired from Office. This matrix preserves the
+> provider research; it does not describe supported Office routes. Current
+> outbound campaigns use Office SMTP, while unsubscribe and booking behavior
+> remain Office-local. See [current integration status](zoho-integration-status.md).
+
 ## Decision boundary
 
 There are three distinct products in these docs:

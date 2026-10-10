@@ -373,13 +373,26 @@ pub async fn erase_contact(
             "native marketing export targets changed during privacy erasure; retry the request",
         ));
     }
-    let marketing_export_rows: Vec<(Uuid, String)> = if export_candidates.is_empty() {
+    let marketing_export_rows: Vec<(Uuid, String, bool)> = if export_candidates.is_empty() {
         Vec::new()
     } else {
         sqlx::query_as(
-            "SELECT id, state FROM marketing_exports
-              WHERE workspace_id = $1 AND id = ANY($2)
-              ORDER BY id FOR UPDATE",
+            "SELECT e.id, e.state,
+                    ic.provider = 'zoho_campaigns'
+                    AND ic.status = 'disabled'
+                    AND dc.provider = 'zoho_campaigns'
+                    AND NOT dc.enabled
+                    AND dc.policy_status = 'blocked'
+                    AND e.report @> jsonb_build_object(
+                        'provider_retired', true,
+                        'provider_cancel_not_requested', true)
+               FROM marketing_exports e
+               JOIN integration_connections ic
+                 ON ic.workspace_id = e.workspace_id AND ic.id = e.connection_id
+               JOIN delivery_channels dc
+                 ON dc.workspace_id = e.workspace_id AND dc.id = e.delivery_channel_id
+              WHERE e.workspace_id = $1 AND e.id = ANY($2)
+              ORDER BY e.id FOR UPDATE OF e",
         )
         .bind(request.workspace_id)
         .bind(&export_candidates)
@@ -387,7 +400,13 @@ pub async fn erase_contact(
         .await
         .map_err(map_sqlx)?
     };
-    let marketing_export_ids: Vec<Uuid> = marketing_export_rows.iter().map(|(id, _)| *id).collect();
+    let marketing_export_ids: Vec<Uuid> =
+        marketing_export_rows.iter().map(|(id, _, _)| *id).collect();
+    let retired_native_export_ids: Vec<Uuid> = marketing_export_rows
+        .iter()
+        .filter(|(_, _, retired)| *retired)
+        .map(|(id, _, _)| *id)
+        .collect();
     let operation_states: Vec<(Uuid, String, String)> = if marketing_export_ids.is_empty() {
         Vec::new()
     } else {
@@ -402,35 +421,45 @@ pub async fn erase_contact(
         .await
         .map_err(map_sqlx)?
     };
-    let unresolved_export = marketing_export_rows.iter().find(|(export_id, state)| {
-        let has_in_flight_write =
-            operation_states
-                .iter()
-                .any(|(operation_export_id, kind, status)| {
-                    operation_export_id == export_id
-                        && matches!(
-                            kind.as_str(),
-                            "create_list"
-                                | "add_contacts"
-                                | "subscribe"
-                                | "create_campaign"
-                                | "send_campaign"
-                        )
-                        && matches!(status.as_str(), "started" | "unknown")
-                });
-        let has_completed_send_before_terminal_export =
-            !matches!(state.as_str(), "completed" | "rejected" | "canceled")
-                && operation_states
-                    .iter()
-                    .any(|(operation_export_id, kind, status)| {
-                        operation_export_id == export_id
-                            && kind == "send_campaign"
-                            && status == "completed"
-                    });
-        matches!(state.as_str(), "submitting" | "in_progress")
-            || has_in_flight_write
-            || has_completed_send_before_terminal_export
-    });
+    let unresolved_export =
+        marketing_export_rows
+            .iter()
+            .find(|(export_id, state, retired_native_provider)| {
+                // Retirement proves Office will never retry or reconcile this
+                // provider operation. It does not resolve the provider outcome:
+                // leave the append-only operation journal unchanged and permit
+                // only the local privacy redaction below.
+                if *retired_native_provider {
+                    return false;
+                }
+                let has_in_flight_write =
+                    operation_states
+                        .iter()
+                        .any(|(operation_export_id, kind, status)| {
+                            operation_export_id == export_id
+                                && matches!(
+                                    kind.as_str(),
+                                    "create_list"
+                                        | "add_contacts"
+                                        | "subscribe"
+                                        | "create_campaign"
+                                        | "send_campaign"
+                                )
+                                && matches!(status.as_str(), "started" | "unknown")
+                        });
+                let has_completed_send_before_terminal_export =
+                    !matches!(state.as_str(), "completed" | "rejected" | "canceled")
+                        && operation_states
+                            .iter()
+                            .any(|(operation_export_id, kind, status)| {
+                                operation_export_id == export_id
+                                    && kind == "send_campaign"
+                                    && status == "completed"
+                            });
+                matches!(state.as_str(), "submitting" | "in_progress")
+                    || has_in_flight_write
+                    || has_completed_send_before_terminal_export
+            });
     if unresolved_export.is_some() {
         return Err(AppError::conflict(
             "native Campaigns provider operation must be reconciled before privacy erasure",
@@ -487,12 +516,17 @@ pub async fn erase_contact(
                     audience_hash = decode(repeat('00', 32), 'hex'),
                     export_hash = decode(repeat('00', 32), 'hex'),
                     subject = '', body_text = '', body_html = '', field_map = '{}'::jsonb,
-                    report = '{\"privacy_erased\":true,\"provider_cancel_not_requested\":true}'::jsonb,
+                    report = jsonb_build_object(
+                        'privacy_erased', true,
+                        'provider_cancel_not_requested', true,
+                        'provider_retired', id = ANY($3)
+                    ),
                     recipient_count = 0, version = version + 1
               WHERE workspace_id = $1 AND id = ANY($2)",
         )
         .bind(request.workspace_id)
         .bind(&marketing_export_ids)
+        .bind(&retired_native_export_ids)
         .execute(tx.conn())
         .await
         .map_err(map_sqlx)?

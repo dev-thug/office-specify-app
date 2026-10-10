@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import common from "../../../../messages/en/common.json";
 import settings from "../../../../messages/en/settings.json";
+import operations from "../../../../messages/en/operations.json";
 import { SmtpSettings } from "../smtp-settings";
+import { MailAccountsScreen } from "../mail-accounts-screen";
 
 vi.mock("@/features/settings/use-me", () => ({ useIsAdmin: () => true }));
 
@@ -294,6 +296,31 @@ describe("SMTP settings", () => {
       ).toBeEnabled()
     );
     fireEvent.click(screen.getByRole("button", { name: "Add SMTP connection" }));
+
     expect(screen.getByLabelText("SMTP password")).toHaveValue("");
+  });
+});
+
+describe("mail accounts screen", () => {
+  it("keeps SMTP setup visible without a Zoho Campaigns connection card", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      data: [],
+      page: { next_cursor: null, has_more: false },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })));
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <NextIntlClientProvider locale="en" messages={{ settings, operations, common }}>
+          <MailAccountsScreen />
+        </NextIntlClientProvider>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByRole("heading", { name: "Mail accounts" })).toBeVisible();
+    expect(screen.getByText("SMTP delivery")).toBeVisible();
+    expect(screen.queryByText(/Zoho Campaigns/i)).not.toBeInTheDocument();
   });
 });

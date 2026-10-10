@@ -104,7 +104,6 @@ pub const ZOHO_CALENDAR_SCOPES: &[&str] = &["ZohoCalendar.calendar.ALL"];
 pub fn provider_allowed_for_purpose(provider: &str, purpose: &str) -> bool {
     match provider {
         "zoho_mail" => purpose == "correspondence",
-        "zoho_campaigns" => purpose == "marketing",
         "delivery_provider" | "transactional_provider" => {
             matches!(purpose, "marketing" | "transactional" | "correspondence")
         }
@@ -115,16 +114,15 @@ pub fn provider_allowed_for_purpose(provider: &str, purpose: &str) -> bool {
 /// T33 / §4.9: a channel may never be enabled when the provider is
 /// `zoho_mail` and the purpose is not `correspondence`.
 pub fn activation_policy_blocked(provider: &str, purpose: &str) -> bool {
-    (provider == "zoho_mail" && purpose != "correspondence")
-        || (provider == "zoho_campaigns" && purpose != "marketing")
+    provider == "zoho_mail" && purpose != "correspondence"
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn campaigns_provider_is_only_allowed_for_marketing() {
-        assert!(provider_allowed_for_purpose("zoho_campaigns", "marketing"));
+    fn retired_campaigns_provider_is_not_allowed_for_any_purpose() {
+        assert!(!provider_allowed_for_purpose("zoho_campaigns", "marketing"));
         assert!(!provider_allowed_for_purpose(
             "zoho_campaigns",
             "correspondence"
@@ -132,10 +130,6 @@ mod tests {
         assert!(!provider_allowed_for_purpose(
             "zoho_campaigns",
             "transactional"
-        ));
-        assert!(activation_policy_blocked(
-            "zoho_campaigns",
-            "correspondence"
         ));
     }
 

@@ -1,5 +1,11 @@
 # Zoho Campaigns Free Bulk Delivery Implementation Plan
 
+> **Retired historical plan:** this plan describes a native Zoho Campaigns bulk
+> delivery path that has since been retired. Keep it for design history; do not
+> execute it as current work. Office campaigns now use SMTP, and Office handles
+> unsubscribe and booking links locally. See [current integration
+> status](../../design/zoho-integration-status.md) and the [SMTP runbook](../../runbooks/smtp.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Send one approved, immediate Office marketing launch as one Zoho Campaigns v1.1 bulk campaign while keeping Office consent, suppression, and per-recipient booking links authoritative.

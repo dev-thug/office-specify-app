@@ -9,10 +9,6 @@ use chrono::{DateTime, Duration, Utc};
 use contracts::AppError;
 use infrastructure::config::Config;
 use infrastructure::db::Db;
-use infrastructure::providers::zoho_campaigns::{
-    SecretValue,
-    http::{CampaignsHttp, OAuthTokens},
-};
 use infrastructure::providers::zoho_mail_client::{
     ZohoMailClient, ZohoMailClientError, ZohoMailCompose, ZohoMailFormat, ZohoMailListOptions,
     ZohoMessageSort,
@@ -21,6 +17,10 @@ use infrastructure::providers::{
     MailCapabilities, MailProvider, ProviderError, ProviderMessage, SendOutcome, SendRequest,
     SentLookup,
 };
+use infrastructure::providers::{
+    SecretValue,
+    zoho::{OAuthTokens, ZohoMailOAuthClient},
+};
 use infrastructure::repo::mailboxes as repo;
 use infrastructure::secrets::{FileSecretStore, SecretStore};
 use serde::{Deserialize, Serialize};
@@ -28,10 +28,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Real Mail token endpoint adapter. OAuth requests use Mail client settings,
-/// while `CampaignsHttp` supplies the shared Zoho Accounts token protocol.
+/// while `ZohoMailOAuthClient` supplies the shared Zoho Accounts token protocol.
 #[derive(Clone)]
 pub(crate) struct MailTokenExchange {
-    oauth: CampaignsHttp,
+    oauth: ZohoMailOAuthClient,
     redirect_uri: String,
     #[cfg(test)]
     mail_test_base: Option<String>,
@@ -41,7 +41,7 @@ impl MailTokenExchange {
     pub(crate) fn new(config: &Config) -> Result<Self, AppError> {
         let oauth_config = mail_oauth_config(config)?;
         let redirect_uri = oauth_config.redirect_uri.clone().unwrap_or_default();
-        let oauth = CampaignsHttp::new(oauth_config)?;
+        let oauth = ZohoMailOAuthClient::new(oauth_config)?;
         Ok(Self {
             oauth,
             redirect_uri,
@@ -121,13 +121,13 @@ impl MailTokenExchange {
 
     #[cfg(test)]
     fn for_test(
-        oauth_config: infrastructure::providers::zoho_campaigns::CampaignsOAuthConfig,
+        oauth_config: infrastructure::providers::zoho::MailOAuthConfig,
         accounts_base: &str,
         mail_base: &str,
     ) -> Result<Self, AppError> {
         let redirect_uri = oauth_config.redirect_uri.clone().unwrap_or_default();
         Ok(Self {
-            oauth: CampaignsHttp::for_test(oauth_config, accounts_base)?,
+            oauth: ZohoMailOAuthClient::for_test(oauth_config, accounts_base)?,
             redirect_uri,
             mail_test_base: Some(mail_base.to_owned()),
         })
@@ -1053,7 +1053,7 @@ fn valid_mail_address(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use infrastructure::providers::zoho_campaigns::{CampaignsOAuthConfig, SecretValue};
+    use infrastructure::providers::{SecretValue, zoho::MailOAuthConfig};
     use std::{net::SocketAddr, time::Duration};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1188,7 +1188,7 @@ mod tests {
     async fn real_mail_code_exchange_uses_local_zoho_mocks_and_discovers_enabled_account() {
         let (address, server) = spawn_mock().await;
         let base = format!("http://{address}");
-        let config = CampaignsOAuthConfig {
+        let config = MailOAuthConfig {
             client_id: Some("1000.local-mail-client".into()),
             client_secret: Some(SecretValue::new("local-mail-secret")),
             redirect_uri: Some("http://localhost:3000/api/v1/integrations/zoho/callback".into()),
@@ -1227,7 +1227,7 @@ mod tests {
     async fn refresh_keeps_the_existing_refresh_token_when_zoho_omits_a_new_one() {
         let (address, server) = spawn_refresh_mock().await;
         let base = format!("http://{address}");
-        let config = CampaignsOAuthConfig {
+        let config = MailOAuthConfig {
             client_id: Some("1000.local-mail-client".into()),
             client_secret: Some(SecretValue::new("local-mail-secret")),
             redirect_uri: Some("http://localhost:3000/api/v1/integrations/zoho/callback".into()),
@@ -1302,7 +1302,7 @@ mod tests {
         config.zoho.mail_client_secret = Some(SecretValue::new("local-mail-secret"));
         config.zoho.mail_redirect_uri =
             Some("http://localhost:3000/api/v1/integrations/zoho/callback".into());
-        config.zoho.campaigns.allow_local_redirect = true;
+        config.zoho.allow_local_redirect = true;
         config.secret_store_key = Some([9; 32]);
         config.secrets_file = secret_path.clone();
         let router =

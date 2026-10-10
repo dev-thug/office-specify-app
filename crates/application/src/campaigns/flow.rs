@@ -67,12 +67,27 @@ pub async fn activate_launch(
     let Some(launch) = repo::get_launch_for_update(tx, launch_id).await? else {
         return Err(AppError::not_found("campaign launch not found"));
     };
-    if repo::get_channel(tx, launch.delivery_channel_id)
-        .await?
-        .is_some_and(|channel| channel.provider == "zoho_campaigns")
-    {
-        // One approved native export is submitted by the separate bulk path.
-        // Legacy/replayed activation jobs may never arm individual outbounds.
+    let channel = repo::get_channel(tx, launch.delivery_channel_id).await?;
+    if !channel.as_ref().is_some_and(|channel| {
+        channel.provider == "delivery_provider" && channel.purpose == "marketing"
+    }) {
+        // A replayed approval job for a retired or unsupported channel must
+        // never arm individual outbound jobs.
+        if launch.status == d::launch_status::APPROVED {
+            repo::transition_launch(
+                tx,
+                launch_id,
+                d::launch_status::CANCELED,
+                Some(launch.version),
+            )
+            .await?;
+            let enrollment_ids =
+                repo::stop_launch_enrollments(tx, launch_id, "unsupported_channel").await?;
+            cancel_pending_sends(tx, &enrollment_ids).await?;
+            if let Some(revision) = repo::get_revision(tx, launch.revision_id).await? {
+                repo::sync_campaign_status(tx, revision.campaign_id).await?;
+            }
+        }
         return Ok(());
     }
     match launch.status.as_str() {

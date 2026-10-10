@@ -3,8 +3,8 @@
 Office owns the campaign, template version, recipient snapshot, preflight,
 approval, per-recipient rendering, unsubscribe record, and dispatch state. An
 authenticated SMTP relay transports each prepared message. This workflow is
-independent of Zoho Campaigns OAuth and does not create a Zoho Campaigns list or
-campaign. Zoho Mail inbox correspondence is also a separate integration.
+independent of Zoho Mail OAuth, which provisions Office mailboxes and Inbox
+correspondence.
 
 SMTP credentials and sender fields have different jobs:
 
@@ -33,10 +33,9 @@ The Admin creating or verifying the SMTP profile must have `can_send` on the
 selected account. If a different Admin manages SMTP, an Admin can grant that
 permission with **Manage grants** on the mailbox. The mailbox and its grant are
 required even though actual campaign transport uses the independent SMTP
-credentials. This prerequisite is Zoho Mail OAuth for mailbox provisioning;
-Zoho Campaigns OAuth is not required for SMTP. If the workspace already has an
-active Office mail account and the acting Admin has `can_send`, use it without
-provisioning another one.
+credentials. Zoho Mail OAuth is the supported mailbox-provisioning flow. If the
+workspace already has an active Office mail account and the acting Admin has
+`can_send`, use it without provisioning another one.
 
 Once that prerequisite is met, an Admin opens **Settings → Mail accounts**,
 adds an SMTP connection, and supplies the relay host, port, TLS mode, SMTP
@@ -53,7 +52,7 @@ Use the exact host and port listed by the relay for the account's region. For a
 US paid Zoho Mail relay, the documented host is `smtppro.zoho.com`; Zoho
 accounts using MFA generally need a dedicated app password. Confirm the From
 address is set up as the mailbox sender or authorized alias in the mail
-provider. A Campaigns-verified sender alone does not prove Mail relay alias
+provider. Verification by a separate service does not prove Mail relay alias
 authorization. See [Zoho SMTP settings](https://www.zoho.com/mail/help/zoho-smtp.html)
 and [Zoho Mail aliases](https://www.zoho.com/mail/help/adminconsole/user-settings.html#email-alias).
 
@@ -67,7 +66,7 @@ the profile/channel; test actual delivery separately with an approved message
 to an inbox you control.
 
 If the provider rejects the username or password, confirm that you are using
-SMTP credentials for the relay, not Zoho Campaigns OAuth credentials. With MFA,
+SMTP credentials for the relay, not Zoho Mail OAuth credentials. With MFA,
 check the provider's app-password requirement. If credentials have been
 revoked or rotated, disable the old profile and create a replacement with the
 new secret; profile values are immutable. Disabling a profile prevents new
@@ -86,8 +85,7 @@ fallback key is only for local testing.
    variable schema and immutable versions; recipient preview substitutes sample
    data without changing the stored template.
 2. Build an Office campaign using its SMTP delivery channel and one of the
-   immutable template versions. The SMTP connection is not a Zoho Campaigns
-   campaign.
+   immutable template versions.
 3. Run recipient preflight. Office checks current address status, communication
    basis, suppression, channel policy, and the emergency stop. Marketing stays
    blocked when required consent/provider policy evidence is missing.
@@ -100,9 +98,9 @@ fallback key is only for local testing.
 
 Office does not send automatic follow-ups or drip steps. The current campaign
 route supports a one-step dispatch; scheduled follow-up automation is outside
-this workflow. SMTP delivery does not depend on a Zoho Campaigns connection,
-Campaigns do-not-track settings, or Campaigns suppression sync. Office still
-applies its own consent, suppression, approval, and emergency-stop rules.
+this workflow. Consent checks, suppressions, approval, and emergency-stop rules
+are enforced in Office. Campaign contact and unsubscribe state is not
+synchronized with an external marketing service.
 
 ## Public origin and unsubscribe behavior
 
@@ -126,10 +124,8 @@ link to the Office frontend. Opening the page is read-only; confirming
 unsubscribe sends a request to the Rust API, records a workspace suppression
 against the address/contact in Office's CRM, and prevents later Office campaign
 sends to that address. The public one-click POST, when emitted by the channel,
-records the same Office suppression. This process works without Zoho Campaigns
-and does not depend on a Campaigns DNT setting. If a provider sync is separately
-configured, its status is tracked independently from the Office suppression
-record.
+records the same Office suppression. This is an Office-local process; the
+current route does not propagate opt-outs to an external marketing service.
 
 Office emits the body unsubscribe link for a loopback HTTP origin, but omits
 [RFC 8058](https://www.rfc-editor.org/rfc/rfc8058.html)

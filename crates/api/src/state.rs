@@ -23,10 +23,6 @@ pub struct AppState {
     pub mail: Arc<dyn MailProvider>,
     pub calendar: Arc<dyn CalendarProvider>,
     pub delivery: Arc<dyn DeliveryProvider>,
-    pub operations:
-        Option<Arc<infrastructure::providers::zoho_campaigns::operations::CampaignsOperations>>,
-    pub campaigns: Option<Arc<infrastructure::providers::zoho_campaigns::http::CampaignsHttp>>,
-    pub email_api: Option<Arc<infrastructure::providers::zoho_email_api::ZohoEmailApi>>,
     /// When the mail provider is the in-memory fake, the dev endpoint uses
     /// this handle to inject inbound messages (spec §4.9).
     pub fake_mail: Option<Arc<infrastructure::providers::fake::FakeMailProvider>>,
@@ -93,27 +89,6 @@ impl AppState {
                 ))
             };
         Self {
-            operations:
-                infrastructure::providers::zoho_campaigns::operations::CampaignsOperations::new()
-                    .ok()
-                    .map(Arc::new),
-            email_api: if config.zoho.email_api.enabled
-                && config.zoho.email_api.api_key.is_some()
-                && config.zoho.email_api.workspace_id.is_some()
-            {
-                infrastructure::providers::zoho_email_api::ZohoEmailApi::new(
-                    config.zoho.email_api.api_key.clone(),
-                )
-                .ok()
-                .map(Arc::new)
-            } else {
-                None
-            },
-            campaigns: infrastructure::providers::zoho_campaigns::http::CampaignsHttp::new(
-                config.zoho.campaigns.clone(),
-            )
-            .ok()
-            .map(Arc::new),
             db,
             config,
             rate_limiter,

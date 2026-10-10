@@ -66,10 +66,7 @@ pub struct Job {
 pub fn kind_has_external_effect(kind: &str) -> bool {
     matches!(
         kind,
-        "sending.dispatch_outbound"
-            | "booking.confirm"
-            | "booking.apply_change"
-            | "marketing.push_suppression"
+        "sending.dispatch_outbound" | "booking.confirm" | "booking.apply_change"
     )
 }
 

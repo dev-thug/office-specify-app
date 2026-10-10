@@ -115,6 +115,31 @@ async fn target_mail_account(
     }
 }
 
+/// Whether a mail approval points at the retired provider. This remains
+/// available for rendering legacy approvals as read-only history.
+async fn retired_provider_for_request(
+    tx: &mut Tx<'_>,
+    req: &repo::ApprovalRequestRow,
+) -> Result<bool, AppError> {
+    let channel_id = match req.action_type.as_str() {
+        d::action_type::CAMPAIGN_LAUNCH => {
+            infrastructure::repo::campaigns::get_launch(tx, req.target_id())
+                .await?
+                .map(|launch| launch.delivery_channel_id)
+        }
+        d::action_type::MESSAGE_SUBMIT => repo::outbound_state(tx, req.target_id())
+            .await?
+            .map(|(_, _, _, channel_id)| channel_id),
+        _ => None,
+    };
+    let Some(channel_id) = channel_id else {
+        return Ok(false);
+    };
+    Ok(infrastructure::repo::campaigns::get_channel(tx, channel_id)
+        .await?
+        .is_some_and(|channel| channel.provider == "zoho_campaigns"))
+}
+
 /// `require_mailbox` enforces both the row grant and the caller's matching
 /// credential scope. Only expected authorization failures are converted to
 /// `false`; database errors still fail the request.
@@ -271,33 +296,9 @@ pub async fn get(db: &Db, ctx: &Ctx, id: Uuid) -> Result<ApprovalRequestDetail, 
     }
     let decision = repo::get_decision(&mut tx, id).await?;
     let target = target_summary(&mut tx, ctx, &req, ma).await?;
-    let (mut policy_results, mut can_decide) =
+    let (policy_results, can_decide) =
         policy_results_and_decision_hint(&mut tx, ctx, &req, &target, ma).await?;
-    let (native_export_required, native_row) = native_export_for_request(&mut tx, &req).await?;
-    if native_export_required
-        && native_row
-            .as_ref()
-            .is_none_or(|export| export.state != "ready" || export.prepared_by == ctx.principal_id)
-    {
-        can_decide = false;
-        policy_results.push(serde_json::json!({"code":"MARKETING_EXPORT_REVIEW_REQUIRED","passed":false,"message":"Prepare and sync the native export, then have another human review its exact hash"}));
-    }
-    let native_export = if target.preview.is_some() {
-        native_row.map(|export| contracts::approvals::NativeExportApprovalView {
-            id: export.id,
-            export_hash: hex_of(&export.export_hash),
-            state: export.state,
-            subject: export.subject,
-            body_html: export.body_html,
-            field_map: export.field_map,
-            recipient_count: export.recipient_count,
-            sender_address: export.sender_address,
-            provider_list_key: export.provider_list_key,
-            topic_id: export.topic_id,
-        })
-    } else {
-        None
-    };
+    let retired_provider = retired_provider_for_request(&mut tx, &req).await?;
     let snapshot = target.preview.clone();
     let recipients_count = snapshot.as_ref().and_then(|value| {
         value
@@ -313,10 +314,9 @@ pub async fn get(db: &Db, ctx: &Ctx, id: Uuid) -> Result<ApprovalRequestDetail, 
     let request_summary = summary(&req);
     tx.commit().await?;
     Ok(ApprovalRequestDetail {
-        native_export_required,
-        native_export,
         self_request: req.requested_by == ctx.principal_id,
-        can_decide,
+        can_decide: can_decide && !retired_provider,
+        retired_provider,
         manifest_hash: request_summary.snapshot_hash.clone(),
         recipients_count,
         snapshot,
@@ -547,6 +547,18 @@ async fn policy_results_and_decision_hint(
         let provider_allowed = channel_state
             .as_ref()
             .is_some_and(|(_, policy)| policy == "allowed");
+        let campaign_channel_supported = if req.action_type == d::action_type::CAMPAIGN_LAUNCH {
+            match channel_id {
+                Some(id) => infrastructure::repo::campaigns::get_channel(tx, id)
+                    .await?
+                    .is_some_and(|channel| {
+                        channel.provider == "delivery_provider" && channel.purpose == "marketing"
+                    }),
+                None => false,
+            }
+        } else {
+            true
+        };
         let emergency_stop = infrastructure::repo::campaigns::emergency_stop_active(tx).await?;
         results.push(serde_json::json!({
             "code": "DELIVERY_CHANNEL_ENABLED",
@@ -556,6 +568,12 @@ async fn policy_results_and_decision_hint(
             "code": "PROVIDER_POLICY",
             "outcome": if provider_allowed { "pass" } else { "fail" },
         }));
+        if req.action_type == d::action_type::CAMPAIGN_LAUNCH {
+            results.push(serde_json::json!({
+                "code": "OFFICE_SMTP_PROVIDER",
+                "outcome": if campaign_channel_supported { "pass" } else { "fail" },
+            }));
+        }
         results.push(serde_json::json!({
             "code": "WORKSPACE_EMERGENCY_STOP",
             "outcome": if emergency_stop { "fail" } else { "pass" },
@@ -566,8 +584,12 @@ async fn policy_results_and_decision_hint(
                 "outcome": "rechecked_at_activation_and_dispatch",
             }));
         }
-        can_decide &=
-            can_read && can_approve && channel_enabled && provider_allowed && !emergency_stop;
+        can_decide &= can_read
+            && can_approve
+            && channel_enabled
+            && provider_allowed
+            && campaign_channel_supported
+            && !emergency_stop;
     } else {
         results.push(serde_json::json!({
             "code": "TARGET_POLICY",
@@ -738,6 +760,36 @@ pub async fn decide(
         }
         other => return Err(AppError::internal(format!("unknown action_type {other}"))),
     }
+    if row.action_type == d::action_type::CAMPAIGN_LAUNCH {
+        let Some(channel_id) = channel_id else {
+            return Err(AppError::conflict(
+                "campaign delivery channel is unavailable",
+            ));
+        };
+        let channel = infrastructure::repo::campaigns::get_channel(tx, channel_id)
+            .await?
+            .ok_or_else(|| AppError::conflict("campaign delivery channel no longer exists"))?;
+        if channel.provider != "delivery_provider" || channel.purpose != "marketing" {
+            return Err(AppError::conflict(
+                "campaign uses a delivery channel that is no longer supported",
+            ));
+        }
+    }
+    if row.action_type == d::action_type::MESSAGE_SUBMIT {
+        let Some(channel_id) = channel_id else {
+            return Err(AppError::conflict(
+                "message delivery channel is unavailable",
+            ));
+        };
+        let channel = infrastructure::repo::campaigns::get_channel(tx, channel_id)
+            .await?
+            .ok_or_else(|| AppError::conflict("message delivery channel no longer exists"))?;
+        if channel.provider == "zoho_campaigns" {
+            return Err(AppError::conflict(
+                "message uses a retired delivery provider",
+            ));
+        }
+    }
     if let Some(ma) = mail_account {
         authz::require_mailbox(tx, ctx, ma, MailboxPerm::Approve).await?;
     }
@@ -773,50 +825,6 @@ pub async fn decide(
             });
         }
     }
-
-    let native_review = if decision == d::decision::APPROVED {
-        let (required, native) = native_export_for_request(tx, &row).await?;
-        if required {
-            let export = native.ok_or_else(|| {
-                AppError::conflict("prepare and sync the native export before approval")
-            })?;
-            if export.state != "ready" || export.expires_at <= Utc::now() {
-                return Err(AppError::conflict(
-                    "native export is not ready for approval",
-                ));
-            }
-            if export.prepared_by == ctx.principal_id {
-                return Err(AppError::new(
-                    ErrorCode::SelfApprovalForbidden,
-                    "another human must review the prepared native export",
-                ));
-            }
-            let expected_export = req
-                .expected_export_hash
-                .as_deref()
-                .and_then(decode_hex)
-                .filter(|hash| hash.len() == 32)
-                .ok_or_else(|| {
-                    AppError::new(
-                        ErrorCode::SnapshotMismatch,
-                        "the reviewed native export hash is required",
-                    )
-                })?;
-            if expected_export != export.export_hash
-                || export.source_manifest_hash != row.snapshot_hash
-            {
-                return Err(AppError::new(
-                    ErrorCode::SnapshotMismatch,
-                    "native export content or mapping does not match the reviewed hash",
-                ));
-            }
-            Some(export)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
 
     // 4. Decision row (append-only; trigger re-validates all invariants).
     let decision_id = repo::insert_decision(
@@ -857,31 +865,20 @@ pub async fn decide(
                     ],
                 )
                 .await?;
-                let approved_launch = infrastructure::repo::campaigns::get_launch(tx, target_id)
-                    .await?
-                    .ok_or_else(|| AppError::internal("campaign launch missing"))?;
-                let native_bulk = infrastructure::repo::campaigns::get_channel(
-                    tx,
-                    approved_launch.delivery_channel_id,
-                )
-                .await?
-                .is_some_and(|channel| channel.provider == "zoho_campaigns");
-                if !native_bulk {
-                    job_id = Some(
-                        infrastructure::jobs::enqueue(
-                            tx,
-                            "campaigns.activate_launch",
-                            1,
-                            serde_json::json!({
-                                "campaign_launch_id": target_id,
-                                "approval_request_id": id,
-                            }),
-                            Utc::now(),
-                            Some(&format!("activate_launch:{target_id}")),
-                        )
-                        .await?,
-                    );
-                }
+                job_id = Some(
+                    infrastructure::jobs::enqueue(
+                        tx,
+                        "campaigns.activate_launch",
+                        1,
+                        serde_json::json!({
+                            "campaign_launch_id": target_id,
+                            "approval_request_id": id,
+                        }),
+                        Utc::now(),
+                        Some(&format!("activate_launch:{target_id}")),
+                    )
+                    .await?,
+                );
             }
             d::action_type::MESSAGE_SUBMIT => {
                 repo::set_outbound_status(tx, target_id, "queued", &["draft"]).await?;
@@ -964,17 +961,6 @@ pub async fn decide(
         }
     }
 
-    if let Some(export) = native_review.as_ref() {
-        infrastructure::repo::marketing_exports::record_export_review(
-            tx,
-            export.id,
-            id,
-            ctx.principal_id,
-            &export.export_hash,
-        )
-        .await?;
-    }
-
     let mut entry = audited(
         ctx,
         "approval.decided",
@@ -1052,6 +1038,11 @@ pub async fn revoke(
             "only the requester or an admin/manager may revoke",
         ));
     }
+    if retired_provider_for_request(tx, &row).await? {
+        return Err(AppError::conflict(
+            "approval request targets a retired provider and is read-only",
+        ));
+    }
     if !matches!(
         row.status.as_str(),
         d::request_status::PENDING | d::request_status::APPROVED
@@ -1068,8 +1059,6 @@ pub async fn revoke(
         // executed effects cannot be revoked).
         match row.action_type.as_str() {
             d::action_type::CAMPAIGN_LAUNCH => {
-                let native_export =
-                    crate::marketing::lock_native_launch_control_tx(tx, target_id).await?;
                 repo::set_launch_status(
                     tx,
                     target_id,
@@ -1086,8 +1075,6 @@ pub async fn revoke(
                         ))
                     }
                 })?;
-                crate::marketing::cancel_unsubmitted_native_export_tx(tx, native_export.as_ref())
-                    .await?;
                 repo::cancel_queued_job(
                     tx,
                     "campaigns.activate_launch",
@@ -1210,32 +1197,4 @@ pub async fn revoke(
         status: d::request_status::REVOKED.to_string(),
         version: row.version + 1,
     })
-}
-
-async fn native_export_for_request(
-    tx: &mut Tx<'_>,
-    request: &repo::ApprovalRequestRow,
-) -> Result<
-    (
-        bool,
-        Option<infrastructure::repo::marketing_exports::MarketingExportRow>,
-    ),
-    AppError,
-> {
-    if request.action_type != d::action_type::CAMPAIGN_LAUNCH {
-        return Ok((false, None));
-    }
-    let Some(launch) = infrastructure::repo::campaigns::get_launch(tx, request.target_id()).await?
-    else {
-        return Ok((false, None));
-    };
-    let required = infrastructure::repo::campaigns::get_channel(tx, launch.delivery_channel_id)
-        .await?
-        .is_some_and(|channel| channel.provider == "zoho_campaigns");
-    let export = if required {
-        infrastructure::repo::marketing_exports::get_export_by_launch(tx, launch.id).await?
-    } else {
-        None
-    };
-    Ok((required, export))
 }

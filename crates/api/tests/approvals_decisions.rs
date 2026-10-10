@@ -620,7 +620,6 @@ async fn agent_cannot_decide() {
         &contracts::approvals::CreateDecisionRequest {
             decision: "approved".to_string(),
             expected_snapshot_hash: hex(&hash),
-            expected_export_hash: None,
             reason: None,
         },
     )
@@ -743,6 +742,147 @@ async fn revoke_approved_cancels_queued_dispatch() {
     )
     .await;
     assert_eq!(live_jobs, 0, "the queued dispatch job must be canceled");
+}
+
+#[tokio::test]
+async fn approved_retired_provider_message_approval_is_read_only_history() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, acsrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let (manager, mcsrf) = login(&app, world.manager.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (outbound, hash) = outbound_draft(db, &world).await;
+    let request = message_request(
+        db,
+        &world,
+        world.admin.principal_id,
+        outbound,
+        &hash,
+        chrono::Duration::days(1),
+    )
+    .await;
+    let decision = post(
+        &app,
+        &manager,
+        &mcsrf,
+        &format!("/api/v1/approvals/{request}/decisions"),
+        json!({"decision":"approved","expected_snapshot_hash":hex(&hash)}),
+        Some("retired-message-approve"),
+        Some(1),
+    )
+    .await;
+    assert_eq!(decision.status(), StatusCode::OK);
+
+    let owner = Db::connect(
+        &std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
+        None,
+    )
+    .await
+    .unwrap();
+    let mut tx = owner.begin(world.workspace_id).await.unwrap();
+    let channel_id: Uuid = sqlx::query_scalar(
+        "SELECT delivery_channel_id FROM outbound_messages
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(outbound)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let retired_connection: Uuid = sqlx::query_scalar(
+        "INSERT INTO integration_connections
+            (workspace_id, provider, region, secret_ref, scopes, status, connected_by)
+         VALUES ($1, 'zoho_campaigns', 'com', $2, ARRAY[]::text[], 'disabled', $3)
+         RETURNING id",
+    )
+    .bind(world.workspace_id)
+    .bind(format!("retired-test:{}", Uuid::new_v4()))
+    .bind(world.admin.principal_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO marketing_connections (id, workspace_id) VALUES ($1, $2)")
+        .bind(retired_connection)
+        .bind(world.workspace_id)
+        .execute(tx.conn())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE delivery_channels
+            SET provider='zoho_campaigns', connection_id=$3,
+                enabled=false, policy_status='blocked', version=version+1
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(channel_id)
+    .bind(retired_connection)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE outbound_messages
+            SET status='canceled', failure_code='PROVIDER_RETIRED', version=version+1
+          WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(outbound)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE jobs
+            SET state='canceled', last_error_code='PROVIDER_RETIRED', finished_at=now()
+          WHERE workspace_id=$1 AND kind='sending.dispatch_outbound'
+            AND payload->>'outbound_message_id'=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(outbound.to_string())
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let detail_response = admin
+        .get(app.url(&format!("/api/v1/approvals/{request}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail = TestApp::data(detail_response).await;
+    assert_eq!(detail["status"], "approved");
+    assert_eq!(detail["retired_provider"], true);
+    assert_eq!(detail["can_decide"], false);
+
+    let version: i64 = scalar(
+        db,
+        world.workspace_id,
+        "SELECT version FROM approval_requests WHERE workspace_id=$1 AND id=$2",
+        request,
+    )
+    .await;
+    let revoke = post(
+        &app,
+        &admin,
+        &acsrf,
+        &format!("/api/v1/approvals/{request}/revoke"),
+        json!({"reason":"legacy provider retirement"}),
+        Some("retired-message-revoke"),
+        Some(version),
+    )
+    .await;
+    let problem = TestApp::problem(revoke, StatusCode::CONFLICT).await;
+    assert_eq!(problem["code"], "CONFLICT");
+    assert_eq!(
+        scalar::<String>(
+            db,
+            world.workspace_id,
+            "SELECT status FROM approval_requests WHERE workspace_id=$1 AND id=$2",
+            request,
+        )
+        .await,
+        "approved"
+    );
 }
 
 /// Channel policy is re-verified at decision time (A.6.3 "채널…재검사"):

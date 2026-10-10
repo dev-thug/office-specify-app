@@ -1,6 +1,31 @@
 # Office-owned Zoho integration status
 
-This document distinguishes implemented application paths from SDK-only methods.
+## Current behavior
+
+Zoho Mail OAuth remains supported for Office mailbox provisioning and Inbox
+correspondence. Office campaigns use an authenticated SMTP relay, and Office
+handles unsubscribe and booking links locally.
+
+The former native Zoho Campaigns integration is retired. The regular upgrade
+migration disables persisted Campaigns connections and channels and retires
+their queued jobs; historical migrations remain in the normal install and
+upgrade sequence. Office no longer submits Zoho Campaigns campaigns, exports
+contacts or content, runs scheduled Campaigns synchronization, imports or
+propagates external opt-outs, or exposes a Campaigns webhook route. This
+retirement does not disable Zoho Mail, Office SMTP, or Office-local unsubscribe
+and booking behavior. See the [SMTP runbook](../runbooks/smtp.md),
+[local booking runbook](../runbooks/local-booking.md), and
+[local development runbook](../runbooks/local-development.md), including its
+[Campaigns upgrade procedure](../runbooks/local-development.md#upgrade-from-the-retired-zoho-campaigns-integration).
+
+The Campaigns details below are a historical implementation record and do not
+describe supported current routes or release gates. The SMTP validation section
+records the current delivery path.
+
+## Historical native Campaigns implementation record
+
+At the time of the record below, this document distinguished implemented
+application paths from SDK-only methods.
 Automated tests use synthetic local data and loopback Zoho responses. A separate
 2026-10-10 account check verified OAuth, field metadata, list/contact/campaign
 creation and one authorized Zoho **test email** received in Gmail with SPF, DKIM
@@ -47,7 +72,7 @@ claiming native mailbox one-click support. Received, Return-Path, DKIM, ARC and
 authentication-result headers remain relay/recipient-controlled. See the
 [SMTP setup runbook](../runbooks/smtp.md).
 
-## Primary architecture
+## Retired Campaigns architecture
 
 Office owns templates and immutable versions through `/api/v1/email-templates`.
 The Campaigns Free route uses a fixed, approved Office launch, one dedicated
@@ -71,7 +96,7 @@ needed and is not used by this workflow.
 | Reports and unknown outcomes | Provider aggregate/status reads and partial recipient evidence are separate from delivery/read claims. Unknown creates/sends are never blindly retried; readback can reconcile only when provider evidence identifies the result. |
 | Zoho Mail | Separate configured OAuth correspondence adapter for account discovery, Inbox polling, body/details and provider-ID replies. Marketing is not routed through Mail. Unknown Mail sends have no reliable correlation lookup. |
 
-## What is still outside the application flow
+## Historical provider implementation notes
 
 - Zoho Mail search, remote Mail drafts/templates and incoming attachment methods remain SDK-only; outgoing attachment upload is not implemented.
 - Campaigns custom-field creation is SDK-only. The application reads field definitions/topics; native merge-tag listing/creation is not invented from inconsistent documentation. Use verified account mappings.
@@ -79,7 +104,7 @@ needed and is not used by this workflow.
 - Prepaid Email API v2 remains a separately configured optional backend. Its template endpoints still exist for compatibility, but the Office template screen no longer mounts its library. Its sending/status/suppression SDK methods are not used by the native Free workflow.
 - The generic marketing `DeliveryProvider` stays disabled outside explicit fixtures. Native Campaigns delivery uses its separate bulk export API, not that per-message adapter.
 
-## Practical limits
+## Historical provider limits
 
 Campaigns detail readback does not return saved HTML or an atomic compare-and-swap
 version. Office serializes its own account writes and verifies metadata, exact
@@ -99,6 +124,7 @@ its native unsubscribe link. A submitted bulk campaign cannot be recalled by
 Office's ordinary local pause/cancel actions. Provider acceptance is not delivery,
 reading or a guarantee of quota availability.
 
-See [setup and recovery](../runbooks/zoho-campaigns.md) for server configuration and
-the exact workflow. Automated development checks do not send live mail; the
-separate authorized account test used Zoho's test-email action only.
+These provider-specific details describe the retired implementation. For
+current outbound setup and recovery, use the [SMTP runbook](../runbooks/smtp.md).
+Automated development checks do not send live mail; the separate authorized
+account test described above used Zoho's test-email action only.

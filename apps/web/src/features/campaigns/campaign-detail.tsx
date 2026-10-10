@@ -40,7 +40,7 @@ import {
   type CampaignLaunch,
   type LaunchMessageSnapshot,
 } from "@/lib/api/campaigns";
-import { useDeliveryChannels, useMailAccounts, type DeliveryChannel } from "@/lib/api/settings";
+import { useDeliveryChannels, useMailAccounts } from "@/lib/api/settings";
 import { MEETING_TYPES_LIST_LIMIT, PRINCIPALS_PATH, principalDisplayName, type PrincipalRef } from "@/lib/api/meetings";
 import { useCursorList } from "@/lib/api/use-cursor-list";
 import { readEtag } from "@/lib/api/mutate";
@@ -55,7 +55,6 @@ import {
   launchActions,
 } from "./rules";
 import { useIdempotencyKey } from "./use-idempotency-key";
-import { MarketingExportPanel } from "@/features/marketing/export-panel";
 
 export function CampaignDetail({ campaignId }: { campaignId: string }) {
   const t = useTranslations("campaigns.detail");
@@ -108,6 +107,15 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
     [campaign]
   );
   const channels = deliveryChannels.data?.pages.flatMap((page) => page.data) ?? [];
+  const smtpChannelIds = new Set(
+    channels
+      .filter(
+        (channel) =>
+          channel.purpose === "marketing" &&
+          channel.capabilities?.transport === "smtp"
+      )
+      .map((channel) => channel.id)
+  );
   const gateBlocked = channelBlocked(campaign);
   const actions = campaignActions(campaign, {
     allowedActions: campaign?.allowed_actions,
@@ -385,22 +393,16 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
               const launchRevision =
                 campaign.revisions?.find((candidate) => candidate.id === l.revision_id) ??
                 revision;
-              const channel = channels.find(
-                (candidate) =>
-                  candidate.id ===
-                  (l.delivery_channel_id ?? launchRevision?.delivery_channel_id)
+              const deliveryChannelSupported = smtpChannelIds.has(
+                l.delivery_channel_id ?? launchRevision?.delivery_channel_id ?? ""
               );
               return (
                 <LaunchRow
                   key={l.id}
                   launch={l}
                   campaignId={campaign.id}
-                  gateBlocked={gateBlocked}
-                  marketingChannel={
-                    channel?.provider === "zoho_campaigns" && channel.purpose === "marketing"
-                      ? channel
-                      : null
-                  }
+                  deliveryChannelSupported={deliveryChannelSupported}
+                  gateBlocked={gateBlocked || !deliveryChannelSupported}
                   expanded={expandedLaunch === l.id}
                   onToggle={() =>
                     setExpandedLaunch((cur) => (cur === l.id ? null : l.id))
@@ -420,8 +422,8 @@ export function CampaignDetail({ campaignId }: { campaignId: string }) {
 function LaunchRow({
   launch,
   campaignId,
+  deliveryChannelSupported,
   gateBlocked,
-  marketingChannel,
   expanded,
   onToggle,
   onError,
@@ -429,8 +431,8 @@ function LaunchRow({
 }: {
   launch: CampaignLaunch;
   campaignId: string;
+  deliveryChannelSupported: boolean;
   gateBlocked: boolean;
-  marketingChannel: DeliveryChannel | null;
   expanded: boolean;
   onToggle: () => void;
   onError: (err: unknown) => void;
@@ -455,7 +457,7 @@ function LaunchRow({
 
   const actions = launchActions(launch, {
     gateBlocked,
-    allowedActions: launch.allowed_actions,
+    allowedActions: deliveryChannelSupported ? launch.allowed_actions : [],
   });
 
   async function submit() {
@@ -594,6 +596,11 @@ function LaunchRow({
         </span>
       </div>
 
+      {!deliveryChannelSupported ? (
+        <p role="status" className="px-3 pb-2.5 text-2xs text-muted-foreground">
+          {t("retiredDeliveryChannel")}
+        </p>
+      ) : null}
       {launch.status === "building" ? (
         <p className="px-3 pb-2.5 text-2xs text-muted-foreground">
           {t("buildingLaunch")}
@@ -609,17 +616,6 @@ function LaunchRow({
             {t("goToApprovals")}
           </Link>
         </p>
-      ) : null}
-
-      {marketingChannel ? (
-        <div className="px-3 pb-3">
-          <MarketingExportPanel
-            launchId={launch.id}
-            sourceStatus={launch.status}
-            sourceManifestHash={launch.manifest_hash}
-            connectionId={marketingChannel.connection_id}
-          />
-        </div>
       ) : null}
 
       {expanded ? <LaunchDetailPanel launchId={launch.id} /> : null}

@@ -494,6 +494,9 @@ pub async fn emergency_stop_active(tx: &mut Tx<'_>) -> Result<bool, AppError> {
 /// Returns B.5 code names; empty = channel ready.
 pub fn channel_blocking_reasons(channel: &ChannelRow, emergency_stop: bool) -> Vec<String> {
     let mut out = Vec::new();
+    if channel.provider != "delivery_provider" || channel.purpose != "marketing" {
+        out.push("PROVIDER_UNSUPPORTED".to_string());
+    }
     if emergency_stop {
         out.push("WORKSPACE_EMERGENCY_STOP".to_string());
     }

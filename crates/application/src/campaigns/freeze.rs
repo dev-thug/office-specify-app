@@ -323,6 +323,11 @@ pub async fn freeze_launch(
     let channel = repo::get_channel(tx, revision.delivery_channel_id)
         .await?
         .ok_or_else(|| AppError::internal("revision channel missing"))?;
+    if channel.provider != "delivery_provider" || channel.purpose != "marketing" {
+        return Err(AppError::conflict(
+            "campaign launches require an Office SMTP marketing channel",
+        ));
+    }
     let (from_address, display_name) = repo::get_sender_identity(tx, channel.sender_identity_id)
         .await?
         .ok_or_else(|| AppError::internal("channel sender identity missing"))?;
@@ -454,34 +459,6 @@ pub async fn freeze_launch(
             None,
         )
         .await?;
-        if channel.provider == "zoho_campaigns" {
-            let mut frozen_values = user_variables.clone();
-            frozen_values.extend(system_vars.clone());
-            // Native Campaigns exports support one immediate step. Reuse its
-            // already-issued capability so the mapped URL resolves to the same
-            // token hash persisted with that recipient's outbound snapshot.
-            let first_step = rendered
-                .first()
-                .ok_or_else(|| AppError::internal("marketing launch has no rendered step"))?;
-            frozen_values.insert(
-                "compliance.unsubscribe_url".into(),
-                format!(
-                    "{}/public/unsubscribe/{}",
-                    public_base_url.trim_end_matches('/'),
-                    first_step.unsubscribe_token
-                ),
-            );
-            infrastructure::repo::marketing_exports::record_launch_values(
-                tx,
-                launch_id,
-                &[infrastructure::repo::marketing_exports::NewLaunchValue {
-                    email_address_id: *addr_id,
-                    variables: serde_json::to_value(&frozen_values)
-                        .map_err(|_| AppError::internal("could not freeze marketing variables"))?,
-                }],
-            )
-            .await?;
-        }
         let mut step_hashes = Vec::with_capacity(rendered.len());
         for snapshot in rendered {
             let outbound_id = repo::insert_step_outbound(

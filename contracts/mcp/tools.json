@@ -205,57 +205,6 @@
                       }
                     },
                     "type": "object"
-                  },
-                  "NativeExportApprovalView": {
-                    "properties": {
-                      "body_html": {
-                        "type": "string"
-                      },
-                      "export_hash": {
-                        "type": "string"
-                      },
-                      "field_map": true,
-                      "id": {
-                        "format": "uuid",
-                        "type": "string"
-                      },
-                      "provider_list_key": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "recipient_count": {
-                        "format": "int64",
-                        "type": "integer"
-                      },
-                      "sender_address": {
-                        "type": "string"
-                      },
-                      "state": {
-                        "type": "string"
-                      },
-                      "subject": {
-                        "type": "string"
-                      },
-                      "topic_id": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "body_html",
-                      "export_hash",
-                      "field_map",
-                      "id",
-                      "recipient_count",
-                      "sender_address",
-                      "state",
-                      "subject"
-                    ],
-                    "type": "object"
                   }
                 },
                 "properties": {
@@ -292,21 +241,6 @@
                     "description": "The pinned snapshot/manifest hash, repeated for the approval UI.",
                     "type": "string"
                   },
-                  "native_export": {
-                    "anyOf": [
-                      {
-                        "$ref": "#/properties/data/anyOf/0/definitions/NativeExportApprovalView"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null
-                  },
-                  "native_export_required": {
-                    "default": false,
-                    "type": "boolean"
-                  },
                   "policy_results": {
                     "description": "Current approval checks; unavailable checks are labeled explicitly.",
                     "items": true,
@@ -322,6 +256,11 @@
                   "requested_by": {
                     "format": "uuid",
                     "type": "string"
+                  },
+                  "retired_provider": {
+                    "default": false,
+                    "description": "True when the request is retained only as history because its delivery provider was retired.",
+                    "type": "boolean"
                   },
                   "self_request": {
                     "type": "boolean"

@@ -18,5 +18,3 @@ pub mod org;
 pub mod research;
 pub mod sending;
 pub mod templates;
-
-pub mod marketing;

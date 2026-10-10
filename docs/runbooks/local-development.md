@@ -209,18 +209,15 @@ workspace has no mailbox and SMTP relay credentials do not create one. The
 current repository has no standalone SMTP-only mailbox-creation route. See the
 [SMTP runbook](smtp.md) for the active-account and `can_send` requirements.
 
-For any Zoho OAuth connection, register the exact full callback URI used by
-Office in the Zoho client and set the matching server value. With the example
-domain, the paths are:
+If you connect Zoho Mail, register the exact full callback URI used by Office
+in the Zoho client and set the matching server value. With the example domain,
+the callback is:
 
 - Zoho Mail: `https://office.specify.app/api/v1/integrations/zoho/callback`
-- Zoho Campaigns: `https://office.specify.app/api/v1/integrations/zoho-campaigns/callback`
 
-Configure `ZOHO_MAIL_REDIRECT_URI` or `ZOHO_CAMPAIGNS_REDIRECT_URI` alongside
-the corresponding server-side client credentials. The new SMTP mailbox
-provisioning flow uses the Zoho Mail callback. The SMTP relay itself uses
-separate SMTP credentials and does not require Zoho Campaigns OAuth. The local
-internal calendar does not use either callback.
+Configure `ZOHO_MAIL_REDIRECT_URI` alongside the Zoho Mail client credentials.
+The SMTP mailbox provisioning flow uses the Zoho Mail callback; the relay uses
+separate SMTP credentials. The local internal calendar does not use OAuth.
 
 Production also requires a persistent `OUTREACH_HMAC_KEY` of at least 32 bytes,
 a 64-character-hex `OUTREACH_SECRET_KEY` for AES-256 SecretStore encryption, and
@@ -279,17 +276,78 @@ These commands write `contracts/openapi/openapi.json` and
 database selected. See the [acceptance matrix](../design/test-matrix.md) for
 requirement-level evidence and remaining release gates.
 
-## Zoho integration notes
+## Zoho Mail and SMTP integration notes
 
-Register a Zoho server-based application only if you intend to connect that
-provider. Configure its client ID, client secret, and exact callback on the
-server before starting OAuth from Settings. Zoho Mail and Zoho Campaigns use
-separate credentials and scopes. OAuth state is workspace/session bound, and
-refresh tokens are stored encrypted. Do not use Campaigns credentials as SMTP
-credentials.
+Register a Zoho server-based application only if you intend to connect Zoho
+Mail. Configure the client ID, client secret, and exact callback on the server
+before starting OAuth from Settings. OAuth state is workspace/session bound,
+and refresh tokens are stored encrypted. Office campaign delivery uses the
+separately configured SMTP relay. See the [SMTP runbook](smtp.md) and
+[integration status](../design/zoho-integration-status.md) for current
+capability boundaries.
 
-Campaigns Free uses its regular v1.1 API. The optional prepaid Zoho Email API
-template store is a different service, disabled by default, and not part of the
-Campaigns Free send flow. See the [Zoho Campaigns runbook](zoho-campaigns.md)
-for its external setup and the [integration status](../design/zoho-integration-status.md)
-for supported capability boundaries.
+## Upgrade from the retired Zoho Campaigns integration
+
+Use this procedure when upgrading an installation that previously connected
+Office to Zoho Campaigns or the separately prepaid Zoho Email API. Apply the
+new application version and its migrations as one maintenance operation.
+
+1. Stop every old Office API and worker process, including service-manager
+   restarts, so no old process can resume provider work. Take the normal
+   protected database and SecretStore backups while the old services are down.
+2. Record only audit-safe metadata needed to identify the retired connection:
+   workspace, connection/channel IDs, obsolete SecretStore reference names,
+   and outstanding native job/export IDs. Do not copy secret values, tokens,
+   message bodies, recipient data, or booking URLs into notes or logs.
+3. Remove the obsolete Campaigns-only SecretStore entries/references and the
+   `ZOHO_CAMPAIGNS_*` and `ZOHO_EMAIL_API_*` variables from every service
+   environment. Remove only those provider entries; preserve the SecretStore
+   file and its Zoho Mail OAuth and SMTP credentials. Keep `ZOHO_MAIL_*`,
+   `OUTREACH_HMAC_KEY`, and `OUTREACH_SECRET_KEY` configured with their existing
+   stable values. Do not rotate or delete these shared keys as part of this
+   upgrade.
+4. With the API and workers still stopped, load the new release's environment
+   and run the ordinary migration command against the intended application
+   database:
+
+   ```sh
+   set -a
+   source .env
+   set +a
+   cargo run -p cli -- migrate
+   ```
+
+   Historical migrations and audit rows remain in the database. The retirement
+   migration disables persisted Campaigns connections and channels, cancels
+   pending native Campaigns jobs, marks native jobs already running as
+   `unknown`, and revokes pending native Campaigns approvals. Historical
+   approved rows are read-only at runtime. Unknown outcome flags on retained
+   exports remain recorded for audit.
+5. Start only the new release's API and worker, then the web app. Zoho Mail
+   OAuth/Inbox and configured SMTP delivery remain available. Office-local
+   unsubscribe and booking behavior remain active; local privacy erasure for
+   retained historical exports also remains supported through the backend's
+   retired-record handling.
+
+After upgrade, Office does not run Campaigns exports, scheduled synchronization,
+or external opt-out import/propagation.
+
+The migration changes Office's local state only. It does not call Zoho to
+cancel a remote campaign, delete a remote list/contact, or change remote
+suppression state. A local `unknown` status does not establish what Zoho did;
+do not automatically retry an old native job or describe a remote effect as
+canceled without separate provider evidence.
+
+### Optional retirement verification
+
+From the repository root, set `RETIREMENT_TEST_DATABASE_URL` to a disposable
+PostgreSQL base database whose role has `CREATEDB`, then run:
+
+```sh
+python3 scripts/verify-provider-retirement.py
+```
+
+The script creates and drops only its disposable temporary databases. Do not
+point it at an application database. It requires `CREATEDB` on the selected
+PostgreSQL server. You can run it after the migration and before restarting the
+new API and worker.
