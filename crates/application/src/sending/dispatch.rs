@@ -24,8 +24,8 @@ use infrastructure::db::Db;
 use infrastructure::jobs::JobCtx;
 use infrastructure::outbox;
 use infrastructure::providers::{
-    DeliveryProvider, MailCapabilities, MailProvider, ProviderError, ProviderMessage, SendOutcome,
-    SendRequest, SentLookup,
+    DeliveryCapabilities, DeliveryProvider, MailCapabilities, MailProvider, ProviderError,
+    ProviderMessage, SendOutcome, SendRequest, SentLookup,
 };
 use infrastructure::repo::compliance_core;
 use infrastructure::repo::sending::{self, OutboundRow};
@@ -86,15 +86,19 @@ impl MailProvider for MailBindingUnavailable {
     }
 }
 
-/// Resolve a Zoho Mail adapter from the immutable mailbox ID before Phase A
-/// records a send attempt. Missing/revoked mailboxes cannot reach the provider
-/// submission boundary.
+/// Resolve a mailbox adapter or channel-bound delivery adapter before Phase A
+/// records a send attempt. SMTP binding uses only the immutable workspace and
+/// delivery-channel IDs; message headers never select a connection.
 async fn providers_for_outbound(
     db: &Db,
     job: &JobCtx,
     providers: &Providers,
     outbound_id: Uuid,
 ) -> Result<Providers, AppError> {
+    enum Binding {
+        Mailbox(Uuid),
+        DeliveryChannel(Uuid),
+    }
     let binding = {
         let mut tx = db.begin(job.workspace_id).await?;
         let Some(outbound) = sending::get_outbound(&mut tx, outbound_id).await? else {
@@ -109,42 +113,91 @@ async fn providers_for_outbound(
         } else {
             sending::channel_state(&mut tx, outbound.delivery_channel_id)
                 .await?
-                .filter(|channel| channel.provider == "zoho_mail")
-                .map(|_| outbound.mail_account_id)
+                .map(|channel| match channel.provider.as_str() {
+                    "zoho_mail" => Binding::Mailbox(outbound.mail_account_id),
+                    _ => Binding::DeliveryChannel(outbound.delivery_channel_id),
+                })
         };
         tx.commit().await?;
         candidate
     };
-    let Some(mail_account_id) = binding else {
+    let Some(binding) = binding else {
         return Ok(providers.clone());
     };
     let mut bound = providers.clone();
-    match providers
-        .mail
-        .for_mailbox(job.workspace_id, mail_account_id)
-        .await
-    {
-        Ok(Some(mailbox_provider)) => bound.mail = mailbox_provider,
-        Ok(None) => {}
-        Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => {
-            bound.mail = Arc::new(MailBindingUnavailable);
-        }
-        Err(ProviderError::RateLimited {
-            retry_after_seconds,
-        }) => {
-            return Err(AppError::new(
-                contracts::ErrorCode::RateLimited,
-                "mailbox provider rate limited before submission",
-            )
-            .with_retry_after(retry_after_seconds));
-        }
-        Err(ProviderError::Unavailable(_)) => {
-            return Err(AppError::dependency_unavailable(
-                "mailbox provider could not be resolved before submission",
-            ));
-        }
+    match binding {
+        Binding::Mailbox(mail_account_id) => match providers
+            .mail
+            .for_mailbox(job.workspace_id, mail_account_id)
+            .await
+        {
+            Ok(Some(mailbox_provider)) => bound.mail = mailbox_provider,
+            Ok(None) => {}
+            Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => {
+                bound.mail = Arc::new(MailBindingUnavailable);
+            }
+            Err(ProviderError::RateLimited {
+                retry_after_seconds,
+            }) => {
+                return Err(AppError::new(
+                    contracts::ErrorCode::RateLimited,
+                    "mailbox provider rate limited before submission",
+                )
+                .with_retry_after(retry_after_seconds));
+            }
+            Err(ProviderError::Unavailable(_)) => {
+                return Err(AppError::dependency_unavailable(
+                    "mailbox provider could not be resolved before submission",
+                ));
+            }
+        },
+        Binding::DeliveryChannel(channel_id) => match providers
+            .delivery
+            .for_channel(job.workspace_id, channel_id)
+            .await
+        {
+            Ok(Some(delivery_provider)) => bound.delivery = delivery_provider,
+            Ok(None) => {}
+            Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => {
+                bound.delivery = Arc::new(DeliveryBindingUnavailable);
+            }
+            Err(ProviderError::RateLimited {
+                retry_after_seconds,
+            }) => {
+                return Err(AppError::new(
+                    contracts::ErrorCode::RateLimited,
+                    "delivery provider rate limited before submission",
+                )
+                .with_retry_after(retry_after_seconds));
+            }
+            Err(ProviderError::Unavailable(_)) => {
+                return Err(AppError::dependency_unavailable(
+                    "delivery provider could not be resolved before submission",
+                ));
+            }
+        },
     }
     Ok(bound)
+}
+
+struct DeliveryBindingUnavailable;
+
+#[async_trait::async_trait]
+impl DeliveryProvider for DeliveryBindingUnavailable {
+    fn capabilities(&self) -> DeliveryCapabilities {
+        DeliveryCapabilities::default()
+    }
+
+    async fn send(&self, _request: SendRequest) -> Result<SendOutcome, ProviderError> {
+        Err(ProviderError::NotConfigured)
+    }
+
+    async fn lookup_sent(
+        &self,
+        _correlation_id: &str,
+    ) -> Result<Option<SentLookup>, ProviderError> {
+        Ok(None)
+    }
 }
 
 fn audit_system(
@@ -638,6 +691,21 @@ async fn one_click_unsubscribe_url(
     }
 
     let mut tx = db.begin(outbound.workspace_id).await?;
+    // Only SMTP currently has an enabled Office one-click handler. Do not
+    // advertise a POST action for other adapters whose endpoint is gated.
+    let smtp_bound: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM smtp_connections
+          WHERE workspace_id = $1 AND channel_id = $2)",
+    )
+    .bind(outbound.workspace_id)
+    .bind(outbound.delivery_channel_id)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(infrastructure::error::map_sqlx)?;
+    if !smtp_bound {
+        tx.rollback().await?;
+        return Ok(None);
+    }
     for token in candidates {
         if sending::unsubscribe_token_belongs_to_outbound(
             &mut tx,
@@ -849,6 +917,7 @@ pub async fn run_reconcile(
         Lookup {
             outbound: Box<OutboundRow>,
             provider: String,
+            channel_id: Uuid,
         },
     }
     let next = {
@@ -870,6 +939,7 @@ pub async fn run_reconcile(
                 let chan = sending::channel_state(&mut tx, o.delivery_channel_id).await?;
                 match chan {
                     Some(c) => Next::Lookup {
+                        channel_id: o.delivery_channel_id,
                         outbound: Box::new(o),
                         provider: c.provider,
                     },
@@ -884,6 +954,7 @@ pub async fn run_reconcile(
     let Next::Lookup {
         outbound: o,
         provider,
+        channel_id,
     } = next
     else {
         return Ok(());
@@ -902,7 +973,16 @@ pub async fn run_reconcile(
                 Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => Ok(None),
                 Err(error) => Err(error),
             },
-            _ => providers.delivery.lookup_sent(&o.id.to_string()).await,
+            _ => match providers
+                .delivery
+                .for_channel(job.workspace_id, channel_id)
+                .await
+            {
+                Ok(Some(channel_provider)) => channel_provider.lookup_sent(&o.id.to_string()).await,
+                Ok(None) => providers.delivery.lookup_sent(&o.id.to_string()).await,
+                Err(ProviderError::NotConfigured | ProviderError::ReauthRequired) => Ok(None),
+                Err(error) => Err(error),
+            },
         };
 
     // Phase C — commit evidence (or rearm bounded polling).

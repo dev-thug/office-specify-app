@@ -914,6 +914,95 @@ pub async fn latest_outbound_approval(
     .map_err(map_sqlx)
 }
 
+/// The latest launch-level approval state and the frozen membership facts for
+/// one campaign outbound. Campaign approval pins the full manifest; the
+/// enrollment/step joins prove that this immutable payload belongs to the
+/// approved launch.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CampaignLaunchApprovalState {
+    pub launch_status: String,
+    pub launch_manifest_hash: Option<Vec<u8>>,
+    pub launch_expires_at: DateTime<Utc>,
+    pub launch_revision_id: Uuid,
+    pub launch_channel_id: Uuid,
+    pub launch_requested_by: Uuid,
+    pub revision_status: String,
+    pub revision_channel_id: Uuid,
+    pub request_id: Option<Uuid>,
+    pub request_requested_by: Option<Uuid>,
+    pub request_action_type: Option<String>,
+    pub request_status: Option<String>,
+    pub request_snapshot_hash: Option<Vec<u8>>,
+    pub request_expires_at: Option<DateTime<Utc>>,
+    pub request_version: Option<i64>,
+    pub decision: Option<String>,
+    pub decision_snapshot_hash: Option<Vec<u8>>,
+    pub decision_version_at_decision: Option<i64>,
+    pub decided_by: Option<Uuid>,
+    pub enrollment_status: Option<String>,
+    pub enrollment_launch_id: Option<Uuid>,
+    pub enrollment_revision_id: Option<Uuid>,
+    pub enrollment_email_address_id: Option<Uuid>,
+    pub step_revision_id: Option<Uuid>,
+    pub step_order: Option<i32>,
+    pub payload_hash_len: i32,
+}
+
+pub async fn campaign_launch_approval_state(
+    tx: &mut Tx<'_>,
+    outbound: &OutboundRow,
+) -> Result<Option<CampaignLaunchApprovalState>, AppError> {
+    if outbound.launch_id.is_none() {
+        return Ok(None);
+    }
+    sqlx::query_as::<_, CampaignLaunchApprovalState>(
+        "SELECT l.status AS launch_status, l.manifest_hash AS launch_manifest_hash,
+                l.expires_at AS launch_expires_at, l.revision_id AS launch_revision_id,
+                l.delivery_channel_id AS launch_channel_id,
+                l.requested_by AS launch_requested_by,
+                r.status AS revision_status, r.delivery_channel_id AS revision_channel_id,
+                ar.id AS request_id, ar.requested_by AS request_requested_by,
+                ar.action_type AS request_action_type, ar.status AS request_status,
+                ar.snapshot_hash AS request_snapshot_hash,
+                ar.expires_at AS request_expires_at, ar.version AS request_version,
+                d.decision, d.snapshot_hash AS decision_snapshot_hash,
+                d.version_at_decision AS decision_version_at_decision,
+                d.decided_by,
+                e.status AS enrollment_status, e.launch_id AS enrollment_launch_id,
+                e.revision_id AS enrollment_revision_id,
+                e.email_address_id AS enrollment_email_address_id,
+                s.revision_id AS step_revision_id, s.step_order,
+                octet_length(o.payload_hash) AS payload_hash_len
+           FROM outbound_messages o
+           JOIN campaign_launches l
+             ON l.workspace_id = o.workspace_id AND l.id = o.launch_id
+           JOIN campaign_revisions r
+             ON r.workspace_id = o.workspace_id AND r.id = o.revision_id
+           LEFT JOIN campaign_enrollments e
+             ON e.workspace_id = o.workspace_id AND e.id = o.enrollment_id
+           LEFT JOIN campaign_steps s
+             ON s.workspace_id = o.workspace_id AND s.id = o.step_id
+           LEFT JOIN LATERAL (
+                SELECT id, workspace_id, requested_by, action_type, status, snapshot_hash,
+                       expires_at, version
+                  FROM approval_requests
+                 WHERE workspace_id = o.workspace_id AND launch_id = l.id
+                   AND action_type = 'campaign_launch'
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT 1
+           ) ar ON true
+           LEFT JOIN approval_decisions d
+             ON d.workspace_id = ar.workspace_id
+            AND d.approval_request_id = ar.id
+          WHERE o.workspace_id = $1 AND o.id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound.id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
 /// The decision row for an approval request (one per request by UNIQUE).
 pub async fn approval_decision(
     tx: &mut Tx<'_>,
@@ -1043,14 +1132,14 @@ pub async fn channel_last_accepted_at(
     tx: &mut Tx<'_>,
     channel_id: Uuid,
 ) -> Result<Option<DateTime<Utc>>, AppError> {
-    sqlx::query_scalar(
+    sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
         "SELECT max(accepted_at) FROM outbound_messages
           WHERE workspace_id = $1 AND delivery_channel_id = $2
             AND status = 'accepted'",
     )
     .bind(tx.workspace_id())
     .bind(channel_id)
-    .fetch_optional(tx.conn())
+    .fetch_one(tx.conn())
     .await
     .map_err(map_sqlx)
 }

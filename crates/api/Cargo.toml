@@ -23,7 +23,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["multipart"] }
 utoipa.workspace = true
 utoipa-axum.workspace = true
 http.workspace = true

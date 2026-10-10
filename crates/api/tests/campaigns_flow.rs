@@ -2204,6 +2204,234 @@ async fn preflight_reports_suppressed_and_unbased_recipients() {
 }
 
 #[tokio::test]
+async fn campaign_dispatch_rechecks_launch_approval_membership_and_approver_permission() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let (admin, admin_csrf) = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let (manager, manager_csrf) = login(&app, world.manager.email.as_deref().unwrap()).await;
+    let db = &app.state.db;
+    let (_identity, channel) = marketing_channel(db, &world).await;
+    let template =
+        template_version(db, &world, "approval subject", "approved body", json!({})).await;
+    let address = recipient(db, &world, "approved-campaign", true).await;
+    let (campaign, revision) = create_campaign(
+        &app,
+        &admin,
+        &admin_csrf,
+        &world,
+        channel,
+        template,
+        "campaign-approval",
+    )
+    .await;
+    let (launch, freeze_job) = create_launch(
+        &app,
+        &admin,
+        &admin_csrf,
+        campaign,
+        revision,
+        &[address],
+        "campaign-approval-launch",
+    )
+    .await;
+    let manifest_hash = freeze(db, freeze_job, &world, launch).await;
+
+    let request = post(
+        &app,
+        &admin,
+        &admin_csrf,
+        &format!("/api/v1/campaign-launches/{launch}/approval-requests"),
+        json!({"expected_manifest_hash": manifest_hash}),
+        Some("campaign-approval-request"),
+        None,
+    )
+    .await;
+    assert_eq!(request.status(), StatusCode::OK);
+    let request_data = TestApp::data(request).await;
+    let request_id: Uuid = request_data["approval_request_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let decision = post(
+        &app,
+        &manager,
+        &manager_csrf,
+        &format!("/api/v1/approvals/{request_id}/decisions"),
+        json!({"decision": "approved", "expected_snapshot_hash": manifest_hash}),
+        Some("campaign-approval-decision"),
+        Some(1),
+    )
+    .await;
+    assert_eq!(decision.status(), StatusCode::OK);
+    let activation_job: Uuid = TestApp::data(decision).await["job_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    run_activate(db, &world, activation_job).await;
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let outbound: Uuid = sqlx::query_scalar(
+        "SELECT id FROM outbound_messages
+          WHERE workspace_id = $1 AND launch_id = $2 AND status = 'queued'
+          ORDER BY created_at, id LIMIT 1",
+    )
+    .bind(world.workspace_id)
+    .bind(launch)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let check = |data: &Value, name: &str| {
+        data["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .cloned()
+            .expect("expected preflight check")
+    };
+    let preflight_path = format!("/api/v1/outbound-messages/{outbound}/preflight");
+    let valid_res = post(
+        &app,
+        &admin,
+        &admin_csrf,
+        &preflight_path,
+        json!({}),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(valid_res.status(), StatusCode::OK);
+    let valid = TestApp::data(valid_res).await;
+    for name in ["approval_state", "approval_hash", "approver_permission"] {
+        assert_eq!(
+            check(&valid, name)["passed"],
+            true,
+            "{name} should pass for the approved frozen campaign"
+        );
+    }
+
+    // The approver must retain an independent, current mailbox approval grant.
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE mail_account_grants SET can_approve = false
+          WHERE workspace_id = $1 AND mail_account_id = $2 AND principal_id = $3",
+    )
+    .bind(world.workspace_id)
+    .bind(world.mail_account_id)
+    .bind(world.manager.principal_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let denied_res = post(
+        &app,
+        &admin,
+        &admin_csrf,
+        &preflight_path,
+        json!({}),
+        None,
+        None,
+    )
+    .await;
+    let denied = TestApp::data(denied_res).await;
+    assert_eq!(check(&denied, "approval_state")["passed"], true);
+    assert_eq!(check(&denied, "approval_hash")["passed"], true);
+    assert_eq!(check(&denied, "approver_permission")["passed"], false);
+    assert_eq!(
+        check(&denied, "approver_permission")["code"],
+        "APPROVER_PERMISSION_REVOKED"
+    );
+
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    sqlx::query(
+        "UPDATE mail_account_grants SET can_approve = true
+          WHERE workspace_id = $1 AND mail_account_id = $2 AND principal_id = $3",
+    )
+    .bind(world.workspace_id)
+    .bind(world.mail_account_id)
+    .bind(world.manager.principal_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    let _ = infrastructure::repo::compliance_core::lock_email_address(&mut tx, address)
+        .await
+        .unwrap();
+    let frozen = infrastructure::repo::sending::get_outbound(&mut tx, outbound)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut changed_recipient = frozen.clone();
+    changed_recipient.to_email_address_id = Uuid::new_v4();
+    let membership_checks =
+        application::sending::policy::evaluate(&mut tx, &changed_recipient, None)
+            .await
+            .unwrap();
+    let membership_hash = membership_checks
+        .iter()
+        .find(|item| item.name == "approval_hash")
+        .unwrap();
+    assert!(!membership_hash.passed);
+    assert_eq!(membership_hash.code, Some("SNAPSHOT_MISMATCH"));
+
+    let mut changed_payload = frozen;
+    changed_payload.body_text.push_str(" changed after freeze");
+    let payload_checks = application::sending::policy::evaluate(&mut tx, &changed_payload, None)
+        .await
+        .unwrap();
+    let payload_hash = payload_checks
+        .iter()
+        .find(|item| item.name == "approval_hash")
+        .unwrap();
+    assert!(!payload_hash.passed);
+    assert_eq!(payload_hash.code, Some("SNAPSHOT_MISMATCH"));
+    tx.commit().await.unwrap();
+
+    // Revocation blocks an already-queued campaign message at preflight.
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let version: i64 = sqlx::query_scalar(
+        "SELECT version FROM approval_requests WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(world.workspace_id)
+    .bind(request_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert_eq!(
+        infrastructure::repo::approvals::set_request_status(
+            &mut tx, request_id, "revoked", version
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    tx.commit().await.unwrap();
+    let revoked_res = post(
+        &app,
+        &admin,
+        &admin_csrf,
+        &preflight_path,
+        json!({}),
+        None,
+        None,
+    )
+    .await;
+    let revoked = TestApp::data(revoked_res).await;
+    assert_eq!(check(&revoked, "approval_state")["passed"], false);
+    assert_eq!(
+        check(&revoked, "approval_state")["code"],
+        "APPROVAL_REVOKED"
+    );
+    assert_eq!(check(&revoked, "approval_hash")["passed"], false);
+}
+
+#[tokio::test]
 async fn preflight_blocks_a_required_booking_url_without_a_meeting_binding() {
     let Some((app, world)) = test_app().await else {
         return;

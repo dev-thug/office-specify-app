@@ -611,6 +611,15 @@ async fn dispatch_accepted_path() {
 
 #[tokio::test]
 async fn marketing_list_unsubscribe_uses_bound_one_click_api_route() {
+    marketing_unsubscribe_headers(true).await;
+}
+
+#[tokio::test]
+async fn generic_marketing_does_not_advertise_disabled_one_click() {
+    marketing_unsubscribe_headers(false).await;
+}
+
+async fn marketing_unsubscribe_headers(smtp_bound: bool) {
     let Some((db, world)) = test_db().await else {
         return;
     };
@@ -618,8 +627,14 @@ async fn marketing_list_unsubscribe_uses_bound_one_click_api_route() {
     enable_sending(&db, ws).await;
 
     let ctx = ctx_for(&world, &world.admin, "one-click-header");
+    // SMTP profiles are API-owned; worker_runtime intentionally cannot insert
+    // them. Seed this fixture with the isolated database owner, then exercise
+    // dispatch through the normal worker role below.
+    let fixture_db = Db::connect(&std::env::var("DATABASE_URL").unwrap(), None)
+        .await
+        .unwrap();
     let (channel, to) = {
-        let mut tx = db.begin(ws).await.unwrap();
+        let mut tx = fixture_db.begin(ws).await.unwrap();
         let (_, channel) = sender_and_channel(
             &mut tx,
             world.mail_account_id,
@@ -627,6 +642,25 @@ async fn marketing_list_unsubscribe_uses_bound_one_click_api_route() {
             "marketing",
         )
         .await;
+        if smtp_bound {
+            sqlx::query(
+                "INSERT INTO smtp_connections
+                 (id, workspace_id, mail_account_id, sender_identity_id, channel_id,
+                  name, host, port, security, username, from_address, from_name, status)
+                 SELECT dc.connection_id, dc.workspace_id, dc.mail_account_id,
+                        dc.sender_identity_id, dc.id, 'SMTP header fixture',
+                        'smtp.example.test', 587, 'starttls', 'fixture', si.address,
+                        si.display_name, 'active'
+                 FROM delivery_channels dc JOIN sender_identities si
+                   ON si.workspace_id=dc.workspace_id AND si.id=dc.sender_identity_id
+                 WHERE dc.workspace_id=$1 AND dc.id=$2",
+            )
+            .bind(ws)
+            .bind(channel)
+            .execute(tx.conn())
+            .await
+            .unwrap();
+        }
         let to = email_address(&mut tx, "one-click-header").await;
         valid_basis(&mut tx, to, world.admin.principal_id, "marketing").await;
         tx.commit().await.unwrap();
@@ -741,17 +775,33 @@ async fn marketing_list_unsubscribe_uses_bound_one_click_api_route() {
     .await;
     let sent = delivery.sends.lock().unwrap().clone();
     assert_eq!(sent.len(), 1);
-    assert!(sent[0].headers.iter().any(|(name, value)| {
-        name == "List-Unsubscribe"
-            && value
-                == &format!(
-                    "<{}/public/v1/unsubscribe/{token}/one-click>",
-                    origin.trim_end_matches('/')
-                )
-    }));
-    assert!(sent[0].headers.iter().any(|(name, value)| {
-        name == "List-Unsubscribe-Post" && value == "List-Unsubscribe=One-Click"
-    }));
+    if smtp_bound {
+        assert!(sent[0].headers.iter().any(|(name, value)| {
+            name == "List-Unsubscribe"
+                && value
+                    == &format!(
+                        "<{}/public/v1/unsubscribe/{token}/one-click>",
+                        origin.trim_end_matches('/')
+                    )
+        }));
+        assert!(sent[0].headers.iter().any(|(name, value)| {
+            name == "List-Unsubscribe-Post" && value == "List-Unsubscribe=One-Click"
+        }));
+    } else {
+        assert!(
+            sent[0]
+                .headers
+                .iter()
+                .all(|(name, _)| name != "List-Unsubscribe" && name != "List-Unsubscribe-Post")
+        );
+        assert!(
+            sent[0]
+                .body_text
+                .as_ref()
+                .unwrap()
+                .contains("/public/unsubscribe/")
+        );
+    }
     assert!(
         sent[0]
             .headers

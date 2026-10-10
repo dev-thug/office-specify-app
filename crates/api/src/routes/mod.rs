@@ -17,6 +17,7 @@ pub mod operations;
 pub mod org;
 pub mod research;
 pub mod sending;
+pub mod smtp;
 pub mod templates;
 pub mod zoho_templates;
 
@@ -39,6 +40,7 @@ pub fn api_router() -> OpenApiRouter<AppState> {
         .merge(campaigns::router())
         .merge(approvals::router())
         .merge(sending::router())
+        .merge(smtp::router())
         .merge(inbox::router())
         .merge(booking::router())
         .merge(compliance::router())

@@ -2084,6 +2084,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/smtp-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_connections"];
+        put?: never;
+        post: operations["create_connection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/smtp-connections/{id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["disable_connection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/smtp-connections/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["verify_connection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/suppressions": {
         parameters: {
             query?: never;
@@ -3484,6 +3532,36 @@ export interface components {
             /** Format: int32 */
             revision_no: number;
             status: string;
+        };
+        /**
+         * @description `POST /smtp-connections` — credential is accepted on write only.
+         *
+         *     Deliberately does not implement `Debug`: request bodies can contain a
+         *     password and should not be printed by handlers or diagnostics.
+         */
+        CreateSmtpConnectionRequest: {
+            custom_headers?: {
+                [key: string]: string;
+            };
+            from_address: string;
+            from_name: string;
+            host: string;
+            /** Format: uuid */
+            mail_account_id: string;
+            name: string;
+            /** Format: password */
+            password: string;
+            /** Format: int32 */
+            port: number;
+            reply_to?: string | null;
+            /** @description `tls` or `starttls`. */
+            security: string;
+            /**
+             * @description Required administrator attestation that this sender address is a
+             *     registered sender or authorized alias.
+             */
+            sender_confirmed: boolean;
+            username: string;
         };
         /**
          * @description `POST /api/v1/suppressions` — record a workspace-wide block
@@ -5281,6 +5359,35 @@ export interface components {
             reservation_guaranteed: boolean;
             slots: components["schemas"]["SlotResponse"][];
             timezone: string;
+        };
+        SmtpConnectionResponse: {
+            /** Format: uuid */
+            channel_id: string;
+            custom_headers: {
+                [key: string]: string;
+            };
+            from_address: string;
+            from_name: string;
+            has_password: boolean;
+            host: string;
+            /** Format: uuid */
+            id: string;
+            last_error_code?: string | null;
+            /** Format: uuid */
+            mail_account_id: string;
+            name: string;
+            /** Format: int32 */
+            port: number;
+            reply_to?: string | null;
+            /** @description `tls` or `starttls`. */
+            security: string;
+            /** Format: uuid */
+            sender_identity_id: string;
+            /** @description `pending` | `active` | `disabled` | `reauth_required`. */
+            status: string;
+            username: string;
+            /** Format: int64 */
+            version: number;
         };
         StoredObjectResponse: {
             /** Format: int64 */
@@ -14095,6 +14202,256 @@ export interface operations {
             };
         };
     };
+    list_connections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SMTP connection metadata; passwords are never returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SmtpConnectionResponse"][];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human administrator session required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    create_connection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stable request key */
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSmtpConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Pending Office SMTP profile and disabled marketing channel */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SmtpConnectionResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Missing or invalid idempotency key */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Human administrator session or mailbox send permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Mail account not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency key reused or sender identity conflicts */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Invalid SMTP settings or sender attestation */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    disable_connection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stable request key */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disabled SMTP profile and bound channel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SmtpConnectionResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Human administrator session or mailbox send permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP connection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency key reused */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    verify_connection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Stable request key */
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Credential and TLS check result; this does not prove sender alias authorization */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SmtpConnectionResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Human administrator session or mailbox send permission required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description SMTP connection not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Idempotency key reused or connection disabled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_suppressions: {
         parameters: {
             query?: {
@@ -15322,6 +15679,33 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description SMTP marketing suppression recorded (idempotent) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["UnsubscribeResultResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid one-click form */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Unknown or revoked token */
             404: {
                 headers: {

@@ -21,6 +21,32 @@ not verified because the account was on a trial. No private account identifiers,
 recipient addresses, capability URLs or credentials are recorded here.
 Official contracts are in [the capability matrix](zoho-api-capability-matrix.md).
 
+## Authenticated SMTP validation (2026-10-10)
+
+The Office-owned campaign route now supports a separate encrypted, write-only
+SMTP connection. A controlled one-recipient test used paid Zoho Mail SMTP and a
+registered subdomain alias, without creating or submitting a Campaigns campaign.
+Exactly one SMTP send attempt was accepted and the message reached Gmail's inbox.
+The received From alias, Reply-To, UTF-8 subject, stable Message-ID, correlation
+header, configured custom X headers and multipart bodies matched Office's output.
+SPF, DKIM and DMARC passed. HTML and plain text contained the exact frozen Office
+unsubscribe URL, with no Campaigns footer or tracking redirect.
+
+Opening the received link created no block. Explicit confirmation created one
+Office suppression and one CRM activity, attributed to the sent outbound. A
+subsequent public one-click POST returned success without duplicating the block.
+The bounded test consent was revoked and the explicitly authorized simulated
+reviewer disabled after verification. This test does not establish independent
+human review or production deployment readiness.
+
+Zoho preserved both unsubscribe headers, but its valid DKIM signature covered
+`List-Unsubscribe` and **did not cover `List-Unsubscribe-Post`**. Consequently this
+test does not establish RFC 8058 native Gmail one-click UI support. Office serves
+the endpoint and form protocols; relay signing must cover both headers before
+claiming native mailbox one-click support. Received, Return-Path, DKIM, ARC and
+authentication-result headers remain relay/recipient-controlled. See the
+[SMTP setup runbook](../runbooks/smtp.md).
+
 ## Primary architecture
 
 Office owns templates and immutable versions through `/api/v1/email-templates`.

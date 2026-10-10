@@ -177,20 +177,30 @@ pub trait CalendarProvider: Send + Sync {
 #[derive(Debug, Clone, Default)]
 pub struct DeliveryCapabilities {
     pub supports_send: bool,
+    /// Accepts Office's one-click headers. Relay DKIM coverage and native
+    /// recipient-client UI support must be verified separately.
     pub one_click_unsubscribe: bool,
     pub custom_headers: bool,
     /// Provider-level idempotency keys accepted.
     pub idempotency: bool,
 }
 
-/// Transactional delivery path (source §6.3-D): marketing/announcement mail
-/// that must not flow through user mailboxes.
+/// Office-owned marketing/announcement delivery through a reviewed channel.
 #[async_trait]
 pub trait DeliveryProvider: Send + Sync {
+    /// Bind a transport using tenant and channel identity, never a From header.
+    async fn for_channel(
+        &self,
+        _workspace_id: uuid::Uuid,
+        _channel_id: uuid::Uuid,
+    ) -> Result<Option<std::sync::Arc<dyn DeliveryProvider>>, ProviderError> {
+        Ok(None)
+    }
     fn capabilities(&self) -> DeliveryCapabilities;
     async fn send(&self, req: SendRequest) -> Result<SendOutcome, ProviderError>;
     async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError>;
 }
 
+pub mod smtp;
 pub mod zoho_email_api;
 pub mod zoho_mail_client;

@@ -2,10 +2,10 @@
 //!
 //! Internal: `/communication-bases` (+reviews, +revoke), `/suppressions`
 //! (+release-requests). Public: `/unsubscribe/{token}` GET/POST and the
-//! RFC 8058 one-click endpoint (gate off → documented disabled response).
+//! RFC 8058 one-click endpoint for Office SMTP messages.
 
-use axum::body::{Body, Bytes};
-use axum::extract::{ConnectInfo, Path, Query, Request, State};
+use axum::body::Bytes;
+use axum::extract::{ConnectInfo, FromRequest, Multipart, Path, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -561,6 +561,8 @@ async fn unsubscribe(
     post, path = "/unsubscribe/{token}/one-click",
     params(("token" = String, Path)),
     responses(
+        (status = 200, description = "SMTP marketing suppression recorded (idempotent)", body = UnsubscribeResultResponse),
+        (status = 400, description = "Invalid one-click form", body = Problem),
         (status = 404, description = "Unknown or revoked token", body = Problem),
         (status = 422, description = "One-click capability not verified for this channel", body = Problem),
     )
@@ -571,11 +573,74 @@ async fn unsubscribe_one_click(
     headers: HeaderMap,
     request_id: RequestIdHeader,
     Path(token): Path<String>,
-    // RFC 8058 posts `List-Unsubscribe=One-Click` as a form body; while the
-    // capability gate is off the body is irrelevant and left unread.
-    _body: Body,
+    request: Request,
 ) -> Result<axum::Json<Envelope<UnsubscribeResultResponse>>, ProblemError> {
     public_write_limit(&state, &headers, &addr).await?;
-    let res = application::compliance::public_unsubscribe::one_click(&state.db, &token).await?;
+    validate_one_click_form(request, &state).await?;
+    let res =
+        application::compliance::public_unsubscribe::one_click(&state.db, &token, &request_id.0)
+            .await?;
     Ok(axum::Json(envelope(res, &request_id.0)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OneClickForm {
+    #[serde(rename = "List-Unsubscribe")]
+    list_unsubscribe: String,
+}
+
+fn invalid_one_click_form() -> ProblemError {
+    ProblemError(AppError::validation(
+        "expected a single List-Unsubscribe=One-Click form field",
+        vec![],
+    ))
+}
+
+async fn validate_one_click_form(request: Request, state: &AppState) -> Result<(), ProblemError> {
+    let is_multipart = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case("multipart/form-data")
+        });
+    let value = if is_multipart {
+        let mut multipart = Multipart::from_request(request, state)
+            .await
+            .map_err(|_| invalid_one_click_form())?;
+        let field = multipart
+            .next_field()
+            .await
+            .map_err(|_| invalid_one_click_form())?
+            .ok_or_else(invalid_one_click_form)?;
+        if field.name() != Some("List-Unsubscribe") || field.file_name().is_some() {
+            return Err(invalid_one_click_form());
+        }
+        let value = field.text().await.map_err(|_| invalid_one_click_form())?;
+        if multipart
+            .next_field()
+            .await
+            .map_err(|_| invalid_one_click_form())?
+            .is_some()
+        {
+            return Err(invalid_one_click_form());
+        }
+        value
+    } else {
+        axum::Form::<OneClickForm>::from_request(request, state)
+            .await
+            .map_err(|_| invalid_one_click_form())?
+            .0
+            .list_unsubscribe
+    };
+    if value != "One-Click" {
+        return Err(invalid_one_click_form());
+    }
+    Ok(())
 }

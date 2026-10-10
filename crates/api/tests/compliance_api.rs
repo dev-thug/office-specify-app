@@ -468,6 +468,52 @@ async fn t25_one_click_returns_disabled_until_gated() {
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn one_click_rejects_non_protocol_form_without_consuming_token() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let token = issue_token(&app, &world, "invalid-one-click-form").await;
+    for body in [
+        "List-Unsubscribe=Other",
+        "List-Unsubscribe=One-Click&extra=1",
+    ] {
+        let res = app
+            .client
+            .post(app.url(&format!("/public/v1/unsubscribe/{token}/one-click")))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert!(res.status().is_client_error());
+    }
+    assert_eq!(suppression_count(&app, world.workspace_id).await, 0);
+    assert!(matches!(
+        token_used_at(&app, world.workspace_id, &token).await,
+        Some(None)
+    ));
+}
+
+#[tokio::test]
+async fn one_click_accepts_rfc_multipart_form_before_channel_gate() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let token = issue_token(&app, &world, "multipart-one-click").await;
+    let res = app.client
+        .post(app.url(&format!("/public/v1/unsubscribe/{token}/one-click")))
+        .header("content-type", "multipart/form-data; boundary=OfficeBoundary")
+        .body("--OfficeBoundary\r\nContent-Disposition: form-data; name=\"List-Unsubscribe\"\r\n\r\nOne-Click\r\n--OfficeBoundary--\r\n")
+        .send().await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        res.json::<Value>().await.unwrap()["code"],
+        "PROVIDER_POLICY_UNVERIFIED"
+    );
+    assert_eq!(suppression_count(&app, world.workspace_id).await, 0);
+}
+
 /// Internal `/communication-bases` — pending on create, human review under
 /// If-Match, final states enforced, revoke withdraws (B.2, A.6.1).
 #[tokio::test]

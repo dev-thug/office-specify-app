@@ -59,6 +59,104 @@ impl Check {
     }
 }
 
+/// Campaign approvals pin the launch manifest, not each generated outbound.
+/// The frozen launch/enrollment/step relationships and the outbound's
+/// immutable payload hash establish that this message is a member of that
+/// approved manifest. The approver's current mailbox grant is rechecked on
+/// every preflight and dispatch.
+async fn campaign_approval_checks(
+    tx: &mut Tx<'_>,
+    outbound: &OutboundRow,
+    now: DateTime<Utc>,
+    checks: &mut Vec<Check>,
+) -> Result<(), AppError> {
+    let Some(state) = sending::campaign_launch_approval_state(tx, outbound).await? else {
+        checks.push(Check::fail("approval_state", CODE_APPROVAL_REQUIRED));
+        checks.push(Check::fail("approval_hash", CODE_APPROVAL_REQUIRED));
+        checks.push(Check::fail("approver_permission", CODE_APPROVAL_REQUIRED));
+        return Ok(());
+    };
+
+    let state_code = campaign_state_code(&state, now);
+    checks.push(match state_code {
+        None => Check::pass("approval_state"),
+        Some(code) => Check::fail("approval_state", code),
+    });
+
+    let manifest_matches = campaign_manifest_matches(&state);
+    let decision_matches = campaign_decision_matches(&state, outbound.requested_by);
+    let expected_payload_hash =
+        infrastructure::crypto::sha256_bytes(&domain::campaigns::payload_bytes(
+            &outbound.from_address_snapshot,
+            &outbound.to_address_snapshot,
+            &outbound.subject,
+            &outbound.body_text,
+            outbound.body_html.as_deref(),
+        ));
+    let payload_hash_matches = state.payload_hash_len == 32
+        && outbound.payload_hash.as_slice() == expected_payload_hash.as_slice();
+    let membership_matches = state.request_action_type.as_deref() == Some("campaign_launch")
+        && state.revision_status == "frozen"
+        && outbound
+            .revision_id
+            .is_some_and(|revision_id| state.launch_revision_id == revision_id)
+        && state.launch_channel_id == outbound.delivery_channel_id
+        && state.revision_channel_id == outbound.delivery_channel_id
+        && state.enrollment_launch_id == outbound.launch_id
+        && state.enrollment_revision_id == outbound.revision_id
+        && state.enrollment_email_address_id == Some(outbound.to_email_address_id)
+        && state.step_revision_id == outbound.revision_id
+        && state.step_order.is_some()
+        && payload_hash_matches;
+    let hash_ok =
+        state_code.is_none() && manifest_matches && decision_matches && membership_matches;
+    let hash_failure = if let Some(code) = state_code {
+        code
+    } else if !manifest_matches || !membership_matches {
+        "SNAPSHOT_MISMATCH"
+    } else {
+        CODE_APPROVAL_REJECTED
+    };
+    checks.push(if hash_ok {
+        Check::pass("approval_hash")
+    } else {
+        Check::fail("approval_hash", hash_failure)
+    });
+
+    let approver_ok = match (state.decided_by, state.decision.as_deref()) {
+        (Some(decided_by), Some("approved")) => {
+            match sending::principal_state(tx, decided_by).await? {
+                Some((status, kind, role))
+                    if status == "active"
+                        && kind == "human"
+                        && (role == "admin" || role == "manager") =>
+                {
+                    matches!(
+                        sending::grant_for_principal(tx, decided_by, outbound.mail_account_id)
+                            .await?,
+                        Some((_, _, _, true, _))
+                    )
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    checks.push(if hash_ok && approver_ok {
+        Check::pass("approver_permission")
+    } else {
+        Check::fail(
+            "approver_permission",
+            if hash_ok {
+                CODE_APPROVER_PERMISSION
+            } else {
+                hash_failure
+            },
+        )
+    });
+    Ok(())
+}
+
 // Codes that are NOT in contracts::ErrorCode (they are internal reason
 // strings / failure_code values, not HTTP problem codes).
 pub const CODE_CHANNEL_MISSING: &str = "CHANNEL_MISSING";
@@ -82,6 +180,68 @@ pub const CODE_QUIET_HOURS: &str = "QUIET_HOURS";
 pub const CODE_NOT_BEFORE: &str = "NOT_BEFORE";
 pub const CODE_WORKSPACE_DISABLED: &str = "WORKSPACE_DISABLED";
 pub const CODE_CLAIM_RELEASED: &str = "REPLY_CLAIM_RELEASED";
+
+/// Check the latest campaign approval and launch state at the current time.
+fn campaign_state_code(
+    state: &sending::CampaignLaunchApprovalState,
+    now: DateTime<Utc>,
+) -> Option<&'static str> {
+    let request_code = match state.request_status.as_deref() {
+        None => Some(CODE_APPROVAL_REQUIRED),
+        Some("approved")
+            if state
+                .request_expires_at
+                .is_some_and(|expires_at| expires_at > now)
+                && state.launch_expires_at > now =>
+        {
+            None
+        }
+        Some("approved") | Some("expired") => Some("APPROVAL_EXPIRED"),
+        Some("pending")
+            if state
+                .request_expires_at
+                .is_some_and(|expires_at| expires_at > now) =>
+        {
+            Some(CODE_APPROVAL_PENDING)
+        }
+        Some("pending") => Some("APPROVAL_EXPIRED"),
+        Some("rejected") => Some(CODE_APPROVAL_REJECTED),
+        Some("revoked") => Some(CODE_APPROVAL_REVOKED),
+        Some(_) => Some(CODE_APPROVAL_REJECTED),
+    };
+    let launch_code = match state.launch_status.as_str() {
+        "approved" | "running" if state.launch_expires_at > now => None,
+        "approved" | "running" => Some("APPROVAL_EXPIRED"),
+        "frozen" | "awaiting_approval" | "building" => Some(CODE_APPROVAL_PENDING),
+        "paused" | "completed" | "canceled" => Some(CODE_APPROVAL_REVOKED),
+        _ => Some(CODE_APPROVAL_REJECTED),
+    };
+    request_code.or(launch_code)
+}
+
+fn campaign_manifest_matches(state: &sending::CampaignLaunchApprovalState) -> bool {
+    state
+        .launch_manifest_hash
+        .as_ref()
+        .filter(|hash| hash.len() == 32)
+        .is_some_and(|manifest| state.request_snapshot_hash.as_ref() == Some(manifest))
+}
+
+fn campaign_decision_matches(
+    state: &sending::CampaignLaunchApprovalState,
+    outbound_requested_by: Uuid,
+) -> bool {
+    state.decision.as_deref() == Some("approved")
+        && state.decision_snapshot_hash == state.request_snapshot_hash
+        && state
+            .request_version
+            .is_some_and(|version| version.checked_sub(1) == state.decision_version_at_decision)
+        && state
+            .request_requested_by
+            .is_some_and(|requester| Some(requester) != state.decided_by)
+        && Some(state.launch_requested_by) != state.decided_by
+        && Some(outbound_requested_by) != state.decided_by
+}
 
 /// Terminal failures → the outbound is canceled with this failure_code.
 pub fn is_cancel(code: &str) -> bool {
@@ -261,7 +421,9 @@ pub async fn evaluate(
 
     // -- Approval (non-correspondence, or any agent-requested send) ----
     let approval_needed = o.purpose != "correspondence" || requester_is_agent;
-    if !approval_needed {
+    if o.launch_id.is_some() {
+        campaign_approval_checks(tx, o, now, &mut checks).await?;
+    } else if !approval_needed {
         checks.push(Check::pass("approval_state"));
         checks.push(Check::pass("approval_hash"));
         checks.push(Check::pass("approver_permission"));
@@ -518,4 +680,88 @@ pub async fn expected_last_inbound(
         return Ok(d.expected_last_inbound_id.or(d.reply_to_message_id));
     }
     Ok(o.reply_to_message_id)
+}
+
+#[cfg(test)]
+mod campaign_approval_tests {
+    use super::*;
+
+    fn approved_state(now: DateTime<Utc>) -> sending::CampaignLaunchApprovalState {
+        let manifest = vec![7; 32];
+        sending::CampaignLaunchApprovalState {
+            launch_status: "running".into(),
+            launch_manifest_hash: Some(manifest.clone()),
+            launch_expires_at: now + Duration::hours(1),
+            launch_revision_id: Uuid::from_u128(1),
+            launch_channel_id: Uuid::from_u128(2),
+            launch_requested_by: Uuid::from_u128(4),
+            revision_status: "frozen".into(),
+            revision_channel_id: Uuid::from_u128(2),
+            request_id: Some(Uuid::from_u128(3)),
+            request_requested_by: Some(Uuid::from_u128(4)),
+            request_action_type: Some("campaign_launch".into()),
+            request_status: Some("approved".into()),
+            request_snapshot_hash: Some(manifest.clone()),
+            request_expires_at: Some(now + Duration::hours(1)),
+            request_version: Some(2),
+            decision: Some("approved".into()),
+            decision_snapshot_hash: Some(manifest),
+            decision_version_at_decision: Some(1),
+            decided_by: Some(Uuid::from_u128(5)),
+            enrollment_status: Some("active".into()),
+            enrollment_launch_id: Some(Uuid::from_u128(3)),
+            enrollment_revision_id: Some(Uuid::from_u128(1)),
+            enrollment_email_address_id: Some(Uuid::from_u128(6)),
+            step_revision_id: Some(Uuid::from_u128(1)),
+            step_order: Some(1),
+            payload_hash_len: 32,
+        }
+    }
+
+    #[test]
+    fn campaign_approval_expiry_and_revocation_fail_closed() {
+        let now = Utc::now();
+        let mut state = approved_state(now);
+        assert_eq!(campaign_state_code(&state, now), None);
+
+        state.request_expires_at = Some(now - Duration::seconds(1));
+        assert_eq!(campaign_state_code(&state, now), Some("APPROVAL_EXPIRED"));
+
+        state = approved_state(now);
+        state.launch_expires_at = now - Duration::seconds(1);
+        assert_eq!(campaign_state_code(&state, now), Some("APPROVAL_EXPIRED"));
+
+        state = approved_state(now);
+        state.request_status = Some("revoked".into());
+        assert_eq!(
+            campaign_state_code(&state, now),
+            Some(CODE_APPROVAL_REVOKED)
+        );
+    }
+
+    #[test]
+    fn campaign_approval_requires_the_current_manifest_hash() {
+        let now = Utc::now();
+        let mut state = approved_state(now);
+        assert!(campaign_manifest_matches(&state));
+        state.request_snapshot_hash = Some(vec![8; 32]);
+        assert!(!campaign_manifest_matches(&state));
+        state.request_snapshot_hash = Some(vec![7; 31]);
+        assert!(!campaign_manifest_matches(&state));
+    }
+
+    #[test]
+    fn campaign_approval_cannot_be_laundered_through_a_different_requester() {
+        let mut state = approved_state(Utc::now());
+        assert!(campaign_decision_matches(&state, Uuid::from_u128(4)));
+
+        // Composer B opens the request, but launch owner A cannot approve it.
+        state.request_requested_by = Some(Uuid::from_u128(6));
+        state.decided_by = Some(Uuid::from_u128(4));
+        assert!(!campaign_decision_matches(&state, Uuid::from_u128(4)));
+
+        // The frozen outbound requester is also independently excluded.
+        state.decided_by = Some(Uuid::from_u128(7));
+        assert!(!campaign_decision_matches(&state, Uuid::from_u128(7)));
+    }
 }

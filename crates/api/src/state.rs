@@ -74,10 +74,20 @@ impl AppState {
             .as_ref()
             .map(|provider| provider.clone() as Arc<dyn CalendarProvider>)
             .unwrap_or_else(|| Arc::new(DisabledCalendarProvider));
-        let delivery: Arc<dyn DeliveryProvider> = delivery_fake
+        let delivery_fallback: Arc<dyn DeliveryProvider> = delivery_fake
             .as_ref()
             .map(|provider| provider.clone() as Arc<dyn DeliveryProvider>)
             .unwrap_or_else(|| Arc::new(DisabledDeliveryProvider));
+        let delivery: Arc<dyn DeliveryProvider> =
+            if config.zoho.fake_for_tests || config.fake_provider_script.is_some() {
+                delivery_fallback
+            } else {
+                Arc::new(application::smtp::DeliveryRouter::new(
+                    db.clone(),
+                    config.clone(),
+                    delivery_fallback,
+                ))
+            };
         Self {
             operations:
                 infrastructure::providers::zoho_campaigns::operations::CampaignsOperations::new()

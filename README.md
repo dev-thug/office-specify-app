@@ -43,6 +43,11 @@ formatting, paragraphs, lists and links; arbitrary CSS and images are rejected.
 ## Zoho integration
 
 Office owns its templates, visual/HTML editor, variables and immutable versions.
+The [authenticated SMTP route](docs/runbooks/smtp.md) keeps campaign rendering,
+approvals, recipient dispatch and unsubscribe links in Office while an SMTP
+relay transports each message. It uses a separate write-only SMTP connection;
+Zoho Campaigns OAuth credentials are not SMTP credentials.
+
 The native **Campaigns Free** route exports an approved Office launch as one
 provider list and one campaign. Zoho imports Office's signed public HTTPS HTML
 URL and performs the bulk send; no paid Zoho template API is required.

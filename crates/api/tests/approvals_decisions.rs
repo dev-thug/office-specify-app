@@ -257,6 +257,27 @@ async fn approve_message_submit_queues_dispatch() {
     )
     .await;
     assert_eq!(status, "queued");
+
+    // Per-message message_submit approval remains the standalone send gate.
+    let preflight = manager
+        .post(app.url(&format!("/api/v1/outbound-messages/{outbound}/preflight")))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preflight.status(), StatusCode::OK);
+    let preflight = TestApp::data(preflight).await;
+    for name in ["approval_state", "approval_hash", "approver_permission"] {
+        let check = preflight["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["name"] == name)
+            .unwrap();
+        assert_eq!(check["passed"], true, "standalone {name} should still pass");
+    }
+
     let jobs: i64 = scalar(
         db,
         world.workspace_id,

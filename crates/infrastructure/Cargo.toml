@@ -38,6 +38,14 @@ ammonia.workspace = true
 csv.workspace = true
 http.workspace = true
 ipnetwork.workspace = true
+lettre = { version = "0.11.23", default-features = false, features = [
+    "builder",
+    "smtp-transport",
+    "tokio1",
+    "tokio1-rustls",
+    "webpki-roots",
+    "ring",
+] }
 
 [dev-dependencies]
 axum.workspace = true

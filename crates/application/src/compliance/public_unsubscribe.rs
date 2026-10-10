@@ -172,15 +172,39 @@ pub async fn unsubscribe(
 
 /// `POST /public/v1/unsubscribe/{token}/one-click` — RFC 8058.
 ///
-/// The one-click capability gate is OFF (release gate E01 — no delivery
-/// provider is verified for `List-Unsubscribe-Post`, §11.3). The endpoint
-/// exists and validates the token, but returns the documented disabled
-/// response instead of processing the suppression: claiming success here
-/// would silently drop a protocol-mandated unsubscribe.
-pub async fn one_click(db: &Db, token: &str) -> Result<UnsubscribeResultResponse, AppError> {
-    let _location = public_tokens::unsubscribe_token(db, token).await?;
-    Err(AppError::new(
-        ErrorCode::ProviderPolicyUnverified,
-        "one-click unsubscribe is not enabled for this channel",
-    ))
+/// SMTP messages use the same recipient-bound capability as the confirmation
+/// page. Other channel types retain their existing capability gate. A later
+/// connection disable must not invalidate an already-sent unsubscribe link.
+pub async fn one_click(
+    db: &Db,
+    token: &str,
+    request_id: &str,
+) -> Result<UnsubscribeResultResponse, AppError> {
+    let location = public_tokens::unsubscribe_token(db, token).await?;
+    let mut tx = db.begin(location.workspace_id).await?;
+    let resolved = compliance_core::resolve_unsubscribe_token(&mut tx, token)
+        .await?
+        .filter(|row| row.revoked_at.is_none())
+        .ok_or_else(unknown_token)?;
+    let smtp_bound: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM outbound_messages om
+            JOIN smtp_connections sc ON sc.workspace_id = om.workspace_id
+                AND sc.channel_id = om.delivery_channel_id
+            WHERE om.workspace_id = $1 AND om.id = $2
+        )",
+    )
+    .bind(location.workspace_id)
+    .bind(resolved.outbound_message_id)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(infrastructure::error::map_sqlx)?;
+    tx.rollback().await?;
+    if !smtp_bound {
+        return Err(AppError::new(
+            ErrorCode::ProviderPolicyUnverified,
+            "one-click unsubscribe is not enabled for this channel",
+        ));
+    }
+    unsubscribe(db, token, request_id).await
 }
