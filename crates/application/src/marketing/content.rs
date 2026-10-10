@@ -59,7 +59,7 @@ pub enum CampaignContentError {
         recipient_index: usize,
         variable: String,
     },
-    #[error("recipient values for '{0}' differ and require an explicit field mapping")]
+    #[error("recipient values for '{0}' require an explicit field mapping")]
     MissingMapping(String),
     #[error("invalid mapping for '{variable}': {reason}")]
     InvalidMapping { variable: String, reason: String },
@@ -130,12 +130,15 @@ pub fn transform_campaign_content(
         .map(parse_placeholders)
         .transpose()?
         .unwrap_or_default();
-    let all_vars: BTreeSet<String> = subject_vars
+    let mut all_vars: BTreeSet<String> = subject_vars
         .iter()
         .chain(text_vars.iter())
         .chain(html_vars.iter())
         .cloned()
         .collect();
+    if input.mappings.contains_key("compliance.unsubscribe_url") {
+        all_vars.insert("compliance.unsubscribe_url".into());
+    }
 
     if subject_vars
         .iter()
@@ -180,12 +183,32 @@ pub fn transform_campaign_content(
     let mut recipient_fields = vec![BTreeMap::new(); input.recipients.len()];
     for variable in &all_vars {
         if variable == "compliance.unsubscribe_url" {
-            // Never read or export Office's capability URL. Campaigns owns the
-            // public opt-out action for this transmission.
+            // Keep this capability URL recipient-scoped even when all values match.
+            let mapping = input
+                .mappings
+                .get(variable)
+                .ok_or_else(|| CampaignContentError::MissingMapping(variable.clone()))?;
+            let mut values = Vec::with_capacity(input.recipients.len());
+            for (recipient_index, variables) in input.recipients.iter().enumerate() {
+                let value = variables.get(variable).ok_or_else(|| {
+                    CampaignContentError::MissingRecipientValue {
+                        recipient_index,
+                        variable: variable.clone(),
+                    }
+                })?;
+                check_value_native_tags(value)?;
+                validate_office_unsubscribe_url(variable, value)?;
+                values.push(value.clone());
+            }
+            mapped_values.insert(variable.clone(), values.clone());
             replacements.insert(
                 variable.clone(),
-                Replacement::Native(ORG_OPTOUT_TAG.to_string()),
+                Replacement::Native(mapping.merge_tag.clone()),
             );
+            for (recipient_index, value) in values.iter().enumerate() {
+                recipient_fields[recipient_index]
+                    .insert(mapping.contact_field.clone(), value.clone());
+            }
             continue;
         }
 
@@ -257,17 +280,28 @@ pub fn transform_campaign_content(
         )?),
     };
 
+    let office_unsubscribe_tag = input
+        .mappings
+        .get("compliance.unsubscribe_url")
+        .map(|mapping| mapping.merge_tag.as_str());
     if [
         rendered_subject.as_str(),
         rendered_text.as_str(),
         rendered_html.as_deref().unwrap_or(""),
     ]
     .iter()
-    .any(|part| has_external_unsubscribe_link(part))
+    .any(|part| has_external_unsubscribe_link_allowing_office_tag(part, office_unsubscribe_tag))
     {
         return Err(CampaignContentError::ExternalUnsubscribe);
     }
 
+    if let Some(tag) = office_unsubscribe_tag {
+        ensure_single_office_unsubscribe(&rendered_text, "text", tag)?;
+        if !rendered_text.contains(tag) {
+            append_text_office_unsubscribe_footer(&mut rendered_text, tag);
+        }
+        ensure_single_office_unsubscribe(&rendered_text, "text", tag)?;
+    }
     ensure_single_output_unsubscribe(&rendered_text, "text")?;
     if !rendered_text.contains(ORG_OPTOUT_TAG) {
         append_text_unsubscribe_footer(&mut rendered_text);
@@ -285,6 +319,21 @@ pub fn transform_campaign_content(
                 });
             }
             append_html_unsubscribe_footer(html);
+        }
+        if let Some(tag) = office_unsubscribe_tag {
+            ensure_single_office_unsubscribe(html, "html", tag)?;
+            if !html.contains(tag) {
+                let footer_offset = html_footer_insert_offset(html);
+                if html_is_hidden_at(html, footer_offset) || has_hidden_css_rule(html) {
+                    return Err(CampaignContentError::UnsafePersonalization {
+                        variable: "compliance.unsubscribe_url".into(),
+                        context: "HTML footer",
+                        reason: "the footer could be hidden by surrounding markup or CSS",
+                    });
+                }
+                append_html_office_unsubscribe_footer(html, tag);
+            }
+            ensure_single_office_unsubscribe(html, "html", tag)?;
         }
         ensure_single_output_unsubscribe(html, "html")?;
         if unsafe_html_source(html) {
@@ -392,13 +441,7 @@ fn render_plain_text_html(
     mapped_values: &BTreeMap<String, Vec<String>>,
 ) -> Result<String, CampaignContentError> {
     let escaped_template = escape_plain_text_template(text)?;
-    let mut html_replacements = replacements.clone();
-    if html_replacements.contains_key("compliance.unsubscribe_url") {
-        html_replacements.insert(
-            "compliance.unsubscribe_url".into(),
-            Replacement::Static(String::new()),
-        );
-    }
+    let html_replacements = replacements.clone();
     validate_html_personalization(&escaped_template, &html_replacements, mapped_values)?;
     let rendered = render_part(&escaped_template, &html_replacements, RenderContext::Html)?;
     Ok(rendered
@@ -422,9 +465,13 @@ fn escape_plain_text_template(text: &str) -> Result<String, CampaignContentError
         if !valid_variable_name(name) {
             return Err(CampaignContentError::InvalidPlaceholder(name.to_string()));
         }
-        output.push_str("{{");
-        output.push_str(&after_open[..close]);
-        output.push_str("}}");
+        if name == "compliance.unsubscribe_url" {
+            output.push_str("<a href=\"{{compliance.unsubscribe_url}}\">Unsubscribe</a>");
+        } else {
+            output.push_str("{{");
+            output.push_str(&after_open[..close]);
+            output.push_str("}}");
+        }
         rest = &after_open[close + 2..];
     }
     output.push_str(&domain::templates::html_escape(rest));
@@ -468,11 +515,18 @@ fn validate_html_personalization(
                 }
             }
             Replacement::Native(tag) if name == "compliance.unsubscribe_url" => {
-                if tag != ORG_OPTOUT_TAG {
+                if tag == ORG_OPTOUT_TAG {
                     return Err(CampaignContentError::InvalidPlaceholder(
-                        "Office unsubscribe URL must become the Campaigns organization opt-out tag"
-                            .into(),
+                        "Office unsubscribe URL must use its mapped contact field".into(),
                     ));
+                }
+                let values = mapped_values.get(name).ok_or_else(|| {
+                    CampaignContentError::InvalidPlaceholder(format!(
+                        "mapped provider values are missing for '{name}'"
+                    ))
+                })?;
+                for value in values {
+                    validate_mapped_html_value(name, value, &context)?;
                 }
                 validate_visible_unsubscribe_location(template, name, open, end, &context)?;
             }
@@ -681,6 +735,20 @@ fn validate_url_attribute(variable: &str, value: &str) -> Result<(), CampaignCon
     }
 }
 
+fn validate_office_unsubscribe_url(
+    variable: &str,
+    value: &str,
+) -> Result<(), CampaignContentError> {
+    if !value.to_ascii_lowercase().starts_with("https://") {
+        return Err(CampaignContentError::UnsafePersonalization {
+            variable: variable.to_string(),
+            context: "URL attribute",
+            reason: "Office unsubscribe URLs must use HTTPS",
+        });
+    }
+    validate_url_attribute(variable, value)
+}
+
 fn validate_visible_unsubscribe_location(
     template: &str,
     variable: &str,
@@ -692,7 +760,7 @@ fn validate_visible_unsubscribe_location(
         return Err(CampaignContentError::UnsafePersonalization {
             variable: variable.to_string(),
             context: "HTML unsubscribe location",
-            reason: "the Campaigns opt-out tag must be the href of a visible link",
+            reason: "the unsubscribe URL must be the href of a visible link",
         });
     }
     let lower = template.to_ascii_lowercase();
@@ -704,7 +772,7 @@ fn validate_visible_unsubscribe_location(
         return Err(CampaignContentError::UnsafePersonalization {
             variable: variable.to_string(),
             context: "HTML unsubscribe location",
-            reason: "the opt-out href must belong to a visible anchor",
+            reason: "the unsubscribe href must belong to a visible anchor",
         });
     };
     let anchor_tag_end = lower[anchor_open..]
@@ -735,7 +803,7 @@ fn validate_visible_unsubscribe_location(
         return Err(CampaignContentError::UnsafePersonalization {
             variable: variable.to_string(),
             context: "HTML unsubscribe location",
-            reason: "hidden or empty unsubscribe links do not satisfy the visible footer requirement",
+            reason: "hidden or empty unsubscribe links do not satisfy the visible-link requirement",
         });
     }
     Ok(())
@@ -1016,11 +1084,6 @@ fn validate_mappings(input: &CampaignContentInput<'_>) -> Result<(), CampaignCon
         if !valid_variable_name(variable) {
             return Err(invalid("Office variable name is invalid"));
         }
-        if variable == "compliance.unsubscribe_url" {
-            return Err(invalid(
-                "Office unsubscribe URLs must never map to a contact field",
-            ));
-        }
         if !input
             .allowed_contact_fields
             .contains(&mapping.contact_field)
@@ -1076,7 +1139,7 @@ fn validate_source_native_tags(
     let tag = &after[..close + 2];
     if tag == ORG_OPTOUT_TAG {
         return Err(CampaignContentError::UnexpectedNativeMergeTag(
-            "Campaigns opt-out tag must be generated from the Office unsubscribe variable or footer".into(),
+            "Campaigns organization opt-out tag must be generated by the mandatory footer".into(),
         ));
     }
     Err(CampaignContentError::UnexpectedNativeMergeTag(
@@ -1140,6 +1203,25 @@ fn ensure_single_output_unsubscribe(
     Ok(())
 }
 
+fn ensure_single_office_unsubscribe(
+    source: &str,
+    part: &'static str,
+    tag: &str,
+) -> Result<(), CampaignContentError> {
+    if source.matches(tag).count() > 1 {
+        return Err(CampaignContentError::MultipleUnsubscribe { part });
+    }
+    Ok(())
+}
+
+fn append_text_office_unsubscribe_footer(text: &mut String, tag: &str) {
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str("Unsubscribe: ");
+    text.push_str(tag);
+}
+
 fn append_text_unsubscribe_footer(text: &mut String) {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
@@ -1156,6 +1238,18 @@ fn append_html_unsubscribe_footer(html: &mut String) {
     }
     footer.push_str("<p><a href=\"");
     footer.push_str(ORG_OPTOUT_TAG);
+    footer.push_str("\">Unsubscribe</a></p>");
+    html.insert_str(offset, &footer);
+}
+
+fn append_html_office_unsubscribe_footer(html: &mut String, tag: &str) {
+    let offset = html_footer_insert_offset(html);
+    let mut footer = String::new();
+    if offset > 0 && !html[..offset].ends_with('\n') {
+        footer.push('\n');
+    }
+    footer.push_str("<p><a href=\"");
+    footer.push_str(tag);
     footer.push_str("\">Unsubscribe</a></p>");
     html.insert_str(offset, &footer);
 }
@@ -1263,6 +1357,13 @@ fn has_event_handler_attribute(lower: &str) -> bool {
 }
 
 fn has_external_unsubscribe_link(source: &str) -> bool {
+    has_external_unsubscribe_link_allowing_office_tag(source, None)
+}
+
+fn has_external_unsubscribe_link_allowing_office_tag(
+    source: &str,
+    office_unsubscribe_tag: Option<&str>,
+) -> bool {
     let lower = source.to_lowercase();
     let mut offset = 0;
     while let Some(relative) = next_http_url(&lower[offset..]) {
@@ -1298,6 +1399,8 @@ fn has_external_unsubscribe_link(source: &str) -> bool {
             && let Some(href) = html_attribute_value(opening_tag, "href")
             && !is_office_unsubscribe_placeholder(&href)
             && !href.trim().eq_ignore_ascii_case(ORG_OPTOUT_TAG)
+            // This is the one validated tag generated from Office's URL variable.
+            && !office_unsubscribe_tag.is_some_and(|tag| href.trim().eq_ignore_ascii_case(tag))
         {
             return true;
         }
@@ -1583,7 +1686,7 @@ mod tests {
     }
 
     #[test]
-    fn office_unsubscribe_url_is_replaced_by_one_native_tag_per_body_and_never_exported() {
+    fn mapped_office_unsubscribe_url_is_preserved_alongside_native_footer() {
         let recipients = vec![
             recipient(&[(
                 "compliance.unsubscribe_url",
@@ -1594,6 +1697,236 @@ mod tests {
                 "https://office.example/unsubscribe/b",
             )]),
         ];
+        let mappings = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$".into(),
+            },
+        )]);
+        let allowed = BTreeSet::from(["Office unsubscribe URL".to_string()]);
+        let result = transform_campaign_content(&CampaignContentInput {
+            subject: "Update",
+            text: "Hello\nUnsubscribe: {{compliance.unsubscribe_url}}",
+            html: Some(
+                "<p>Hello</p><p><a href=\"{{compliance.unsubscribe_url}}\">Unsubscribe</a></p>",
+            ),
+            recipients: &recipients,
+            mappings: &mappings,
+            allowed_contact_fields: &allowed,
+        })
+        .unwrap();
+
+        let office_tag = "$[UD:OFFICE_UNSUBSCRIBE_URL]$";
+        assert_eq!(
+            result.text,
+            "Hello\nUnsubscribe: $[UD:OFFICE_UNSUBSCRIBE_URL]$\nUnsubscribe: $[LI:ORG_OPTOUT]$"
+        );
+        let html = result.html.unwrap();
+        assert!(html.contains(&format!("href=\"{office_tag}\">Unsubscribe</a>")));
+        assert_eq!(html.matches(office_tag).count(), 1);
+        assert_eq!(html.matches("$[LI:ORG_OPTOUT]$").count(), 1);
+        assert_eq!(result.text.matches(office_tag).count(), 1);
+        assert_eq!(result.text.matches("$[LI:ORG_OPTOUT]$").count(), 1);
+        assert!(!result.text.contains("https://office.example"));
+        assert_eq!(
+            result.recipient_fields[0]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/a"
+        );
+        assert_eq!(
+            result.recipient_fields[1]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/b"
+        );
+    }
+
+    #[test]
+    fn mapped_office_unsubscribe_url_is_kept_as_a_field_when_values_are_equal() {
+        let recipients = vec![
+            recipient(&[(
+                "compliance.unsubscribe_url",
+                "https://office.example/unsubscribe/same",
+            )]),
+            recipient(&[(
+                "compliance.unsubscribe_url",
+                "https://office.example/unsubscribe/same",
+            )]),
+        ];
+        let mappings = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$".into(),
+            },
+        )]);
+        let allowed = BTreeSet::from(["Office unsubscribe URL".to_string()]);
+        let result = transform_campaign_content(&CampaignContentInput {
+            subject: "Update",
+            text: "Manage preferences: {{compliance.unsubscribe_url}}",
+            html: None,
+            recipients: &recipients,
+            mappings: &mappings,
+            allowed_contact_fields: &allowed,
+        })
+        .unwrap();
+
+        assert!(result.text.contains("$[UD:OFFICE_UNSUBSCRIBE_URL]$"));
+        assert_eq!(
+            result.recipient_fields[0]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/same"
+        );
+        assert_eq!(
+            result.recipient_fields[1]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/same"
+        );
+        let html = result.html.unwrap();
+        assert!(html.contains("href=\"$[UD:OFFICE_UNSUBSCRIBE_URL]$\">Unsubscribe</a>"));
+        assert_eq!(html.matches("$[LI:ORG_OPTOUT]$").count(), 1);
+    }
+
+    #[test]
+    fn mapping_without_source_office_link_adds_primary_link_to_both_bodies() {
+        let recipients = vec![recipient(&[(
+            "compliance.unsubscribe_url",
+            "https://office.example/unsubscribe/only",
+        )])];
+        let mappings = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$".into(),
+            },
+        )]);
+        let allowed = BTreeSet::from(["Office unsubscribe URL".to_string()]);
+        let result = transform_campaign_content(&CampaignContentInput {
+            subject: "Update",
+            text: "Hello",
+            html: Some("<body><p>Hello</p></body>"),
+            recipients: &recipients,
+            mappings: &mappings,
+            allowed_contact_fields: &allowed,
+        })
+        .unwrap();
+
+        assert!(
+            result
+                .text
+                .contains("Unsubscribe: $[UD:OFFICE_UNSUBSCRIBE_URL]$")
+        );
+        assert_eq!(
+            result.text.matches("$[UD:OFFICE_UNSUBSCRIBE_URL]$").count(),
+            1
+        );
+        assert_eq!(result.text.matches("$[LI:ORG_OPTOUT]$").count(), 1);
+        let html = result.html.unwrap();
+        assert!(html.contains("href=\"$[UD:OFFICE_UNSUBSCRIBE_URL]$\">Unsubscribe</a>"));
+        assert_eq!(html.matches("$[UD:OFFICE_UNSUBSCRIBE_URL]$").count(), 1);
+        assert_eq!(html.matches("$[LI:ORG_OPTOUT]$").count(), 1);
+        assert_eq!(
+            result.recipient_fields[0]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/only"
+        );
+    }
+
+    #[test]
+    fn office_unsubscribe_requires_a_mapping_and_safe_frozen_https_values() {
+        let recipients = vec![recipient(&[(
+            "compliance.unsubscribe_url",
+            "https://office.example/unsubscribe/only",
+        )])];
+        let error = transform_campaign_content(&CampaignContentInput {
+            subject: "Update",
+            text: "Unsubscribe: {{compliance.unsubscribe_url}}",
+            html: None,
+            recipients: &recipients,
+            mappings: &empty_mappings(),
+            allowed_contact_fields: &BTreeSet::new(),
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            CampaignContentError::MissingMapping("compliance.unsubscribe_url".into())
+        );
+
+        let mappings = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$".into(),
+            },
+        )]);
+        let allowed = BTreeSet::from(["Office unsubscribe URL".to_string()]);
+        let unsafe_recipient = vec![recipient(&[(
+            "compliance.unsubscribe_url",
+            "http://office.example/unsubscribe/only",
+        )])];
+        assert!(matches!(
+            transform_campaign_content(&CampaignContentInput {
+                subject: "Update",
+                text: "Unsubscribe: {{compliance.unsubscribe_url}}",
+                html: None,
+                recipients: &unsafe_recipient,
+                mappings: &mappings,
+                allowed_contact_fields: &allowed,
+            }),
+            Err(CampaignContentError::UnsafePersonalization { .. })
+        ));
+
+        let missing_value = vec![recipient(&[])];
+        assert!(matches!(
+            transform_campaign_content(&CampaignContentInput {
+                subject: "Update",
+                text: "Hello",
+                html: None,
+                recipients: &missing_value,
+                mappings: &mappings,
+                allowed_contact_fields: &allowed,
+            }),
+            Err(CampaignContentError::MissingRecipientValue {
+                variable,
+                recipient_index: 0,
+            }) if variable == "compliance.unsubscribe_url"
+        ));
+
+        let invalid_mapping = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[LI:ORG_OPTOUT]$".into(),
+            },
+        )]);
+        assert!(matches!(
+            transform_campaign_content(&CampaignContentInput {
+                subject: "Update",
+                text: "Unsubscribe: {{compliance.unsubscribe_url}}",
+                html: None,
+                recipients: &recipients,
+                mappings: &invalid_mapping,
+                allowed_contact_fields: &allowed,
+            }),
+            Err(CampaignContentError::InvalidMapping { .. })
+        ));
+    }
+
+    #[test]
+    fn office_unsubscribe_url_is_mapped_and_never_embedded_in_body() {
+        let recipients = vec![
+            recipient(&[(
+                "compliance.unsubscribe_url",
+                "https://office.example/unsubscribe/a",
+            )]),
+            recipient(&[(
+                "compliance.unsubscribe_url",
+                "https://office.example/unsubscribe/b",
+            )]),
+        ];
+        let mappings = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$".into(),
+            },
+        )]);
+        let allowed = BTreeSet::from(["Office unsubscribe URL".to_string()]);
         let result = transform_campaign_content(&CampaignContentInput {
             subject: "Update",
             text: "Hello\n{{compliance.unsubscribe_url}}",
@@ -1601,23 +1934,23 @@ mod tests {
                 "<p>Hello</p><p><a href=\"{{compliance.unsubscribe_url}}\">Unsubscribe</a></p>",
             ),
             recipients: &recipients,
-            mappings: &empty_mappings(),
-            allowed_contact_fields: &BTreeSet::new(),
+            mappings: &mappings,
+            allowed_contact_fields: &allowed,
         })
         .unwrap();
-        assert_eq!(result.text.matches(ORG_OPTOUT_TAG).count(), 1);
+        for body in [result.text.as_str(), result.html.as_deref().unwrap()] {
+            assert_eq!(body.matches("$[UD:OFFICE_UNSUBSCRIBE_URL]$").count(), 1);
+            assert_eq!(body.matches(ORG_OPTOUT_TAG).count(), 1);
+            assert!(!body.contains("https://office.example"));
+        }
         assert_eq!(
-            result
-                .html
-                .as_deref()
-                .unwrap()
-                .matches(ORG_OPTOUT_TAG)
-                .count(),
-            1
+            result.recipient_fields[0]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/a"
         );
-        assert!(result.recipient_fields.iter().all(BTreeMap::is_empty));
-        assert!(!result.text.contains("office.example"));
-        assert!(!result.html.as_deref().unwrap().contains("office.example"));
+        assert_eq!(
+            result.recipient_fields[1]["Office unsubscribe URL"],
+            "https://office.example/unsubscribe/b"
+        );
     }
 
     #[test]
@@ -1799,8 +2132,14 @@ mod tests {
             "compliance.unsubscribe_url",
             "https://office.example/public/unsubscribe/token",
         )])];
-        let mappings = empty_mappings();
-        let allowed = BTreeSet::new();
+        let mappings = BTreeMap::from([(
+            "compliance.unsubscribe_url".to_string(),
+            CampaignFieldMapping {
+                contact_field: "Office unsubscribe URL".into(),
+                merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$".into(),
+            },
+        )]);
+        let allowed = BTreeSet::from(["Office unsubscribe URL".to_string()]);
         let hidden_comment = transform_campaign_content(&CampaignContentInput {
             subject: "Update",
             text: "Body",

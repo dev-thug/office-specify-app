@@ -121,7 +121,6 @@ export function UnsubscribeConfirm({ token }: { token: string }) {
   }
 
   if (effectiveState.kind === "done") {
-    const message = effectiveState.result?.message;
     return (
       <div className="flex flex-col gap-5">
         <div className="flex items-start gap-3">
@@ -132,7 +131,7 @@ export function UnsubscribeConfirm({ token }: { token: string }) {
           <div>
             <h1 className="text-2xl font-semibold">{t("doneTitle")}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {message ?? t("doneDescription")}
+              {t("doneDescription")}
             </p>
           </div>
         </div>

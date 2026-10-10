@@ -5884,6 +5884,41 @@
         ],
         "type": "object"
       },
+      "MarketingSuppressionSyncResponse": {
+        "description": "Operator-only evidence of a local suppression's provider synchronization.\nA local unsubscribe does not imply provider confirmation.",
+        "properties": {
+          "connection_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "connection_name": {
+            "type": "string"
+          },
+          "provider_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "pending | in_progress | completed | unknown | rejected | not_connected.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "connection_id",
+          "connection_name",
+          "status"
+        ],
+        "type": "object"
+      },
       "MarketingTopicResponse": {
         "properties": {
           "id": {
@@ -20514,6 +20549,95 @@
             "description": ""
           },
           "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/marketing/suppressions/{id}/sync-status": {
+      "get": {
+        "operationId": "suppression_sync_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "items": {
+                        "$ref": "#/components/schemas/MarketingSuppressionSyncResponse"
+                      },
+                      "type": "array"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
             "content": {
               "application/problem+json": {
                 "schema": {

@@ -175,3 +175,15 @@ pub struct MarketingTopicResponse {
     pub name: String,
     pub primary_list: Option<String>,
 }
+
+/// Operator-only evidence of a local suppression's provider synchronization.
+/// A local unsubscribe does not imply provider confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MarketingSuppressionSyncResponse {
+    pub connection_id: Uuid,
+    pub connection_name: String,
+    /// pending | in_progress | completed | unknown | rejected | not_connected.
+    pub status: String,
+    pub provider_code: Option<String>,
+    pub updated_at: Option<DateTime<Utc>>,
+}

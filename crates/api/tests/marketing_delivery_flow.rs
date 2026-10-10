@@ -39,6 +39,8 @@ use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
 const CONTENT_FIELD: &str = "Booking URL";
+const OFFICE_UNSUBSCRIBE_FIELD: &str = "Office Unsubscribe URL";
+const OFFICE_UNSUBSCRIBE_TAG: &str = "$[UD:OFFICE_UNSUBSCRIBE_URL]$";
 const CONTENT_TAG: &str = "$[UD:BOOKING_URL]$";
 
 #[derive(Debug, Clone)]
@@ -139,6 +141,10 @@ async fn zoho_request(
                 "DISPLAY_NAME":CONTENT_FIELD,
                 "FIELD_NAME":"BOOKING_URL",
                 "FIELD_ID":"9001"
+            },{
+                "DISPLAY_NAME":OFFICE_UNSUBSCRIBE_FIELD,
+                "FIELD_NAME":"OFFICE_UNSUBSCRIBE_URL",
+                "FIELD_ID":"9002"
             }]}),
         ),
         "topics" => json_reply(StatusCode::OK, json!({"code":"200","topicDetails":[]})),
@@ -208,11 +214,16 @@ async fn zoho_request(
                 .map(|(email, fields)| {
                     let mut row = serde_json::Map::new();
                     row.insert("contact_email".into(), Value::String(email));
-                    row.extend(
-                        fields
-                            .into_iter()
-                            .map(|(label, value)| (label, Value::String(value))),
-                    );
+                    row.extend(fields.into_iter().map(|(label, value)| {
+                        let api_name = if label == CONTENT_FIELD {
+                            "BOOKING_URL".to_owned()
+                        } else if label == OFFICE_UNSUBSCRIBE_FIELD {
+                            "OFFICE_UNSUBSCRIBE_URL".to_owned()
+                        } else {
+                            label
+                        };
+                        (api_name, Value::String(value))
+                    }));
                     Value::Object(row)
                 })
                 .collect::<Vec<_>>();
@@ -904,6 +915,10 @@ async fn prepare_export(fixture: &Fixture, launch: &LaunchSnapshot, name: &str) 
                 "meeting.booking_url":{
                     "contact_field":CONTENT_FIELD,
                     "merge_tag":CONTENT_TAG
+                },
+                "compliance.unsubscribe_url":{
+                    "contact_field":OFFICE_UNSUBSCRIBE_FIELD,
+                    "merge_tag":OFFICE_UNSUBSCRIBE_TAG
                 }
             }
         }),
@@ -911,12 +926,14 @@ async fn prepare_export(fixture: &Fixture, launch: &LaunchSnapshot, name: &str) 
         None,
     )
     .await;
+    let status = response.status();
+    let body = response.json::<Value>().await.unwrap();
     assert_eq!(
-        response.status(),
+        status,
         StatusCode::CREATED,
-        "Campaigns export prepare failed"
+        "Campaigns export prepare failed: {body}"
     );
-    response.json::<Value>().await.unwrap()["data"].clone()
+    body["data"].clone()
 }
 
 async fn sync_export(fixture: &Fixture, export: &Value, name: &str) -> Value {
@@ -1234,6 +1251,18 @@ async fn office_snapshot_syncs_two_bookings_and_uses_one_signed_bulk_campaign_se
         "Office must mint a distinct booking capability for each recipient"
     );
 
+    let missing_mapping = post(
+        &fixture.app,
+        &fixture.admin,
+        &fixture.admin_csrf,
+        "/api/v1/marketing/exports",
+        json!({"launch_id":launch.id,"topic_id":null,"field_map":{}}),
+        Some("happy-path-missing-office-unsubscribe"),
+        None,
+    )
+    .await;
+    assert_eq!(missing_mapping.status(), StatusCode::BAD_REQUEST);
+    assert!(fixture.mock.lists.lock().await.is_empty());
     let prepared = prepare_export(&fixture, &launch, "happy-path").await;
     let export_id = prepared["id"].as_str().unwrap().to_string();
     let content = TestApp::data(
@@ -1246,6 +1275,20 @@ async fn office_snapshot_syncs_two_bookings_and_uses_one_signed_bulk_campaign_se
     )
     .await;
     assert!(content["html"].as_str().unwrap().contains(CONTENT_TAG));
+    assert!(
+        content["html"]
+            .as_str()
+            .unwrap()
+            .contains(OFFICE_UNSUBSCRIBE_TAG)
+    );
+    assert_eq!(
+        content["html"]
+            .as_str()
+            .unwrap()
+            .matches("$[LI:ORG_OPTOUT]$")
+            .count(),
+        1
+    );
 
     let synced = sync_export(&fixture, &prepared, "happy-path").await;
     assert_eq!(synced["state"], "ready");
@@ -1271,6 +1314,17 @@ async fn office_snapshot_syncs_two_bookings_and_uses_one_signed_bulk_campaign_se
     .fetch_one(tx.conn())
     .await
     .unwrap();
+    let frozen_unsubscribes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT a.normalized_key, v.variables->>'compliance.unsubscribe_url'
+           FROM marketing_launch_values v JOIN email_addresses a
+             ON a.workspace_id=v.workspace_id AND a.id=v.email_address_id
+          WHERE v.workspace_id=$1 AND v.launch_id=$2",
+    )
+    .bind(fixture.world.workspace_id)
+    .bind(launch.id)
+    .fetch_all(tx.conn())
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
     assert_eq!(
         ready_poll_jobs, 1,
@@ -1292,6 +1346,21 @@ async fn office_snapshot_syncs_two_bookings_and_uses_one_signed_bulk_campaign_se
             provider_list[email][CONTENT_FIELD], *expected_url,
             "contact field value must stay paired with its frozen recipient"
         );
+    }
+    assert_eq!(frozen_unsubscribes.len(), 2);
+    assert_ne!(frozen_unsubscribes[0].1, frozen_unsubscribes[1].1);
+    for (email, expected_url) in &frozen_unsubscribes {
+        assert_eq!(
+            &provider_list[email][OFFICE_UNSUBSCRIBE_FIELD],
+            expected_url
+        );
+        assert!(!content["html"].as_str().unwrap().contains(expected_url));
+        let token = expected_url.rsplit('/').next().unwrap();
+        let confirmation =
+            application::compliance::public_unsubscribe::confirmation(&fixture.app.state.db, token)
+                .await
+                .unwrap();
+        assert_eq!(confirmation.status, "pending_confirmation");
     }
 
     let campaign_key = synced["provider_campaign_key"]

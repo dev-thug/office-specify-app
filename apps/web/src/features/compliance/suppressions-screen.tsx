@@ -30,6 +30,7 @@ import { useCursorList } from "@/lib/api/use-cursor-list";
 import { canRequestRelease } from "./allowed-actions";
 import { SuppressionAddDialog } from "./suppression-add-dialog";
 import { SuppressionReleaseDialog } from "./suppression-release-dialog";
+import { SuppressionSyncStatus } from "./suppression-sync-status";
 
 type StateFilter = "active" | "released" | "";
 
@@ -151,17 +152,27 @@ export function SuppressionsScreen() {
       key: "actions",
       header: t("colActions"),
       className: "text-right",
-      cell: (row) =>
-        canRequestRelease(row) ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="xs"
-            onClick={() => setReleaseTarget(row)}
-          >
-            {t("releaseButton")}
-          </Button>
-        ) : null,
+      cell: (row) => {
+        const canCheckExternalSync =
+          row.released_at === null &&
+          (row.purpose_scope === "marketing" || row.purpose_scope === "all");
+
+        return (
+          <div className="flex flex-col items-end gap-1">
+            {canRequestRelease(row) ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => setReleaseTarget(row)}
+              >
+                {t("releaseButton")}
+              </Button>
+            ) : null}
+            {canCheckExternalSync ? <SuppressionSyncStatus suppressionId={row.id} /> : null}
+          </div>
+        );
+      },
     },
   ];
 

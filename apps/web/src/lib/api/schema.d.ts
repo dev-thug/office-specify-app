@@ -1583,6 +1583,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/marketing/suppressions/{id}/sync-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["suppression_sync_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -4453,6 +4469,20 @@ export interface components {
             /** Format: uuid */
             id: string;
             status: string;
+        };
+        /**
+         * @description Operator-only evidence of a local suppression's provider synchronization.
+         *     A local unsubscribe does not imply provider confirmation.
+         */
+        MarketingSuppressionSyncResponse: {
+            /** Format: uuid */
+            connection_id: string;
+            connection_name: string;
+            provider_code?: string | null;
+            /** @description pending | in_progress | completed | unknown | rejected | not_connected. */
+            status: string;
+            /** Format: date-time */
+            updated_at?: string | null;
         };
         MarketingTopicResponse: {
             id: string;
@@ -11924,6 +11954,52 @@ export interface operations {
                 };
             };
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    suppression_sync_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["MarketingSuppressionSyncResponse"][];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

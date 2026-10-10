@@ -8,6 +8,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use chrono::{Duration, Utc};
+use contracts::marketing::MarketingSuppressionSyncResponse;
 use contracts::{AppError, AuthMethod, Ctx, ErrorCode, PrincipalKind, Role};
 use domain::{
     email_address::{LocalPartPolicy, normalize},
@@ -35,6 +36,60 @@ const MAX_CONNECTION_PAGES: usize = 10;
 const POLL_INTERVAL: Duration = Duration::minutes(5);
 const COMPLETED_POLL_INTERVAL: Duration = Duration::hours(1);
 const POLL_KIND: &str = "marketing.poll_export";
+
+/// Return operator-visible Zoho status for a local suppression. Access uses
+/// the existing Campaigns connection authorization so these provider results
+/// stay limited to human administrators.
+pub async fn get_suppression_sync_status(
+    db: &Db,
+    ctx: &Ctx,
+    suppression_id: Uuid,
+) -> Result<Vec<MarketingSuppressionSyncResponse>, AppError> {
+    super::authorize(db, ctx, "marketing.suppression_sync.read").await?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    if infrastructure::repo::compliance::get_suppression(&mut tx, suppression_id)
+        .await?
+        .is_none()
+    {
+        tx.rollback().await?;
+        return Err(AppError::not_found("suppression not found"));
+    }
+    let rows =
+        marketing_suppressions::list_suppression_sync_statuses(&mut tx, suppression_id).await?;
+    tx.rollback().await?;
+    if rows.is_empty() {
+        return Ok(vec![MarketingSuppressionSyncResponse {
+            connection_id: Uuid::nil(),
+            connection_name: "Zoho Campaigns".into(),
+            status: "not_connected".into(),
+            provider_code: None,
+            updated_at: None,
+        }]);
+    }
+    Ok(rows
+        .into_iter()
+        .map(|row| MarketingSuppressionSyncResponse {
+            connection_id: row.connection_id,
+            connection_name: row.connection_name,
+            status: if row.status == "started" {
+                "in_progress".into()
+            } else {
+                row.status
+            },
+            provider_code: row.provider_code,
+            updated_at: row.updated_at,
+        })
+        .collect())
+}
+
+/// Queue a DB-only suppression reconciliation in the caller's successful
+/// Campaigns connection transaction.
+pub async fn enqueue_suppression_backfill_in_tx(
+    tx: &mut infrastructure::db::Tx<'_>,
+    connection_id: Uuid,
+) -> Result<(), AppError> {
+    marketing_suppressions::enqueue_suppression_backfill_in_tx(tx, connection_id).await
+}
 
 fn require_system(ctx: &Ctx) -> Result<(), AppError> {
     if ctx.principal_kind != PrincipalKind::System
@@ -99,6 +154,7 @@ fn safe_code(raw: &str) -> String {
 async fn active_connections(
     db: &Db,
     ctx: &Ctx,
+    only_connection_id: Option<Uuid>,
 ) -> Result<Vec<marketing_suppressions::ActiveCampaignConnectionRow>, AppError> {
     let mut tx = db.begin(ctx.workspace_id).await?;
     let mut result = Vec::new();
@@ -108,6 +164,7 @@ async fn active_connections(
             &mut tx,
             after,
             CONNECTION_PAGE_SIZE,
+            only_connection_id,
         )
         .await?;
         if page.is_empty() {
@@ -120,8 +177,13 @@ async fn active_connections(
             break;
         }
         if page_number + 1 == MAX_CONNECTION_PAGES {
-            let extra =
-                marketing_suppressions::list_active_campaign_connections(&mut tx, after, 1).await?;
+            let extra = marketing_suppressions::list_active_campaign_connections(
+                &mut tx,
+                after,
+                1,
+                only_connection_id,
+            )
+            .await?;
             if !extra.is_empty() {
                 return Err(AppError::dependency_unavailable(
                     "active Campaigns connection count exceeds the worker limit",
@@ -281,6 +343,18 @@ pub async fn push_suppression(
     ctx: &Ctx,
     email_address_id: Uuid,
 ) -> Result<(), AppError> {
+    push_suppression_to_connection(db, config, http, operations, ctx, email_address_id, None).await
+}
+
+pub async fn push_suppression_to_connection(
+    db: &Db,
+    config: &Config,
+    http: &CampaignsHttp,
+    operations: &CampaignsOperations,
+    ctx: &Ctx,
+    email_address_id: Uuid,
+    only_connection_id: Option<Uuid>,
+) -> Result<(), AppError> {
     require_system(ctx)?;
     let (address, suppressions) = {
         let mut tx = db.begin(ctx.workspace_id).await?;
@@ -302,7 +376,7 @@ pub async fn push_suppression(
     if suppressions.is_empty() {
         return Ok(());
     }
-    let connections = active_connections(db, ctx).await?;
+    let connections = active_connections(db, ctx, only_connection_id).await?;
     for connection in connections {
         let _account_guard =
             super::lock_connection_operation(db, ctx.workspace_id, connection.id).await?;

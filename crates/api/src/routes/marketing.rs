@@ -23,12 +23,28 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(register_sender))
         .routes(routes!(contact_fields))
         .routes(routes!(topics))
+        .routes(routes!(suppression_sync_status))
         .routes(routes!(connect))
         .routes(routes!(callback))
         .routes(routes!(list_lists))
         .routes(routes!(recent_campaigns))
         .routes(routes!(disconnect))
 }
+
+#[utoipa::path(get,path="/marketing/suppressions/{id}/sync-status",params(("id"=Uuid,Path)),responses((status=200,body=Vec<MarketingSuppressionSyncResponse>),(status=403,body=Problem),(status=404,body=Problem)))]
+async fn suppression_sync_status(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Envelope<Vec<MarketingSuppressionSyncResponse>>>, ProblemError> {
+    let ctx = auth.into_inner();
+    Ok(Json(envelope(
+        application::marketing::suppressions::get_suppression_sync_status(&state.db, &ctx, id)
+            .await?,
+        &ctx.request_id,
+    )))
+}
+
 fn envelope<T: serde::Serialize>(data: T, id: &str) -> Envelope<T> {
     Envelope {
         data,

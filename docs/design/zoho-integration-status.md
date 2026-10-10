@@ -1,9 +1,16 @@
 # Office-owned Zoho integration status
 
 This document distinguishes implemented application paths from SDK-only methods.
-It is not live-account verification. Tests use synthetic local data and loopback
-Zoho responses; credentials, account entitlements, sender/domain verification,
-merge rendering, footer behavior and actual delivery require a configured account.
+Automated tests use synthetic local data and loopback Zoho responses. A separate
+2026-10-10 account check verified OAuth, field metadata, list/contact/campaign
+creation and one authorized Zoho **test email** received in Gmail with SPF, DKIM
+and DMARC passing. The same test recipient subsequently confirmed an Office
+unsubscribe link on the local test app: Office suppression and anonymous CRM
+activity were recorded, the journaled Do-Not-Mail call completed, and Zoho's
+contact detail showed **Unsubscribed**. This did not test delivery of a newly
+mapped Office link in a real bulk campaign. Ordinary bulk `sendcampaign`, recipient merge substitution
+and Forever Free entitlement were not verified by that test; the account was on
+a trial. No private account identifiers or credentials are recorded here.
 Official contracts are in [the capability matrix](zoho-api-capability-matrix.md).
 
 ## Primary architecture
@@ -25,7 +32,7 @@ needed and is not used by this workflow.
 | Approval | Existing independent human approval now binds both the Office manifest and the READY native export hash. The manager sees transformed HTML and mapping. An append-only export-review row is required by the final send gate. |
 | Native bulk send | Final admin-session/SEND/hash confirmation, current sender/channel/approval/reviewer/mailbox permission checks, locked consent/suppression recheck, exact provider audience and mapped-value readback, one journaled `sendcampaign` call. No per-recipient dispatch jobs. |
 | Signed HTML publishing | A scoped HMAC capability binds workspace, export, content hash and expiry; invalid/expired signatures are hidden as 404. Public HTML is served without OAuth tokens, with no-store/no-referrer and restrictive headers. Zoho must be able to fetch the public HTTPS origin. |
-| Opt-out synchronization | Office commits suppression before journaled Do-Not-Mail propagation. Background polling reads the full bounded, paginated dedicated unsubscribe list back into Office. Supplemental recipient reports remain partial; explicit hard-bounce evidence is treated separately from generic bounce status. |
+| Opt-out synchronization | New exports require a verified recipient-specific field for the primary Office unsubscribe link, alongside the mandatory native Zoho footer. Office commits suppression before journaled Do-Not-Mail propagation; admin-only readback exposes pending/completed/unknown outcomes. New connections queue existing blocks for bounded reconciliation. Background polling reads the full bounded, paginated dedicated unsubscribe list back into Office. Supplemental recipient reports remain partial. |
 | Local privacy erasure | Frozen native variables and affected export content are scrubbed with the existing audited maintenance role; unrelated shared-address data is preserved. In-flight/ambiguous provider writes block erasure until reconciled. This does not delete provider data or recall a sent campaign. |
 | Reports and unknown outcomes | Provider aggregate/status reads and partial recipient evidence are separate from delivery/read claims. Unknown creates/sends are never blindly retried; readback can reconcile only when provider evidence identifies the result. |
 | Zoho Mail | Separate configured OAuth correspondence adapter for account discovery, Inbox polling, body/details and provider-ID replies. Marketing is not routed through Mail. Unknown Mail sends have no reliable correlation lookup. |
@@ -45,8 +52,9 @@ version. Office serializes its own account writes and verifies metadata, exact
 membership and mapped field values, but external Zoho edits can race those checks.
 Review the provider preview and keep staged campaign/list edits in this workflow.
 
-The official contact JSON examples are inconsistent. Standard JSON is sent as
-documented and locally tested; live account acceptance still needs verification.
+The official contact JSON examples are inconsistent. Standard JSON writes were
+accepted by the tested account. Field metadata accepts the observed nested
+`response.fieldnames.fieldname` response as well as the documented shape.
 Recipient-report pagination is undocumented, so those reports are labeled partial
 and are not the sole opt-out source. The API does not establish a complete
 organization-wide Do-Not-Mail registry read; an ambiguous suppression push stays
@@ -58,5 +66,5 @@ Office's ordinary local pause/cancel actions. Provider acceptance is not deliver
 reading or a guarantee of quota availability.
 
 See [setup and recovery](../runbooks/zoho-campaigns.md) for server configuration and
-the exact workflow. No signup, paid upgrade, purchase or live send is performed by
-these development checks.
+the exact workflow. Automated development checks do not send live mail; the
+separate authorized account test used Zoho's test-email action only.

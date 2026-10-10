@@ -173,6 +173,22 @@ async fn campaigns_oauth_is_single_use_binds_session_and_stores_only_encrypted_t
         .await
         .unwrap();
     assert_eq!(setup["data"]["connections"][0]["status"], "active");
+    let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+    let backfill_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs WHERE workspace_id=$1
+         AND kind='marketing.backfill_suppressions' AND state='queued'
+         AND payload->>'connection_id'=$2",
+    )
+    .bind(world.workspace_id)
+    .bind(id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(
+        backfill_count, 1,
+        "successful OAuth queues suppression reconciliation"
+    );
     assert!(!setup.to_string().contains("private-"));
     let raw = std::fs::read_to_string(dir.path().join("secrets.json")).unwrap();
     assert!(!raw.contains("private-"));

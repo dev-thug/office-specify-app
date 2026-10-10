@@ -10,6 +10,7 @@ use std::{
 };
 
 use chrono::{Duration, Utc};
+use contracts::Ctx;
 use domain::marketing::MarketingExportState;
 use infrastructure::{
     config::Config,
@@ -161,6 +162,8 @@ struct CampaignsFixture {
     email_address_id: Uuid,
     normalized_email: String,
     connection_id: Uuid,
+    admin_ctx: Ctx,
+    member_ctx: Ctx,
     config: Config,
     _secret_path: SecretPath,
 }
@@ -169,6 +172,9 @@ async fn fixture(email: &str) -> CampaignsFixture {
     let worker_db = common::test_db().await.expect("dedicated worker DB");
     let api_db = common::seed_db().await;
     let world = seed_workspace(&api_db).await.unwrap();
+    let admin_ctx = infrastructure::testing::ctx_for(&world, &world.admin, "sync-status-admin");
+    let member_ctx =
+        infrastructure::testing::ctx_for(&world, &world.member_a, "sync-status-member");
     let normalized =
         domain::email_address::normalize(email, domain::email_address::LocalPartPolicy::Lowercase)
             .unwrap();
@@ -246,6 +252,8 @@ async fn fixture(email: &str) -> CampaignsFixture {
         email_address_id,
         normalized_email: normalized.normalized_key,
         connection_id,
+        admin_ctx,
+        member_ctx,
         config,
         _secret_path: SecretPath(secret_path),
     }
@@ -271,6 +279,106 @@ async fn add_office_optout(fixture: &CampaignsFixture) -> Uuid {
     .unwrap();
     tx.commit().await.unwrap();
     suppression_id
+}
+
+async fn issue_public_unsubscribe_token(fixture: &CampaignsFixture) -> String {
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    let sender_identity_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO sender_identities
+            (workspace_id, mail_account_id, address, display_name, status, verified_at)
+         VALUES ($1, $2, 'sender@example.test', 'Office', 'verified', now())
+         RETURNING id",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.mail_account_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let delivery_channel_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO delivery_channels
+            (workspace_id, mail_account_id, sender_identity_id, connection_id,
+             provider, purpose, name, policy_status, enabled)
+         VALUES ($1, $2, $3,
+                 (SELECT connection_id FROM mail_accounts WHERE workspace_id=$1 AND id=$2),
+                 'zoho_mail', 'marketing', 'Office marketing', 'allowed', false)
+         RETURNING id",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.mail_account_id)
+    .bind(sender_identity_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let to_address: String = sqlx::query_scalar(
+        "SELECT address_original FROM email_addresses WHERE workspace_id=$1 AND id=$2",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.email_address_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let outbound_message_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO outbound_messages
+            (workspace_id, mail_account_id, delivery_channel_id, sender_identity_id,
+             to_email_address_id, requested_by, purpose, from_address_snapshot,
+             to_address_snapshot, subject, body_text, payload_hash, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'marketing', 'sender@example.test',
+                 $7, 'hello', 'hello', $8, 'accepted')
+         RETURNING id",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.mail_account_id)
+    .bind(delivery_channel_id)
+    .bind(sender_identity_id)
+    .bind(fixture.email_address_id)
+    .bind(fixture.admin_ctx.principal_id)
+    .bind(to_address)
+    .bind(infrastructure::crypto::sha256_bytes(b"unsubscribe test").to_vec())
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let token = compliance_core::issue_unsubscribe_token(
+        &mut tx,
+        fixture.email_address_id,
+        outbound_message_id,
+    )
+    .await
+    .unwrap()
+    .token;
+    tx.commit().await.unwrap();
+    token
+}
+
+async fn add_suppressed_address(fixture: &CampaignsFixture, email: &str) -> (Uuid, Uuid) {
+    let normalized =
+        domain::email_address::normalize(email, domain::email_address::LocalPartPolicy::Lowercase)
+            .unwrap();
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    let email_address_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_addresses
+            (workspace_id, address_original, normalized_key, kind, verification_status, verified_at)
+         VALUES ($1, $2, $3, 'person', 'verified', now())
+         RETURNING id",
+    )
+    .bind(fixture.workspace_id)
+    .bind(&normalized.original)
+    .bind(&normalized.normalized_key)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let suppression_id = compliance_core::insert_suppression(
+        &mut tx,
+        email_address_id,
+        "marketing",
+        "unsubscribe",
+        "manual",
+        Some(fixture.system_principal_id),
+        None,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    (email_address_id, suppression_id)
 }
 
 async fn enqueue_push(fixture: &CampaignsFixture, email_address_id: Uuid, suffix: &str) {
@@ -670,6 +778,281 @@ async fn office_suppression_is_pushed_to_active_campaigns_once_and_journaled() {
 }
 
 #[tokio::test]
+async fn suppression_sync_status_is_admin_scoped_and_reports_active_connections() {
+    let fixture = fixture("sync-status@example.test").await;
+    let suppression_id = add_office_optout(&fixture).await;
+
+    let rows = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].connection_id, fixture.connection_id);
+    assert_eq!(rows[0].status, "pending");
+    assert!(rows[0].provider_code.is_none());
+    assert!(rows[0].updated_at.is_none());
+
+    let denied = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.member_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(denied.code.as_str(), "FORBIDDEN");
+
+    let foreign = seed_workspace(&fixture.api_db).await.unwrap();
+    let normalized = domain::email_address::normalize(
+        "foreign-suppression@example.test",
+        domain::email_address::LocalPartPolicy::Lowercase,
+    )
+    .unwrap();
+    let mut tx = fixture.api_db.begin(foreign.workspace_id).await.unwrap();
+    let foreign_address: Uuid = sqlx::query_scalar(
+        "INSERT INTO email_addresses
+            (workspace_id, address_original, normalized_key, kind, verification_status, verified_at)
+         VALUES ($1, $2, $3, 'person', 'verified', now())
+         RETURNING id",
+    )
+    .bind(foreign.workspace_id)
+    .bind(normalized.original)
+    .bind(normalized.normalized_key)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let foreign_suppression = compliance_core::insert_suppression(
+        &mut tx,
+        foreign_address,
+        "marketing",
+        "unsubscribe",
+        "manual",
+        Some(foreign.admin.principal_id),
+        None,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let hidden = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        foreign_suppression,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(hidden.code.as_str(), "NOT_FOUND");
+
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    marketing::mark_status(&mut tx, fixture.connection_id, "disabled", None)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let disconnected = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(disconnected.len(), 1);
+    assert_eq!(disconnected[0].status, "not_connected");
+}
+
+#[tokio::test]
+async fn office_public_unsubscribe_runs_pause_then_journaled_zoho_push() {
+    let mock = mock_campaigns_server(vec![MockReply {
+        status: 200,
+        body:
+            r#"{"status":"success","code":"0","message":"User successfully moved to Do-Not-Mail."}"#
+                .into(),
+    }])
+    .await;
+    let fixture = fixture("public-unsubscribe-sync@example.test").await;
+    let token = issue_public_unsubscribe_token(&fixture).await;
+    let preview =
+        application::compliance::public_unsubscribe::confirmation(&fixture.api_db, &token)
+            .await
+            .unwrap();
+    assert_eq!(preview.status, "pending_confirmation");
+
+    let response = application::compliance::public_unsubscribe::unsubscribe(
+        &fixture.api_db,
+        &token,
+        "public-unsubscribe-worker-test",
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status, "unsubscribed");
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    let suppression_id: Uuid = sqlx::query_scalar(
+        "SELECT id FROM suppressions
+          WHERE workspace_id=$1 AND email_address_id=$2
+            AND purpose_scope='marketing' AND reason='unsubscribe' AND released_at IS NULL",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.email_address_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    let pause_jobs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs
+          WHERE workspace_id=$1 AND kind='compliance.pause_enrollments'
+            AND payload->>'suppression_id'=$2 AND state='queued'",
+    )
+    .bind(fixture.workspace_id)
+    .bind(suppression_id.to_string())
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(pause_jobs, 1);
+    let before_worker = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(before_worker[0].status, "pending");
+
+    let mut registry = JobRegistry::new();
+    worker::handlers::campaigns::register(&mut registry);
+    register(&fixture, &mock.base_url, &mut registry);
+    let runner = Runner::new(fixture.worker_db.clone(), registry);
+    assert_eq!(
+        runner
+            .run_workspace_once(fixture.workspace_id)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(mock.requests.lock().unwrap().is_empty());
+    assert_eq!(
+        runner
+            .run_workspace_once(fixture.workspace_id)
+            .await
+            .unwrap(),
+        1
+    );
+
+    let after_worker = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(after_worker[0].status, "completed");
+    assert!(after_worker[0].updated_at.is_some());
+    let requests = mock.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/api/v1.1/json/contactdonotmail");
+    let mut tx = fixture.worker_db.begin(fixture.workspace_id).await.unwrap();
+    let event: infrastructure::outbox::OutboxRow = sqlx::query_as(
+        "SELECT * FROM outbox_events WHERE workspace_id=$1
+         AND event_type='suppression.created' AND aggregate_id=$2",
+    )
+    .bind(fixture.workspace_id)
+    .bind(suppression_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    application::crm::projector::handle(&mut tx, &event)
+        .await
+        .unwrap();
+    let actor: Option<Uuid> = sqlx::query_scalar(
+        "SELECT actor_principal_id FROM activities WHERE workspace_id=$1 AND source_event_id=$2",
+    )
+    .bind(fixture.workspace_id)
+    .bind(event.id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    assert!(
+        actor.is_none(),
+        "public unsubscribe records an anonymous CRM activity"
+    );
+    tx.rollback().await.unwrap();
+    mock.task.abort();
+}
+
+#[tokio::test]
+async fn connecting_campaigns_backfills_active_office_suppressions_in_db_batches() {
+    let mock = mock_campaigns_server(vec![
+        MockReply {
+            status: 200,
+            body: r#"{"status":"success","code":"0"}"#.into(),
+        },
+        MockReply {
+            status: 200,
+            body: r#"{"status":"success","code":"0"}"#.into(),
+        },
+    ])
+    .await;
+    let fixture = fixture("backfill-first@example.test").await;
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    marketing::mark_status(&mut tx, fixture.connection_id, "disabled", None)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let first_suppression = add_office_optout(&fixture).await;
+    let (second_address_id, second_suppression) =
+        add_suppressed_address(&fixture, "backfill-second@example.test").await;
+
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    marketing::mark_status(&mut tx, fixture.connection_id, "active", None)
+        .await
+        .unwrap();
+    infrastructure::repo::marketing_suppressions::enqueue_suppression_backfill_in_tx(
+        &mut tx,
+        fixture.connection_id,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let mut registry = JobRegistry::new();
+    register(&fixture, &mock.base_url, &mut registry);
+    let mut runner = Runner::new(fixture.worker_db.clone(), registry);
+    runner.concurrency = 1;
+    assert_eq!(
+        runner
+            .run_workspace_once(fixture.workspace_id)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(mock.requests.lock().unwrap().is_empty());
+    assert_eq!(
+        runner
+            .run_workspace_once(fixture.workspace_id)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(mock.requests.lock().unwrap().len(), 2);
+
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    let completed: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM marketing_suppression_operations
+          WHERE workspace_id=$1 AND connection_id=$2 AND status='completed'
+            AND suppression_id = ANY($3)",
+    )
+    .bind(fixture.workspace_id)
+    .bind(fixture.connection_id)
+    .bind(vec![first_suppression, second_suppression])
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(completed, 2);
+    assert_ne!(second_address_id, fixture.email_address_id);
+    mock.task.abort();
+}
+
+#[tokio::test]
 async fn unknown_do_not_mail_result_is_durable_and_is_never_resubmitted() {
     let mock = mock_campaigns_server(vec![MockReply {
         status: 500,
@@ -708,6 +1091,97 @@ async fn unknown_do_not_mail_result_is_durable_and_is_never_resubmitted() {
         .await
         .unwrap();
     assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    mock.task.abort();
+}
+
+#[tokio::test]
+async fn stale_started_operation_becomes_unknown_without_resubmitting_to_zoho() {
+    let mock = mock_campaigns_server(vec![MockReply {
+        status: 200,
+        body: r#"{"status":"success","code":"0"}"#.into(),
+    }])
+    .await;
+    let fixture = fixture("stale-sync@example.test").await;
+    let suppression_id = add_office_optout(&fixture).await;
+    let mut tx = fixture.worker_db.begin(fixture.workspace_id).await.unwrap();
+    sqlx::query(
+        "INSERT INTO marketing_suppression_operations
+            (workspace_id, suppression_id, email_address_id, connection_id, status,
+             created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'started', now() - interval '3 minutes',
+                 now() - interval '3 minutes')",
+    )
+    .bind(fixture.workspace_id)
+    .bind(suppression_id)
+    .bind(fixture.email_address_id)
+    .bind(fixture.connection_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let visible_started = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(visible_started[0].status, "in_progress");
+    enqueue_push(&fixture, fixture.email_address_id, "stale").await;
+    let mut registry = JobRegistry::new();
+    register(&fixture, &mock.base_url, &mut registry);
+    let runner = Runner::new(fixture.worker_db.clone(), registry);
+    assert_eq!(
+        runner
+            .run_workspace_once(fixture.workspace_id)
+            .await
+            .unwrap(),
+        1
+    );
+    assert!(mock.requests.lock().unwrap().is_empty());
+
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    let status: (String, Option<String>) = sqlx::query_as(
+        "SELECT status, error_code FROM marketing_suppression_operations
+          WHERE workspace_id=$1 AND suppression_id=$2 AND connection_id=$3",
+    )
+    .bind(fixture.workspace_id)
+    .bind(suppression_id)
+    .bind(fixture.connection_id)
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(status.0, "unknown");
+    assert_eq!(status.1.as_deref(), Some("stale_provider_outcome"));
+    let visible_status = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(visible_status[0].status, "unknown");
+    assert_eq!(
+        visible_status[0].provider_code.as_deref(),
+        Some("stale_provider_outcome")
+    );
+    let mut tx = fixture.api_db.begin(fixture.workspace_id).await.unwrap();
+    marketing::mark_status(&mut tx, fixture.connection_id, "disabled", None)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let historical_status = application::marketing::suppressions::get_suppression_sync_status(
+        &fixture.api_db,
+        &fixture.admin_ctx,
+        suppression_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(historical_status.len(), 1);
+    assert_eq!(historical_status[0].connection_id, fixture.connection_id);
+    assert_eq!(historical_status[0].status, "unknown");
     mock.task.abort();
 }
 

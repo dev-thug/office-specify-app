@@ -1207,7 +1207,7 @@ pub async fn suppression_actor(
     email_address_id: Uuid,
     purpose_scope: &str,
 ) -> Result<Option<Uuid>, AppError> {
-    sqlx::query_scalar(
+    sqlx::query_scalar::<_, Option<Uuid>>(
         "SELECT created_by FROM suppressions
           WHERE workspace_id = $1 AND email_address_id = $2 AND purpose_scope = $3
             AND released_at IS NULL
@@ -1218,6 +1218,7 @@ pub async fn suppression_actor(
     .bind(purpose_scope)
     .fetch_optional(tx.conn())
     .await
+    .map(Option::flatten)
     .map_err(map_sqlx)
 }
 

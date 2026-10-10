@@ -97,7 +97,12 @@ describe("UnsubscribeConfirm", () => {
       expect(screen.getByText("Unsubscribe processed")).toBeInTheDocument()
     );
     expect(calls.map((c) => c.init?.method)).toContain("POST");
-    expect(screen.getByText(/Unsubscribed from Example Corp/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Office saved your unsubscribe as a local block. The external email service will reflect this asynchronously; this page does not confirm that update."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Unsubscribed from Example Corp marketing.")).toBeNull();
   });
 
   it("already-processed preview goes straight to the done state", async () => {

@@ -28,6 +28,22 @@ export interface CampaignsContactField {
   field_id: string;
 }
 
+export type MarketingSuppressionSyncState =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "unknown"
+  | "rejected"
+  | "not_connected";
+
+export interface MarketingSuppressionSyncStatus {
+  connection_id: string;
+  connection_name: string;
+  status: string;
+  provider_code: string | null;
+  updated_at: string | null;
+}
+
 export interface CampaignsTopic {
   id: string;
   name: string;
@@ -130,6 +146,12 @@ export function getRecentCampaigns(id: string) {
 export function getCampaignsFields(id: string) {
   return apiFetch<CampaignsContactField[]>(
     `/api/v1/marketing/connections/${encodeURIComponent(id)}/fields`
+  );
+}
+
+export function getMarketingSuppressionSyncStatus(suppressionId: string) {
+  return apiFetch<MarketingSuppressionSyncStatus[]>(
+    `/api/v1/marketing/suppressions/${encodeURIComponent(suppressionId)}/sync-status`
   );
 }
 

@@ -73,6 +73,25 @@
       "idempotencyReused": "같은 키로 다른 요청이 감지되었습니다. 다시 시도하세요.",
       "inProgress": "같은 요청이 처리 중입니다. 잠시 후 결과를 확인하세요.",
       "generic": "요청을 처리하지 못했습니다. 잠시 후 다시 시도하세요."
+    },
+    "syncStatus": {
+      "check": "외부 동기화 상태 확인",
+      "refresh": "외부 동기화 상태 새로고침",
+      "checking": "외부 서비스 상태 확인 중…",
+      "loadFailed": "외부 동기화 상태를 확인하지 못했습니다. 상태를 다시 읽어 보세요.",
+      "notConnected": "이 차단 기록에 연결된 외부 서비스가 없습니다.",
+      "connectionTitle": "{connection} 외부 동기화 상태",
+      "updatedAt": "상태 갱신 시각 {time}",
+      "providerCode": "공급자 코드: {code}",
+      "unknownDescription": "Office에 확정된 외부 결과가 없습니다. 이 화면은 서비스 반영 여부를 확인하지 않으며 변경 내용을 다시 제출하지 않습니다.",
+      "status": {
+        "pending": "외부 동기화 대기 중",
+        "in_progress": "외부 동기화 진행 중",
+        "completed": "외부 동기화 완료",
+        "unknown": "외부 상태를 알 수 없음",
+        "rejected": "외부 서비스가 차단 동기화를 거부했습니다",
+        "not_connected": "활성 외부 연결 없음"
+      }
     }
   },
   "reviews": {
@@ -162,7 +181,7 @@
     "footnote": "로그인 없이 즉시 처리됩니다. 다시 눌러도 같은 결과입니다.",
     "checking": "링크 확인 중…",
     "doneTitle": "수신 거부가 처리되었습니다",
-    "doneDescription": "요청이 처리되었습니다. 이미 처리된 링크도 같은 결과를 표시합니다.",
+    "doneDescription": "Office에 수신 거부 차단 기록을 저장했습니다. 외부 이메일 서비스에는 비동기적으로 반영되며, 이 페이지는 해당 서비스의 반영을 확인하지 않습니다.",
     "doneScope": "적용 범위: {scope}",
     "invalidTitle": "링크를 사용할 수 없습니다",
     "invalidDescription": "링크가 만료되었거나 올바르지 않습니다. 받은 메일의 최신 수신 거부 링크를 사용하세요.",

@@ -31,6 +31,9 @@ import { useIsAdmin } from "@/features/settings/use-me";
 const FROZEN_LAUNCH_STATES = new Set(["frozen", "awaiting_approval", "approved"]);
 const RESUMABLE_SYNC_STATES = new Set(["PREPARING", "SYNCING", "NEEDS_REVIEW"]);
 
+const OFFICE_UNSUBSCRIBE_VARIABLE = "compliance.unsubscribe_url";
+const NATIVE_MERGE_TAG_PATTERN = /^\$\[(?:UD:)?[A-Z][A-Z0-9_]*\]\$$/;
+
 function normalizedExportState(state: string) {
   return state.toUpperCase().replaceAll("-", "_");
 }
@@ -139,7 +142,7 @@ function parseFieldMap(raw: string): Record<string, MarketingFieldMapping> {
       typeof (mapping as MarketingFieldMapping).contact_field !== "string" ||
       !(mapping as MarketingFieldMapping).contact_field.trim() ||
       typeof (mapping as MarketingFieldMapping).merge_tag !== "string" ||
-      !/^\$\[(?:UD:)?[A-Z][A-Z0-9_]*\]\$$/.test((mapping as MarketingFieldMapping).merge_tag)
+      !NATIVE_MERGE_TAG_PATTERN.test((mapping as MarketingFieldMapping).merge_tag)
     ) {
       throw new Error("Every Office variable needs a contact field and merge tag.");
     }
@@ -185,6 +188,9 @@ export function MarketingExportPanel({
   const [topicId, setTopicId] = useState("");
   const [fieldMapJson, setFieldMapJson] = useState("{}");
   const [fieldMapVerified, setFieldMapVerified] = useState(false);
+  const [unsubscribeContactFieldId, setUnsubscribeContactFieldId] = useState("");
+  const [unsubscribeMergeTag, setUnsubscribeMergeTag] = useState("");
+  const [unsubscribeMappingVerified, setUnsubscribeMappingVerified] = useState(false);
   const [fieldMapError, setFieldMapError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -337,11 +343,37 @@ export function MarketingExportPanel({
     setFieldMapError(null);
     try {
       const fieldMap = parseFieldMap(fieldMapJson);
+      if (Object.prototype.hasOwnProperty.call(fieldMap, OFFICE_UNSUBSCRIBE_VARIABLE)) {
+        setFieldMapError(t("reservedUnsubscribeMapping"));
+        return;
+      }
+
+      const unsubscribeContactField = fieldsQuery.data?.data.find(
+        (field) => field.field_id === unsubscribeContactFieldId
+      );
+      const mergeTag = unsubscribeMergeTag.trim();
+      if (!unsubscribeContactField || !NATIVE_MERGE_TAG_PATTERN.test(mergeTag)) {
+        setFieldMapError(t("unsubscribeMappingRequired"));
+        return;
+      }
+      if (!unsubscribeMappingVerified) {
+        setFieldMapError(t("verifyUnsubscribeMapping"));
+        return;
+      }
       if (Object.keys(fieldMap).length > 0 && !fieldMapVerified) {
         setFieldMapError(t("verifyMappings"));
         return;
       }
-      prepare.mutate({ fieldMap });
+
+      prepare.mutate({
+        fieldMap: {
+          ...fieldMap,
+          [OFFICE_UNSUBSCRIBE_VARIABLE]: {
+            contact_field: unsubscribeContactField.display_name,
+            merge_tag: mergeTag,
+          },
+        },
+      });
     } catch (error) {
       setFieldMapError(error instanceof Error ? error.message : t("invalidFieldMap"));
     }
@@ -402,6 +434,60 @@ export function MarketingExportPanel({
               </Select>
             )}
           </div>
+          <section className="grid gap-2 rounded-lg border border-border bg-background px-3 py-3">
+            <h4 className="text-sm font-medium">{t("unsubscribeMappingTitle")}</h4>
+            <div className="grid gap-1.5">
+              <Label htmlFor={`marketing-unsubscribe-field-${launchId}`}>{t("unsubscribeContactField")}</Label>
+              <Select
+                value={unsubscribeContactFieldId || "__none__"}
+                onValueChange={(value) => {
+                  setUnsubscribeContactFieldId(value === "__none__" ? "" : value);
+                  setUnsubscribeMappingVerified(false);
+                  setFieldMapError(null);
+                }}
+                disabled={fieldsQuery.isPending || fieldsQuery.isError || !fieldsQuery.data?.data.length}
+              >
+                <SelectTrigger
+                  id={`marketing-unsubscribe-field-${launchId}`}
+                  aria-label={t("unsubscribeContactField")}
+                >
+                  <SelectValue placeholder={t("unsubscribeContactFieldPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">{t("unsubscribeContactFieldPlaceholder")}</SelectItem>
+                  {(fieldsQuery.data?.data ?? []).map((field) => (
+                    <SelectItem key={field.field_id} value={field.field_id}>
+                      {field.display_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor={`marketing-unsubscribe-merge-tag-${launchId}`}>{t("unsubscribeMergeTag")}</Label>
+              <Input
+                id={`marketing-unsubscribe-merge-tag-${launchId}`}
+                value={unsubscribeMergeTag}
+                onChange={(event) => {
+                  setUnsubscribeMergeTag(event.target.value);
+                  setUnsubscribeMappingVerified(false);
+                  setFieldMapError(null);
+                }}
+                placeholder={t("unsubscribeMergeTagPlaceholder")}
+                spellCheck={false}
+              />
+              <p className="text-2xs text-muted-foreground">{t("unsubscribeMergeTagHint")}</p>
+            </div>
+            <label className="flex items-start gap-2 text-2xs">
+              <input
+                type="checkbox"
+                checked={unsubscribeMappingVerified}
+                onChange={(event) => setUnsubscribeMappingVerified(event.target.checked)}
+                className="mt-0.5"
+              />
+              <span>{t("unsubscribeMappingVerified")}</span>
+            </label>
+          </section>
           <details className="rounded-lg border border-border px-3 py-2">
             <summary className="cursor-pointer text-sm font-medium">{t("advanced")}</summary>
             <div className="mt-3 grid gap-2">
@@ -410,7 +496,7 @@ export function MarketingExportPanel({
                 id={`marketing-field-map-${launchId}`}
                 rows={5}
                 value={fieldMapJson}
-                onChange={(event) => setFieldMapJson(event.target.value)}
+                onChange={(event) => { setFieldMapJson(event.target.value); setFieldMapVerified(false); }}
                 spellCheck={false}
               />
               <p className="text-2xs text-muted-foreground">{t("fieldMapHint")}</p>
@@ -423,7 +509,6 @@ export function MarketingExportPanel({
                     {fieldsQuery.data.data.map((field) => (
                       <li key={field.field_id} className="flex flex-wrap gap-x-2 text-2xs">
                         <span>{field.display_name}</span>
-                        <code className="font-mono">{field.field_name}</code>
                         <span className="text-muted-foreground">{field.field_id}</span>
                       </li>
                     ))}

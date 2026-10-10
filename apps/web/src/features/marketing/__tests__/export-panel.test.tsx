@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NextIntlClientProvider } from "next-intl";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import campaigns from "../../../../messages/en/campaigns.json";
 import common from "../../../../messages/en/common.json";
@@ -99,10 +99,56 @@ function mount(sourceStatus = "approved") {
   );
 }
 
+async function configureUnsubscribeMapping() {
+  const field = await screen.findByRole("combobox", {
+    name: "Zoho contact field for unsubscribe URL",
+  });
+  await waitFor(() => expect(field).toBeEnabled());
+  fireEvent.click(field);
+  fireEvent.click(await screen.findByRole("option", { name: "Office unsubscribe URL" }));
+  fireEvent.change(screen.getByLabelText("Verified native merge tag for unsubscribe URL"), {
+    target: { value: "$[UD:OFFICE_UNSUBSCRIBE_URL]$" },
+  });
+  fireEvent.click(
+    screen.getByLabelText(
+      "I verified this unsubscribe contact field and exact native merge tag in this Zoho Campaigns account."
+    )
+  );
+}
+
+function memoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear() {
+      values.clear();
+    },
+    getItem(key: string) {
+      return values.get(key) ?? null;
+    },
+    key(index: number) {
+      return Array.from(values.keys())[index] ?? null;
+    },
+    removeItem(key: string) {
+      values.delete(key);
+    },
+    setItem(key: string, value: string) {
+      values.set(key, String(value));
+    },
+  } as Storage;
+}
+
+beforeEach(() => {
+  vi.stubGlobal("localStorage", memoryStorage());
+  vi.stubGlobal("sessionStorage", memoryStorage());
+});
+
 afterEach(() => {
   auth.isAdmin = true;
-  sessionStorage.clear();
-  localStorage.clear();
+  if (typeof sessionStorage !== "undefined") sessionStorage.clear();
+  if (typeof localStorage !== "undefined") localStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -133,7 +179,7 @@ describe("Office-owned Zoho Campaigns export", () => {
       const path = new URL(String(input), "https://office.test").pathname;
       calls.push({ path, init: init ?? {} });
       if (path === "/api/v1/integrations/zoho-campaigns") return response(setup);
-      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Last Name", field_name: "Last Name", field_id: "field-1" }]);
+      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Last Name", field_name: "LEGACY_LAST_NAME_KEY", field_id: "field-1" }, { display_name: "Office unsubscribe URL", field_name: "UD_OFFICE_UNSUBSCRIBE_URL", field_id: "field-unsubscribe" }]);
       if (path === "/api/v1/marketing/connections/connection-1/topics") return response([{ id: "topic-verified", name: "Product Updates", primary_list: "list-1" }]);
       if (path === "/api/v1/marketing/exports" && init?.method === "POST") return response(currentExport, 201);
       if (path === "/api/v1/marketing/exports/export-1/sync") {
@@ -163,13 +209,43 @@ describe("Office-owned Zoho Campaigns export", () => {
     fireEvent.click(topic);
     fireEvent.click(await screen.findByRole("option", { name: "Product Updates · topic-verified" }));
     fireEvent.click(screen.getByText("Advanced: map Office variables to verified Zoho fields"));
-    expect(await screen.findAllByText("Last Name", { exact: true })).toHaveLength(2);
+    expect(await screen.findAllByText("Last Name", { exact: true })).toHaveLength(1);
     fireEvent.change(screen.getByLabelText("Field map JSON"), { target: { value: JSON.stringify({ "contact.name": { contact_field: "Last Name", merge_tag: "$[UD:FNAME]$" } }) } });
-    fireEvent.click(prepareButton);
-    expect(await screen.findByText("Verify the field names and merge tags in this account before using the mapping.")).toBeVisible();
+    const unsubscribeField = screen.getByRole("combobox", { name: "Zoho contact field for unsubscribe URL" });
+    fireEvent.click(unsubscribeField);
+    fireEvent.click(await screen.findByRole("option", { name: "Office unsubscribe URL" }));
+    fireEvent.change(screen.getByLabelText("Verified native merge tag for unsubscribe URL"), {
+      target: { value: "$[UD:OFFICE_UNSUBSCRIBE_URL]$" },
+    });
+    const guardedPrepare = screen.getByRole("button", { name: "Prepare Office export" });
+    expect(guardedPrepare).toBeEnabled();
+    fireEvent.click(guardedPrepare);
+    expect(calls.filter(({ path, init }) => path === "/api/v1/marketing/exports" && init.method === "POST")).toHaveLength(0);
+    const mappingAlert = await screen.findByRole("alert");
+    expect(mappingAlert).toHaveTextContent(
+      "Verify this unsubscribe field and exact merge tag in this Zoho Campaigns account before preparing."
+    );
+    fireEvent.click(screen.getByLabelText("I verified this unsubscribe contact field and exact native merge tag in this Zoho Campaigns account."));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Office export" }));
+    expect(await screen.findByText("Verify the contact field display names and merge tags in this account before using the mapping.")).toBeVisible();
     expect(calls.filter(({ path, init }) => path === "/api/v1/marketing/exports" && init.method === "POST")).toHaveLength(0);
     fireEvent.click(screen.getByLabelText("I verified each contact field and merge tag in this Zoho Campaigns account."));
-    fireEvent.click(prepareButton);
+
+    fireEvent.change(screen.getByLabelText("Field map JSON"), {
+      target: { value: JSON.stringify({
+        "contact.name": { contact_field: "Last Name", merge_tag: "$[UD:FNAME]$" },
+        "compliance.unsubscribe_url": { contact_field: "LEGACY_LAST_NAME_KEY", merge_tag: "$[UD:WRONG]$" },
+      }) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Office export" }));
+    expect(await screen.findByText("Set compliance.unsubscribe_url in the dedicated Office unsubscribe section, not Advanced.")).toBeVisible();
+    expect(calls.filter(({ path, init }) => path === "/api/v1/marketing/exports" && init.method === "POST")).toHaveLength(0);
+
+    fireEvent.change(screen.getByLabelText("Field map JSON"), {
+      target: { value: JSON.stringify({ "contact.name": { contact_field: "Last Name", merge_tag: "$[UD:FNAME]$" } }) },
+    });
+    fireEvent.click(screen.getByLabelText("I verified each contact field and merge tag in this Zoho Campaigns account."));
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Office export" }));
     await waitFor(() => expect(calls.some(({ path, init }) => path === "/api/v1/marketing/exports" && init.method === "POST")).toBe(true));
     await screen.findByText("Office News <news@example.test>");
     fireEvent.click(screen.getByRole("button", { name: "Continue contact sync" }));
@@ -210,7 +286,13 @@ describe("Office-owned Zoho Campaigns export", () => {
     const prepareBody = JSON.parse(String(prepareCall.init.body));
     expect(prepareBody.launch_id).toBe("launch-1");
     expect(prepareBody.topic_id).toBe("topic-verified");
-    expect(prepareBody.field_map).toEqual({ "contact.name": { contact_field: "Last Name", merge_tag: "$[UD:FNAME]$" } });
+    expect(prepareBody.field_map).toEqual({
+      "contact.name": { contact_field: "Last Name", merge_tag: "$[UD:FNAME]$" },
+      "compliance.unsubscribe_url": {
+        contact_field: "Office unsubscribe URL",
+        merge_tag: "$[UD:OFFICE_UNSUBSCRIBE_URL]$",
+      },
+    });
     expect(prepareCall.path).not.toContain("zoho-email-api");
     const syncCalls = calls.filter(({ path }) => path.endsWith("/sync"));
     const sendCall = calls.find(({ path }) => path.endsWith("/send"))!;
@@ -234,7 +316,7 @@ describe("Office-owned Zoho Campaigns export", () => {
       const path = new URL(String(input), "https://office.test").pathname;
       calls.push({ path, init: init ?? {} });
       if (path === "/api/v1/integrations/zoho-campaigns") return response(setup);
-      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Last Name", field_name: "Last Name", field_id: "field-1" }]);
+      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Last Name", field_name: "LEGACY_LAST_NAME_KEY", field_id: "field-1" }, { display_name: "Office unsubscribe URL", field_name: "UD_OFFICE_UNSUBSCRIBE_URL", field_id: "field-unsubscribe" }]);
       if (path === "/api/v1/marketing/connections/connection-1/topics") return response([{ id: "topic-verified", name: "Product Updates", primary_list: "list-1" }]);
       if (path === "/api/v1/marketing/exports" && init?.method === "POST") {
         prepareAttempts += 1;
@@ -267,11 +349,12 @@ describe("Office-owned Zoho Campaigns export", () => {
     vi.stubGlobal("fetch", fetcher);
 
     const view = mount();
+    await configureUnsubscribeMapping();
     const prepareButton = await screen.findByRole("button", { name: "Prepare Office export" });
     await waitFor(() => expect(prepareButton).toBeEnabled());
-    fireEvent.click(prepareButton);
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Office export" }));
     await screen.findByText("The Office export could not be prepared. Retry to check the same request.");
-    fireEvent.click(prepareButton);
+    fireEvent.click(screen.getByRole("button", { name: "Prepare Office export" }));
     await screen.findByRole("button", { name: "Sync draft to Zoho Campaigns" });
     const prepareCalls = calls.filter(({ path, init }) => path === "/api/v1/marketing/exports" && init.method === "POST");
     expect(prepareCalls).toHaveLength(2);
@@ -304,7 +387,7 @@ describe("Office-owned Zoho Campaigns export", () => {
       const path = new URL(String(input), "https://office.test").pathname;
       calls.push({ path, init: init ?? {} });
       if (path === "/api/v1/integrations/zoho-campaigns") return response(setup);
-      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Last Name", field_name: "Last Name", field_id: "field-1" }]);
+      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Last Name", field_name: "LEGACY_LAST_NAME_KEY", field_id: "field-1" }, { display_name: "Office unsubscribe URL", field_name: "UD_OFFICE_UNSUBSCRIBE_URL", field_id: "field-unsubscribe" }]);
       if (path === "/api/v1/marketing/connections/connection-1/topics") return response([{ id: "topic-verified", name: "Product Updates", primary_list: "list-1" }]);
       if (path === "/api/v1/marketing/exports" && init?.method === "POST") return response(exportData, 201);
       if (path.endsWith("/sync")) {
@@ -324,6 +407,7 @@ describe("Office-owned Zoho Campaigns export", () => {
     vi.stubGlobal("fetch", fetcher);
 
     mount();
+    await configureUnsubscribeMapping();
     const prepare = await screen.findByRole("button", { name: "Prepare Office export" });
     await waitFor(() => expect(prepare).toBeEnabled());
     fireEvent.click(prepare);
@@ -358,7 +442,7 @@ describe("Office-owned Zoho Campaigns export", () => {
       const path = new URL(String(input), "https://office.test").pathname;
       calls.push({ path, init: init ?? {} });
       if (path === "/api/v1/integrations/zoho-campaigns") return response(setup);
-      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([]);
+      if (path === "/api/v1/marketing/connections/connection-1/fields") return response([{ display_name: "Office unsubscribe URL", field_name: "UD_OFFICE_UNSUBSCRIBE_URL", field_id: "field-unsubscribe" }]);
       if (path === "/api/v1/marketing/connections/connection-1/topics") return response([]);
       if (path === "/api/v1/marketing/exports" && init?.method === "POST") return response(exportData, 201);
       if (path.endsWith("/sync")) {
@@ -378,6 +462,7 @@ describe("Office-owned Zoho Campaigns export", () => {
     vi.stubGlobal("fetch", fetcher);
 
     mount();
+    await configureUnsubscribeMapping();
     const prepare = await screen.findByRole("button", { name: "Prepare Office export" });
     await waitFor(() => expect(prepare).toBeEnabled());
     fireEvent.click(prepare);

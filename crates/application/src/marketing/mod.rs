@@ -230,6 +230,7 @@ pub async fn callback(
             .with_target(current.id),
         )
         .await?;
+        suppressions::enqueue_suppression_backfill_in_tx(&mut tx, current.id).await?;
         tx.commit().await?;
         Ok(current.id)
     }

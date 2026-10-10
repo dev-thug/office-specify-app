@@ -1,12 +1,14 @@
 //! Worker-side persistence for Campaigns suppression propagation. Provider
 //! writes are journaled before I/O and terminal/unknown rows are never reset.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use contracts::AppError;
 use domain::marketing::OperationClaim;
 use uuid::Uuid;
 
 use crate::{db::Tx, error::map_sqlx};
+
+pub const SUPPRESSION_BACKFILL_JOB_KIND: &str = "marketing.backfill_suppressions";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ActiveSuppressionRow {
@@ -40,6 +42,15 @@ pub struct SuppressionOperationRow {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct SuppressionSyncStatusRow {
+    pub connection_id: Uuid,
+    pub connection_name: String,
+    pub status: String,
+    pub provider_code: Option<String>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 pub async fn active_suppressions_for_email(
@@ -99,6 +110,7 @@ pub async fn list_active_campaign_connections(
     tx: &mut Tx<'_>,
     after: Option<Uuid>,
     limit: i64,
+    only_connection_id: Option<Uuid>,
 ) -> Result<Vec<ActiveCampaignConnectionRow>, AppError> {
     sqlx::query_as::<_, ActiveCampaignConnectionRow>(
         "SELECT m.id, c.secret_ref
@@ -109,15 +121,119 @@ pub async fn list_active_campaign_connections(
             AND c.provider = 'zoho_campaigns'
             AND c.status = 'active'
             AND ($2::uuid IS NULL OR m.id > $2)
+            AND ($4::uuid IS NULL OR m.id = $4)
           ORDER BY m.id
           LIMIT $3",
     )
     .bind(tx.workspace_id())
     .bind(after)
     .bind(limit.clamp(1, 101))
+    .bind(only_connection_id)
     .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)
+}
+
+/// Provider status for a local suppression: include every journaled operation
+/// plus active Campaigns connections with no operation yet. Released local
+/// suppressions remain visible through their historical journal rows, but do
+/// not appear pending on connections that never received a push.
+pub async fn list_suppression_sync_statuses(
+    tx: &mut Tx<'_>,
+    suppression_id: Uuid,
+) -> Result<Vec<SuppressionSyncStatusRow>, AppError> {
+    sqlx::query_as::<_, SuppressionSyncStatusRow>(
+        "SELECT m.id AS connection_id, m.name AS connection_name,
+                COALESCE(o.status, 'pending') AS status,
+                o.error_code AS provider_code, o.updated_at
+           FROM suppressions s
+           JOIN marketing_connections m
+             ON m.workspace_id = s.workspace_id
+           JOIN integration_connections c
+             ON c.workspace_id = m.workspace_id AND c.id = m.id
+            AND c.provider = 'zoho_campaigns'
+           LEFT JOIN marketing_suppression_operations o
+             ON o.workspace_id = s.workspace_id
+            AND o.suppression_id = s.id
+            AND o.connection_id = m.id
+          WHERE s.workspace_id = $1 AND s.id = $2
+            AND (o.id IS NOT NULL OR (c.status = 'active' AND s.released_at IS NULL))
+          ORDER BY m.name, m.id",
+    )
+    .bind(tx.workspace_id())
+    .bind(suppression_id)
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// One bounded keyset page of active suppressed addresses for a newly
+/// connected Campaigns account. No contact data is read or sent here.
+pub async fn list_active_suppression_addresses_for_backfill(
+    tx: &mut Tx<'_>,
+    connection_id: Uuid,
+    after_email_address_id: Option<Uuid>,
+    limit: i64,
+) -> Result<Vec<Uuid>, AppError> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT s.email_address_id
+           FROM suppressions s
+           JOIN marketing_connections m
+             ON m.workspace_id = s.workspace_id AND m.id = $2
+           JOIN integration_connections c
+             ON c.workspace_id = m.workspace_id AND c.id = m.id
+            AND c.provider = 'zoho_campaigns' AND c.status = 'active'
+          WHERE s.workspace_id = $1 AND s.released_at IS NULL
+            AND s.purpose_scope IN ('marketing','all')
+            AND ($3::uuid IS NULL OR s.email_address_id > $3)
+          ORDER BY s.email_address_id
+          LIMIT $4",
+    )
+    .bind(tx.workspace_id())
+    .bind(connection_id)
+    .bind(after_email_address_id)
+    .bind(limit.clamp(1, 501))
+    .fetch_all(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Enqueue a DB-only backfill after a Campaigns OAuth connection succeeds.
+/// A fresh run id permits reconnects of the same connection to backfill again;
+/// each provider mutation is still guarded by the operation journal.
+pub async fn enqueue_suppression_backfill_in_tx(
+    tx: &mut Tx<'_>,
+    connection_id: Uuid,
+) -> Result<(), AppError> {
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM marketing_connections m
+            JOIN integration_connections c
+              ON c.workspace_id = m.workspace_id AND c.id = m.id
+             AND c.provider = 'zoho_campaigns' AND c.status = 'active'
+            WHERE m.workspace_id = $1 AND m.id = $2
+        )",
+    )
+    .bind(tx.workspace_id())
+    .bind(connection_id)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    if !active {
+        return Ok(());
+    }
+    let run_id = Uuid::new_v4();
+    let key = format!("marketing-suppression-backfill:{connection_id}:{run_id}:start");
+    crate::jobs::enqueue(
+        tx,
+        SUPPRESSION_BACKFILL_JOB_KIND,
+        1,
+        serde_json::json!({"connection_id": connection_id, "backfill_id": run_id}),
+        Utc::now(),
+        Some(&key),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Insert a non-resubmittable operation before provider I/O. An absent result
@@ -184,6 +300,16 @@ pub async fn claim_suppression_operation(
         ));
     }
     let claim = match row.status.as_str() {
+        "started" if row.updated_at <= Utc::now() - Duration::minutes(2) => {
+            mark_suppression_operation_unknown(
+                tx,
+                suppression_id,
+                connection_id,
+                Some("stale_provider_outcome"),
+            )
+            .await?;
+            OperationClaim::Unknown
+        }
         "started" => OperationClaim::InProgress,
         "completed" => OperationClaim::Completed { provider_id: None },
         "unknown" => OperationClaim::Unknown,

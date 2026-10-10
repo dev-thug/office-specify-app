@@ -457,6 +457,20 @@ pub async fn freeze_launch(
         if channel.provider == "zoho_campaigns" {
             let mut frozen_values = user_variables.clone();
             frozen_values.extend(system_vars.clone());
+            // Native Campaigns exports support one immediate step. Reuse its
+            // already-issued capability so the mapped URL resolves to the same
+            // token hash persisted with that recipient's outbound snapshot.
+            let first_step = rendered
+                .first()
+                .ok_or_else(|| AppError::internal("marketing launch has no rendered step"))?;
+            frozen_values.insert(
+                "compliance.unsubscribe_url".into(),
+                format!(
+                    "{}/public/unsubscribe/{}",
+                    public_base_url.trim_end_matches('/'),
+                    first_step.unsubscribe_token
+                ),
+            );
             infrastructure::repo::marketing_exports::record_launch_values(
                 tx,
                 launch_id,

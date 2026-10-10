@@ -73,6 +73,25 @@
       "idempotencyReused": "A different request with the same key was detected. Try again.",
       "inProgress": "The same request is still being processed. Check back shortly.",
       "generic": "Could not process the request. Please try again."
+    },
+    "syncStatus": {
+      "check": "Check external sync status",
+      "refresh": "Refresh external sync status",
+      "checking": "Checking external service status…",
+      "loadFailed": "Could not check external sync status. Retry to read the status again.",
+      "notConnected": "No external connection is configured for this suppression.",
+      "connectionTitle": "External sync status for {connection}",
+      "updatedAt": "Status updated {time}",
+      "providerCode": "Provider code: {code}",
+      "unknownDescription": "Office has no confirmed external result. This screen does not confirm the service updated and will not resubmit the change.",
+      "status": {
+        "pending": "External sync pending",
+        "in_progress": "External sync in progress",
+        "completed": "External sync completed",
+        "unknown": "External status unknown",
+        "rejected": "External service rejected the suppression",
+        "not_connected": "No active external connection"
+      }
     }
   },
   "reviews": {
@@ -162,7 +181,7 @@
     "footnote": "Processed immediately without sign-in. Pressing again gives the same result.",
     "checking": "Checking the link…",
     "doneTitle": "Unsubscribe processed",
-    "doneDescription": "Your request was processed. Already-processed links show the same result.",
+    "doneDescription": "Office saved your unsubscribe as a local block. The external email service will reflect this asynchronously; this page does not confirm that update.",
     "doneScope": "Applied scope: {scope}",
     "invalidTitle": "This link cannot be used",
     "invalidDescription": "The link is expired or invalid. Use the latest unsubscribe link from the email you received.",

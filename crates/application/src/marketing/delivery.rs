@@ -496,6 +496,13 @@ pub async fn prepare_export(
         ));
     }
 
+    if !request.field_map.contains_key("compliance.unsubscribe_url") {
+        return Err(AppError::validation(
+            "configure and verify the Office unsubscribe URL field mapping before preparing a new export",
+            vec![],
+        ));
+    }
+
     let fields_for_prepare = [
         "ZohoCampaigns.campaign.READ",
         "ZohoCampaigns.contact.READ",
@@ -1256,12 +1263,56 @@ fn contact_fields_match(observed: &BTreeMap<String, Value>, expected: &Value) ->
     })
 }
 
+fn contact_fields_match_with_definitions(
+    observed: &BTreeMap<String, Value>,
+    expected: &Value,
+    definitions: &[infrastructure::providers::zoho_campaigns::operations::CampaignContactField],
+) -> bool {
+    let Some(expected_fields) = expected.as_object() else {
+        return false;
+    };
+    let mut resolved = BTreeMap::new();
+    for field in expected_fields.keys() {
+        let matches: Vec<_> = definitions
+            .iter()
+            .filter(|definition| {
+                definition.display_name.eq_ignore_ascii_case(field)
+                    || definition.field_name.eq_ignore_ascii_case(field)
+            })
+            .collect();
+        if matches.len() != 1 {
+            return false;
+        }
+        let definition = matches[0];
+        let values: Vec<_> = observed
+            .iter()
+            .filter(|(name, _)| {
+                name.eq_ignore_ascii_case(&definition.display_name)
+                    || name.eq_ignore_ascii_case(&definition.field_name)
+            })
+            .map(|(_, value)| value)
+            .collect();
+        let Some(first) = values.first() else {
+            return false;
+        };
+        if values.iter().any(|value| value != first) {
+            return false;
+        }
+        resolved.insert(field.clone(), (*first).clone());
+    }
+    contact_fields_match(&resolved, expected)
+}
+
 async fn active_contact_fields_match(
     operations: &CampaignsOperations,
     access: &infrastructure::providers::zoho_campaigns::SecretValue,
     list_key: &str,
     recipients: &[exports_repo::MarketingExportRecipientRow],
 ) -> Result<bool, AppError> {
+    let definitions = operations
+        .get_contact_fields(access)
+        .await
+        .map_err(campaigns_error)?;
     let contacts = operations
         .get_all_list_contacts(access, list_key, CampaignContactStatus::Active)
         .await
@@ -1273,7 +1324,9 @@ async fn active_contact_fields_match(
     Ok(recipients.iter().all(|recipient| {
         observed
             .get(&recipient.normalized_address.to_ascii_lowercase())
-            .is_some_and(|fields| contact_fields_match(fields, &recipient.variables))
+            .is_some_and(|fields| {
+                contact_fields_match_with_definitions(fields, &recipient.variables, &definitions)
+            })
     }))
 }
 
@@ -3547,6 +3600,40 @@ pub async fn refresh_export(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn provider_field_readback_uses_declared_names_and_rejects_conflicting_aliases() {
+        use infrastructure::providers::zoho_campaigns::operations::CampaignContactField;
+        let definitions = vec![CampaignContactField {
+            display_name: "Office Unsubscribe URL".into(),
+            field_name: "cf_field_1".into(),
+            field_id: "123".into(),
+        }];
+        let expected =
+            serde_json::json!({"Office Unsubscribe URL":"https://office.example/unsubscribe/a"});
+        let mut observed = std::collections::BTreeMap::from([(
+            "cf_field_1".into(),
+            serde_json::json!("https://office.example/unsubscribe/a"),
+        )]);
+        assert!(super::contact_fields_match_with_definitions(
+            &observed,
+            &expected,
+            &definitions
+        ));
+        observed.insert(
+            "Office Unsubscribe URL".into(),
+            serde_json::json!("https://office.example/unsubscribe/b"),
+        );
+        assert!(!super::contact_fields_match_with_definitions(
+            &observed,
+            &expected,
+            &definitions
+        ));
+        assert!(!super::contact_fields_match_with_definitions(
+            &observed,
+            &expected,
+            &[]
+        ));
+    }
     #[test]
     fn native_address_status_uses_default_contact_state_without_accepting_known_risks() {
         assert!(super::recipient_address_status_allowed("unknown"));

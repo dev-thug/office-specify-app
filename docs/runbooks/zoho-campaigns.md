@@ -25,9 +25,9 @@ server SecretStore. There is no paid signup or credit purchase in this flow.
 2. Create a campaign selecting the enabled Campaigns marketing channel and that Office version. Campaigns Free uses one immediate step. Scheduling, weekday/time windows, delays and follow-up automation are excluded for this route; an Office meeting type binding is retained where needed.
 3. Choose contacts with recorded **explicit marketing consent**. Office suppression and invalid/expired consent block the export. A reviewed legal exception alone does not establish Zoho opt-in.
 4. Freeze the launch. Office fixes the recipient list, exact template version, resolved variable values and recipient-bound booking links. The existing human approval chain remains in force; approving a native launch never queues individual message dispatches.
-5. Prepare the native export in the launch's **Office template / Zoho delivery** panel. Choose the account topic, where required, from the provider metadata. Values that differ across recipients need an explicit mapping to a Campaigns field and native merge tag. Fields/topics are read from Campaigns; the documented API cannot list native merge tags, so verify those tags in the account rather than guessing them.
+5. Prepare the native export in the launch's **Office template / Zoho delivery** panel. Choose the account topic where required. Every new export requires a verified URL contact field and native merge tag for `compliance.unsubscribe_url`. Select the field's displayed name from account metadata and verify the exact tag in Zoho. Office reuses the recipient's frozen unsubscribe capability; it appends the primary Office link if the template omits it. Other values that differ across recipients also require explicit mappings. The documented API cannot list native merge tags, so verify those tags in the account rather than guessing them.
 6. Sync contacts. Each request stages at most 25 contact operations and records completed results durably. Continue syncing while the export is `syncing`; confirmed active list membership is checked independently of subscribe acceptance. Pending double opt-in keeps the export unready.
-7. Office creates one dedicated provider list and one native campaign with the signed `content_url`. Review the exact audience counts, Office export HTML, mapping, sender/topic and provider metadata. The export contains one Campaigns-native organization opt-out tag. Office's own unsubscribe URL is not substituted for Zoho's required mechanism.
+7. Office creates one dedicated provider list and one native campaign with the signed `content_url`. Review the exact audience counts, Office export HTML, mapping, sender/topic and provider metadata. The primary Office unsubscribe link uses a recipient-specific custom field. Each body also retains exactly one Campaigns-native organization opt-out tag required by Zoho. Contact writes use `DISPLAY_NAME`; readback accepts only aliases explicitly declared by the provider's field definitions and rejects conflicting values.
 8. Obtain the existing Office launch approval from another authorized human. Review the provider campaign in Zoho where required, then use the Office final send confirmation (`SEND`) with the current export hash. The backend rechecks the approval, current session/permissions, sender/channel, consent, suppression, exact provider audience and mapped values before the single bulk send. If more than 100 historical lists need inspection, no send is submitted: repeat the explicit confirmation to continue the same scan within five minutes. A read-only refresh or background poll preserves that checkpoint; an expired scan starts fresh.
 
 `in_progress` means Zoho accepted the campaign for processing; it does not mean
@@ -42,6 +42,13 @@ suppression is committed first, stops local enrollment, and queues a separately
 journaled Campaigns Do-Not-Mail propagation. Native Campaigns opt-outs are polled
 back to Office. Background polling is data synchronization, not a marketing
 workflow or scheduled send.
+
+Opening the Office unsubscribe page does not change state. The explicit confirm
+action commits the local block first. Administrators can then use **Zoho sync
+status** on the suppression row: pending, in progress, completed, unknown,
+rejected, or not connected. Public success confirms only the Office block.
+Connecting Campaigns queues a bounded backfill of existing marketing/all blocks.
+A stale interrupted provider write becomes unknown and is never blindly resent.
 
 The dedicated list's fully paginated unsubscribe status is the primary opt-out
 source. Recipient-report pages are supplemental: their pagination contract is not
