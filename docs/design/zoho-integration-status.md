@@ -7,10 +7,18 @@ creation and one authorized Zoho **test email** received in Gmail with SPF, DKIM
 and DMARC passing. The same test recipient subsequently confirmed an Office
 unsubscribe link on the local test app: Office suppression and anonymous CRM
 activity were recorded, the journaled Do-Not-Mail call completed, and Zoho's
-contact detail showed **Unsubscribed**. This did not test delivery of a newly
-mapped Office link in a real bulk campaign. Ordinary bulk `sendcampaign`, recipient merge substitution
-and Forever Free entitlement were not verified by that test; the account was on
-a trial. No private account identifiers or credentials are recorded here.
+contact detail showed **Unsubscribed**. A subsequent authorized one-recipient
+normal campaign verified actual custom-field substitution: the delivered text
+contained the exact frozen Office URL, the tracked HTML link redirected there,
+GET did not suppress, and explicit confirmation created one Office block and CRM
+activity followed by confirmed Zoho Do-Not-Mail propagation. SPF/DKIM/DMARC passed.
+The Office `sendcampaign` attempt was refused with 6611; the same approved draft
+was submitted through Zoho's console review/launch and then sent. This is not a
+successful API-only submission claim. A clearly labeled temporary simulated
+reviewer was used only with explicit test authorization and disabled afterward;
+this does not represent independent human review. Forever Free entitlement was
+not verified because the account was on a trial. No private account identifiers,
+recipient addresses, capability URLs or credentials are recorded here.
 Official contracts are in [the capability matrix](zoho-api-capability-matrix.md).
 
 ## Primary architecture
@@ -30,7 +38,7 @@ needed and is not used by this workflow.
 | Native export | One immutable export per frozen Office launch. It binds the source template/version, manifest, actual normalized recipient addresses, transformed HTML, field mapping and per-recipient booking values. Post-freeze variable inserts and recipient/address mismatches are rejected. |
 | Contact sync | Dedicated private list, durable provider-operation journal, at most 25 contact mutations per sync request, resumable completed work, explicit opt-in and Office/provider suppression checks. Subscribe acceptance does not imply active/confirmed membership. |
 | Approval | Existing independent human approval now binds both the Office manifest and the READY native export hash. The manager sees transformed HTML and mapping. An append-only export-review row is required by the final send gate. |
-| Native bulk send | Final admin-session/SEND/hash confirmation, current sender/channel/approval/reviewer/mailbox permission checks, locked consent/suppression recheck, exact provider audience and mapped-value readback, one journaled `sendcampaign` call. No per-recipient dispatch jobs. |
+| Native bulk send | Final admin-session/SEND/hash confirmation, current sender/channel/approval/reviewer/mailbox permission checks, locked consent/suppression recheck, exact provider audience and field evidence, one journaled `sendcampaign` call. Omitted custom values require exact, hash-bound ten-minute operator observations; conflicting API values still block. No per-recipient dispatch jobs. Zoho 6611 content-review refusals remain explicit rejections. |
 | Signed HTML publishing | A scoped HMAC capability binds workspace, export, content hash and expiry; invalid/expired signatures are hidden as 404. Public HTML is served without OAuth tokens, with no-store/no-referrer and restrictive headers. Zoho must be able to fetch the public HTTPS origin. |
 | Opt-out synchronization | New exports require a verified recipient-specific field for the primary Office unsubscribe link, alongside the mandatory native Zoho footer. Office commits suppression before journaled Do-Not-Mail propagation; admin-only readback exposes pending/completed/unknown outcomes. New connections queue existing blocks for bounded reconciliation. Background polling reads the full bounded, paginated dedicated unsubscribe list back into Office. Supplemental recipient reports remain partial. |
 | Local privacy erasure | Frozen native variables and affected export content are scrubbed with the existing audited maintenance role; unrelated shared-address data is preserved. In-flight/ambiguous provider writes block erasure until reconciled. This does not delete provider data or recall a sent campaign. |

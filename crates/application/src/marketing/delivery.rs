@@ -11,7 +11,7 @@ use contracts::{
     AppError, AuthMethod, Ctx, ErrorCode, PrincipalKind, Role, Scope,
     marketing::{
         MarketingExportContentResponse, MarketingExportResponse, PrepareMarketingExportRequest,
-        SendMarketingExportRequest,
+        SendMarketingExportRequest, VerifyMarketingFieldsRequest,
     },
 };
 use domain::marketing::{MarketingExportState as ExportState, OperationClaim, OperationResolution};
@@ -1303,7 +1303,163 @@ fn contact_fields_match_with_definitions(
     contact_fields_match(&resolved, expected)
 }
 
+fn field_values_hash(
+    recipients: &[exports_repo::MarketingExportRecipientRow],
+) -> Result<String, AppError> {
+    let values: BTreeMap<_, _> = recipients
+        .iter()
+        .map(|row| {
+            (
+                row.normalized_address.to_ascii_lowercase(),
+                row.variables.clone(),
+            )
+        })
+        .collect();
+    let bytes = serde_json::to_vec(&values)
+        .map_err(|_| AppError::internal("could not hash field snapshot"))?;
+    Ok(export_hash(&crypto::sha256_bytes(&bytes)))
+}
+
+/// An explicit observation never authorizes delivery or replaces list/consent checks.
+pub async fn verify_export_fields(
+    db: &Db,
+    ctx: &Ctx,
+    export_id: Uuid,
+    request: VerifyMarketingFieldsRequest,
+    observation_key_hash: &[u8; 32],
+) -> Result<MarketingExportResponse, AppError> {
+    require_admin(ctx)?;
+    let (initial, _) = first_export(db, ctx, export_id).await?;
+    let _guard =
+        super::lock_connection_operation(db, ctx.workspace_id, initial.connection_id).await?;
+    let (export, recipients) = first_export(db, ctx, export_id).await?;
+    if !matches!(export.state.as_str(), "needs_review" | "syncing" | "ready")
+        || export.provider_list_key.is_none()
+        || export.expires_at <= Utc::now()
+    {
+        return Err(AppError::conflict(
+            "sync the active export before observing provider fields",
+        ));
+    }
+    if decode_hex_hash(&request.expected_export_hash)
+        .as_ref()
+        .map(|h| h.as_slice())
+        != Some(export.export_hash.as_slice())
+    {
+        return Err(AppError::conflict(
+            "field evidence export hash does not match",
+        ));
+    }
+    if request.evidence_ref.trim().is_empty()
+        || request.evidence_ref.len() > 512
+        || request.evidence_ref.contains("/public/unsubscribe/")
+        || request.observations.len() != recipients.len()
+        || request.observations.len() > MAX_EXPORT_RECIPIENTS
+    {
+        return Err(AppError::validation(
+            "provide bounded provider observation evidence for every export recipient",
+            vec![],
+        ));
+    }
+    let mut observed = BTreeMap::new();
+    for row in &request.observations {
+        if row.fields.len() > 50
+            || row.fields.values().any(|v| v.len() > 4096)
+            || observed
+                .insert(row.email.trim().to_ascii_lowercase(), row)
+                .is_some()
+        {
+            return Err(AppError::validation(
+                "invalid or duplicate provider observations",
+                vec![],
+            ));
+        }
+    }
+    for row in &recipients {
+        let expected: BTreeMap<String, String> = serde_json::from_value(row.variables.clone())
+            .map_err(|_| AppError::internal("invalid frozen field values"))?;
+        if observed
+            .get(&row.normalized_address.to_ascii_lowercase())
+            .is_none_or(|entry| entry.fields != expected)
+        {
+            return Err(AppError::validation(
+                "observed provider field values do not match the frozen recipient snapshot",
+                vec![],
+            ));
+        }
+    }
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    super::revalidate_admin_session_tx(&mut tx, ctx).await?;
+    let observation_key_hash = export_hash(observation_key_hash);
+    if exports_repo::field_evidence_recorded(
+        &mut tx,
+        export_id,
+        ctx.principal_id,
+        &observation_key_hash,
+    )
+    .await?
+    {
+        tx.rollback().await?;
+        return response(export, &recipients);
+    }
+    let ops = exports_repo::list_operations(&mut tx, export_id).await?;
+    if ops.iter().any(|op| {
+        matches!(op.kind.as_str(), "subscribe" | "add_contacts") && op.status != "completed"
+    }) || recipients.iter().any(|row| {
+        !ops.iter().any(|op| {
+            op.kind == "subscribe"
+                && op.status == "completed"
+                && op.correlation_key == format!("recipient_{}", row.email_address_id)
+        })
+    }) {
+        return Err(AppError::conflict(
+            "complete all contact writes before observing provider fields",
+        ));
+    }
+    let mut entry = AuditEntry::new(
+        ctx.principal_id,
+        "marketing.export_fields_verified",
+        "marketing_export",
+        &ctx.request_id,
+    )
+    .with_target(export_id);
+    entry.metadata = json!({"source":"operator_observation","request_key_hash":observation_key_hash,"evidence_ref_hash":export_hash(&crypto::sha256_bytes(request.evidence_ref.as_bytes())),
+        "export_hash":export_hash(&export.export_hash),"values_hash":field_values_hash(&recipients)?,"recipient_count":recipients.len(),"valid_for_seconds":600});
+    audit::record(&mut tx, entry).await?;
+    tx.commit().await?;
+    response(export, &recipients)
+}
+
+fn observed_fields_conflict(
+    observed: &BTreeMap<String, Value>,
+    expected: &Value,
+    definitions: &[infrastructure::providers::zoho_campaigns::operations::CampaignContactField],
+) -> bool {
+    let Some(fields) = expected.as_object() else {
+        return true;
+    };
+    fields.iter().any(|(name, expected)| {
+        let defs: Vec<_> = definitions
+            .iter()
+            .filter(|d| {
+                d.display_name.eq_ignore_ascii_case(name) || d.field_name.eq_ignore_ascii_case(name)
+            })
+            .collect();
+        if defs.len() != 1 {
+            return true;
+        }
+        observed.iter().any(|(key, value)| {
+            (key.eq_ignore_ascii_case(&defs[0].display_name)
+                || key.eq_ignore_ascii_case(&defs[0].field_name))
+                && value != expected
+        })
+    })
+}
+
 async fn active_contact_fields_match(
+    db: &Db,
+    ctx: &Ctx,
+    export: &exports_repo::MarketingExportRow,
     operations: &CampaignsOperations,
     access: &infrastructure::providers::zoho_campaigns::SecretValue,
     list_key: &str,
@@ -1321,11 +1477,22 @@ async fn active_contact_fields_match(
         .into_iter()
         .map(|contact| (contact.email.trim().to_ascii_lowercase(), contact.fields))
         .collect();
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let proof = exports_repo::has_recent_field_evidence(
+        &mut tx,
+        export.id,
+        &export_hash(&export.export_hash),
+        &field_values_hash(recipients)?,
+    )
+    .await?;
+    tx.rollback().await?;
     Ok(recipients.iter().all(|recipient| {
         observed
             .get(&recipient.normalized_address.to_ascii_lowercase())
             .is_some_and(|fields| {
                 contact_fields_match_with_definitions(fields, &recipient.variables, &definitions)
+                    || (proof
+                        && !observed_fields_conflict(fields, &recipient.variables, &definitions))
             })
     }))
 }
@@ -2510,8 +2677,16 @@ pub async fn sync_export(
         )
         .await;
     }
-    if !active_contact_fields_match(operations, &tokens.access_token, &list_key, &recipients)
-        .await?
+    if !active_contact_fields_match(
+        db,
+        ctx,
+        &export,
+        operations,
+        &tokens.access_token,
+        &list_key,
+        &recipients,
+    )
+    .await?
     {
         return mark_export_needs_review(
             db,
@@ -3093,7 +3268,16 @@ pub async fn send_export(
         .campaign_key
         .as_deref()
         .ok_or_else(|| AppError::conflict("Campaigns draft is missing"))?;
-    if !active_contact_fields_match(operations, &tokens.access_token, list_key, &recipients).await?
+    if !active_contact_fields_match(
+        db,
+        ctx,
+        &export,
+        operations,
+        &tokens.access_token,
+        list_key,
+        &recipients,
+    )
+    .await?
     {
         return mark_export_needs_review(
             db,
@@ -3572,8 +3756,16 @@ pub async fn refresh_export(
             .map(|recipient| recipient.normalized_address.to_ascii_lowercase())
             .collect();
         let audience_matches = current_exact_list(&audience, &active, &unsubscribed, &bounced)
-            && active_contact_fields_match(operations, &tokens.access_token, list_key, &recipients)
-                .await?;
+            && active_contact_fields_match(
+                db,
+                ctx,
+                &export,
+                operations,
+                &tokens.access_token,
+                list_key,
+                &recipients,
+            )
+            .await?;
         let send_operation_pending = operation_rows.iter().any(|operation| {
             operation.kind == "send_campaign"
                 && operation.correlation_key == "send_campaign"

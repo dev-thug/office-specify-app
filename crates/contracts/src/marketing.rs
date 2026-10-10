@@ -138,6 +138,21 @@ pub struct SendMarketingExportRequest {
     pub expected_export_hash: String,
     pub confirmation: String,
 }
+
+/// Explicit operator observation when Zoho's list API omits custom values.
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MarketingFieldObservation {
+    pub email: String,
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyMarketingFieldsRequest {
+    pub expected_export_hash: String,
+    pub evidence_ref: String,
+    pub observations: Vec<MarketingFieldObservation>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MarketingChannelSetupRequest {
     pub mail_account_id: Uuid,

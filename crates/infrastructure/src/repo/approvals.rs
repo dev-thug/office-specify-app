@@ -487,6 +487,23 @@ pub async fn target_current_hash(
         .fetch_optional(tx.conn())
         .await
         .map_err(map_sqlx),
+        "suppression_release" => {
+            let row = super::compliance::get_suppression(tx, target_id).await?;
+            Ok(row.map(|supp| {
+                crate::crypto::sha256_bytes(
+                    serde_json::json!({
+                        "suppression_id": supp.id,
+                        "version": supp.version,
+                        "email_address_id": supp.email_address_id,
+                        "purpose_scope": supp.purpose_scope,
+                        "reason": supp.reason,
+                    })
+                    .to_string()
+                    .as_bytes(),
+                )
+                .to_vec()
+            }))
+        }
         _ => Ok(None),
     }
 }

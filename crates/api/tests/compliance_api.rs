@@ -681,6 +681,12 @@ async fn suppressions_create_and_release_request_flow() {
     let req = res.json::<Value>().await.unwrap();
     assert_eq!(req["data"]["status"], "pending");
     assert_eq!(req["data"]["suppression_id"], sid);
+    let approval_id = req["data"]["approval_request_id"].as_str().unwrap();
+    let detail = TestApp::data(app.get(&format!("/api/v1/approvals/{approval_id}")).await).await;
+    assert_eq!(
+        detail["target"]["current_hash"], detail["snapshot_hash"],
+        "an unchanged suppression must match the release snapshot"
+    );
 
     // Second pending request for the same suppression → 409 REQUEST_IN_PROGRESS.
     let res = app

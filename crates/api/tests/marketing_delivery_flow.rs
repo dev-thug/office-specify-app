@@ -32,7 +32,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use tokio::sync::{Mutex, Notify};
@@ -65,6 +65,7 @@ type MockListStore = HashMap<String, BTreeMap<String, BTreeMap<String, String>>>
 
 #[derive(Clone, Default)]
 struct ZohoMock {
+    omit_custom_fields: Arc<AtomicBool>,
     requests: Arc<Mutex<Vec<CapturedRequest>>>,
     lists: Arc<Mutex<MockListStore>>,
     unsubscribed: Arc<Mutex<HashMap<String, HashSet<String>>>>,
@@ -214,16 +215,21 @@ async fn zoho_request(
                 .map(|(email, fields)| {
                     let mut row = serde_json::Map::new();
                     row.insert("contact_email".into(), Value::String(email));
-                    row.extend(fields.into_iter().map(|(label, value)| {
-                        let api_name = if label == CONTENT_FIELD {
-                            "BOOKING_URL".to_owned()
-                        } else if label == OFFICE_UNSUBSCRIBE_FIELD {
-                            "OFFICE_UNSUBSCRIBE_URL".to_owned()
-                        } else {
-                            label
-                        };
-                        (api_name, Value::String(value))
-                    }));
+                    row.extend(
+                        fields
+                            .into_iter()
+                            .filter(|_| !mock.omit_custom_fields.load(Ordering::SeqCst))
+                            .map(|(label, value)| {
+                                let api_name = if label == CONTENT_FIELD {
+                                    "BOOKING_URL".to_owned()
+                                } else if label == OFFICE_UNSUBSCRIBE_FIELD {
+                                    "OFFICE_UNSUBSCRIBE_URL".to_owned()
+                                } else {
+                                    label
+                                };
+                                (api_name, Value::String(value))
+                            }),
+                    );
                     Value::Object(row)
                 })
                 .collect::<Vec<_>>();
@@ -2392,4 +2398,200 @@ async fn workspace_booking_field_lease_blocks_overlapping_export_until_prior_cam
         second_booking_url
     );
     assert_eq!(sent_campaign_count(&fixture.mock).await, 1);
+}
+
+#[tokio::test]
+async fn omitted_provider_fields_require_exact_audited_operator_evidence() {
+    let Some(fixture) = fixture().await else {
+        return;
+    };
+    fixture
+        .mock
+        .omit_custom_fields
+        .store(true, Ordering::SeqCst);
+    let address = create_recipient(&fixture.app.state.db, &fixture.world, "field-evidence").await;
+    let launch = create_frozen_launch(&fixture, "field-evidence", &[address]).await;
+    let export = prepare_export(&fixture, &launch, "field-evidence").await;
+    let blocked = sync_export(&fixture, &export, "field-evidence").await;
+    assert_eq!(blocked["state"], "needs_review");
+    let list_key = blocked["provider_list_key"].as_str().unwrap();
+    let rows = fixture.mock.lists.lock().await[list_key].clone();
+    let observations: Vec<Value> = rows
+        .into_iter()
+        .map(|(email, fields)| json!({"email":email,"fields":fields}))
+        .collect();
+    let path = format!(
+        "/api/v1/marketing/exports/{}/field-evidence",
+        export["id"].as_str().unwrap()
+    );
+    let mut wrong = observations.clone();
+    wrong[0]["fields"][OFFICE_UNSUBSCRIBE_FIELD] =
+        json!("https://wrong.example/public/unsubscribe/wrong");
+    let rejected = post(&fixture.app,&fixture.admin,&fixture.admin_csrf,&path,
+        json!({"expected_export_hash":export["export_hash"],"evidence_ref":"synthetic-provider-ui","observations":wrong}),Some("field-evidence-wrong"),None).await;
+    assert_eq!(
+        rejected.status(),
+        StatusCode::BAD_REQUEST,
+        "wrong recipient capability must never be attested"
+    );
+    let evidence = post(&fixture.app,&fixture.admin,&fixture.admin_csrf,&path,
+        json!({"expected_export_hash":export["export_hash"],"evidence_ref":"synthetic-provider-ui?token=private-capability-reference","observations":observations}),Some("field-evidence-exact"),None).await;
+    assert_eq!(evidence.status(), StatusCode::OK);
+    let replay=post(&fixture.app,&fixture.admin,&fixture.admin_csrf,&path,
+        json!({"expected_export_hash":export["export_hash"],"evidence_ref":"synthetic-provider-ui?token=private-capability-reference","observations":observations}),Some("field-evidence-exact"),None).await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let mut proof_tx = fixture
+        .app
+        .state
+        .db
+        .begin(fixture.world.workspace_id)
+        .await
+        .unwrap();
+    let proof_count:i64=sqlx::query_scalar("SELECT count(*) FROM audit_logs WHERE workspace_id=$1 AND action='marketing.export_fields_verified' AND target_id=$2")
+        .bind(fixture.world.workspace_id).bind(Uuid::parse_str(export["id"].as_str().unwrap()).unwrap()).fetch_one(proof_tx.conn()).await.unwrap();
+    assert_eq!(
+        proof_count, 1,
+        "replaying an observation must not renew its ten-minute validity"
+    );
+    proof_tx.rollback().await.unwrap();
+    let denied=post(&fixture.app,&fixture.manager,&fixture.manager_csrf,&path,
+        json!({"expected_export_hash":export["export_hash"],"evidence_ref":"not-admin","observations":observations}),Some("field-evidence-manager"),None).await;
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    fixture
+        .mock
+        .omit_custom_fields
+        .store(false, Ordering::SeqCst);
+    let email = observations[0]["email"].as_str().unwrap();
+    let original = observations[0]["fields"][OFFICE_UNSUBSCRIBE_FIELD]
+        .as_str()
+        .unwrap()
+        .to_string();
+    fixture
+        .mock
+        .lists
+        .lock()
+        .await
+        .get_mut(list_key)
+        .unwrap()
+        .get_mut(email)
+        .unwrap()
+        .insert(
+            OFFICE_UNSUBSCRIBE_FIELD.into(),
+            "https://wrong.example/unsubscribe".into(),
+        );
+    let contradicted = sync_export(&fixture, &export, "field-evidence-conflict").await;
+    assert_eq!(
+        contradicted["state"], "needs_review",
+        "operator evidence must never override contradictory provider values"
+    );
+    fixture
+        .mock
+        .lists
+        .lock()
+        .await
+        .get_mut(list_key)
+        .unwrap()
+        .get_mut(email)
+        .unwrap()
+        .insert(OFFICE_UNSUBSCRIBE_FIELD.into(), original);
+    fixture
+        .mock
+        .omit_custom_fields
+        .store(true, Ordering::SeqCst);
+    let ready = sync_export(&fixture, &export, "field-evidence-after-proof").await;
+    assert_eq!(ready["state"], "ready");
+    approve_native_export(&fixture, &launch, &ready, "field-evidence").await;
+    let sent = post(
+        &fixture.app,
+        &fixture.admin,
+        &fixture.admin_csrf,
+        &format!(
+            "/api/v1/marketing/exports/{}/send",
+            export["id"].as_str().unwrap()
+        ),
+        json!({"expected_export_hash":export["export_hash"],"confirmation":"SEND"}),
+        Some("field-evidence-send"),
+        None,
+    )
+    .await;
+    assert_eq!(sent.status(), StatusCode::OK);
+    let mut tx = fixture
+        .app
+        .state
+        .db
+        .begin(fixture.world.workspace_id)
+        .await
+        .unwrap();
+    let details: Value=sqlx::query_scalar("SELECT details FROM audit_logs WHERE workspace_id=$1 AND action='marketing.export_fields_verified' AND target_id=$2")
+        .bind(fixture.world.workspace_id).bind(Uuid::parse_str(export["id"].as_str().unwrap()).unwrap()).fetch_one(tx.conn()).await.unwrap();
+    assert_eq!(details["source"], "operator_observation");
+    assert!(
+        !details.to_string().contains("private-capability-reference"),
+        "even a sensitive reference must be stored only as a hash"
+    );
+    assert!(
+        !details.to_string().contains("/public/unsubscribe/"),
+        "audit stores hashes rather than capability URLs"
+    );
+    let export_id = Uuid::parse_str(export["id"].as_str().unwrap()).unwrap();
+    let export_hash = export["export_hash"].as_str().unwrap();
+    let values_hash = details["values_hash"].as_str().unwrap();
+    assert!(
+        marketing_exports::has_recent_field_evidence(&mut tx, export_id, export_hash, values_hash)
+            .await
+            .unwrap()
+    );
+    let mut old_details = details.clone();
+    let old_values_hash = "0".repeat(64);
+    old_details["values_hash"] = json!(old_values_hash);
+    for when in [
+        chrono::Utc::now() - chrono::Duration::minutes(11),
+        chrono::Utc::now() + chrono::Duration::minutes(1),
+    ] {
+        sqlx::query("INSERT INTO audit_logs(workspace_id,actor_principal_id,action,target_type,target_id,request_id,details,created_at) VALUES($1,$2,'marketing.export_fields_verified','marketing_export',$3,'field-proof-window',$4,$5)")
+            .bind(fixture.world.workspace_id).bind(fixture.world.admin.principal_id).bind(export_id)
+            .bind(&old_details).bind(when).execute(tx.conn()).await.unwrap();
+    }
+    assert!(
+        !marketing_exports::has_recent_field_evidence(
+            &mut tx,
+            export_id,
+            export_hash,
+            &old_values_hash
+        )
+        .await
+        .unwrap(),
+        "expired or future-dated observations cannot authorize missing fields"
+    );
+    marketing_exports::claim_operation(
+        &mut tx,
+        export_id,
+        "add_contacts",
+        "after-observation",
+        &[7; 32],
+    )
+    .await
+    .unwrap();
+    assert!(
+        !marketing_exports::has_recent_field_evidence(&mut tx, export_id, export_hash, values_hash)
+            .await
+            .unwrap(),
+        "an unresolved later write invalidates the earlier observation"
+    );
+    marketing_exports::complete_operation(
+        &mut tx,
+        export_id,
+        "add_contacts",
+        "after-observation",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !marketing_exports::has_recent_field_evidence(&mut tx, export_id, export_hash, values_hash)
+            .await
+            .unwrap(),
+        "a completed later write also requires a fresh observation"
+    );
+    tx.rollback().await.unwrap();
 }

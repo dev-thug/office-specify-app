@@ -5839,6 +5839,29 @@
         ],
         "type": "object"
       },
+      "MarketingFieldObservation": {
+        "additionalProperties": false,
+        "description": "Explicit operator observation when Zoho's list API omits custom values.",
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "fields": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "email",
+          "fields"
+        ],
+        "type": "object"
+      },
       "MarketingListResponse": {
         "properties": {
           "contacts": {
@@ -8872,6 +8895,29 @@
           "risky"
         ],
         "type": "string"
+      },
+      "VerifyMarketingFieldsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "type": "string"
+          },
+          "expected_export_hash": {
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/MarketingFieldObservation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_export_hash",
+          "evidence_ref",
+          "observations"
+        ],
+        "type": "object"
       },
       "Violation": {
         "description": "Field-level violation inside a problem detail (B.1.2).",
@@ -20079,6 +20125,112 @@
             "description": ""
           },
           "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/marketing/exports/{id}/field-evidence": {
+      "post": {
+        "operationId": "verify_export_fields",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMarketingFieldsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/MarketingExportResponse"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
             "content": {
               "application/problem+json": {
                 "schema": {

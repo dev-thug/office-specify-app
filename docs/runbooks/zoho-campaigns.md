@@ -35,6 +35,30 @@ all recipients received or read it. The UI does not synthesize recipient deliver
 or engagement evidence. A submitted Campaigns campaign cannot be recalled by
 Office's ordinary pause/cancel actions; those actions prevent future local work.
 
+### Custom-field evidence and Zoho content review
+
+The documented `getlistsubscribers` response and the tested account omit custom
+field values. Missing values do not count as successful verification. After
+contact writes finish, an administrator may read the values in Zoho's contact
+screen (or export) and submit `POST /marketing/exports/{id}/field-evidence` with
+`expected_export_hash`, a non-secret `evidence_ref`, and `observations` containing
+each recipient's `email` and exact mapped `fields` keyed by display name. Every
+recipient and value must match the frozen export. Office hashes both the field
+snapshot and evidence reference; it does not store raw capability URLs or the
+reference text in the audit. This observation lasts ten minutes and is invalid
+after later or unresolved contact writes. It supplements omitted values only;
+contradictory values returned by Zoho still block sync/send. Observe again after
+expiry and submit a new idempotency key; replaying the original request never
+renews its observation time. Approval, audience, consent, suppression and final
+SEND gates still apply.
+
+Zoho may reject `sendcampaign` with **6611 (Content not reviewed)**. This is a
+provider refusal, not successful delivery. Review the campaign in Zoho before
+attempting API delivery. The tested console combines review and launch; if an
+operator completes delivery there, preserve the API rejection as history and
+record that delivery was submitted in the console. Do not blindly retry the API
+or report console delivery as an accepted Office API call.
+
 ## Unsubscribe and reports
 
 Office unsubscribe and booking routes remain local. An Office marketing/all

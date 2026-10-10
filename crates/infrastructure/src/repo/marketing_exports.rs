@@ -510,6 +510,57 @@ pub async fn list_operations(
     .map_err(map_sqlx)
 }
 
+/// Short-lived, hash-bound operator evidence supplements omitted fields only.
+/// Any later or unresolved contact mutation invalidates the observation.
+pub async fn has_recent_field_evidence(
+    tx: &mut Tx<'_>,
+    export_id: Uuid,
+    export_hash: &str,
+    values_hash: &str,
+) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM audit_logs a
+          JOIN principals p ON p.workspace_id=a.workspace_id AND p.id=a.actor_principal_id
+          WHERE a.workspace_id=$1 AND a.target_id=$2 AND a.action='marketing.export_fields_verified'
+            AND p.kind='human' AND p.role='admin' AND p.status='active'
+            AND a.details->>'export_hash'=$3 AND a.details->>'values_hash'=$4
+            AND a.details->>'source'='operator_observation'
+            AND a.created_at BETWEEN now()-interval '10 minutes' AND now()
+            AND NOT EXISTS(SELECT 1 FROM marketing_operations o
+              WHERE o.workspace_id=a.workspace_id AND o.export_id=$2
+                AND o.kind IN ('subscribe','add_contacts')
+                AND (o.status<>'completed' OR o.updated_at>a.created_at)))",
+    )
+    .bind(tx.workspace_id())
+    .bind(export_id)
+    .bind(export_hash)
+    .bind(values_hash)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// A transport replay must preserve the original observation timestamp.
+pub async fn field_evidence_recorded(
+    tx: &mut Tx<'_>,
+    export_id: Uuid,
+    actor_id: Uuid,
+    key_hash: &str,
+) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM audit_logs WHERE workspace_id=$1
+        AND target_id=$2 AND actor_principal_id=$3 AND action='marketing.export_fields_verified'
+        AND details->>'request_key_hash'=$4)",
+    )
+    .bind(tx.workspace_id())
+    .bind(export_id)
+    .bind(actor_id)
+    .bind(key_hash)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
 /// Record the immutable approval binding for a ready provider-bound export.
 /// The database trigger rechecks the current approved decision, exact hash,
 /// launch target, and independent active human approver in this transaction.

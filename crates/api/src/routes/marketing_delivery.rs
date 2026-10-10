@@ -18,7 +18,7 @@ use contracts::{
     AppError, Envelope, Meta, Problem,
     marketing::{
         MarketingExportContentResponse, MarketingExportResponse, PrepareMarketingExportRequest,
-        SendMarketingExportRequest,
+        SendMarketingExportRequest, VerifyMarketingFieldsRequest,
     },
 };
 use infrastructure::{crypto, idempotency};
@@ -62,6 +62,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_export))
         .routes(routes!(get_export_content))
         .routes(routes!(sync_export))
+        .routes(routes!(verify_export_fields))
         .routes(routes!(send_export))
         .routes(routes!(refresh_export))
 }
@@ -214,6 +215,38 @@ async fn sync_export(
         state.campaigns.as_deref(),
         state.operations.as_deref(),
         id,
+    )
+    .await?;
+    Ok(AxumJson(envelope(row, &ctx.request_id)))
+}
+
+#[utoipa::path(post,path="/marketing/exports/{id}/field-evidence",params(("id"=Uuid,Path)),request_body=VerifyMarketingFieldsRequest,
+    responses((status=200,body=MarketingExportResponse),(status=400,body=Problem),(status=403,body=Problem),(status=409,body=Problem)))]
+async fn verify_export_fields(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Path(id): Path<Uuid>,
+    IdempotencyKey(key): IdempotencyKey,
+    Json(request): Json<VerifyMarketingFieldsRequest>,
+) -> Result<AxumJson<Envelope<MarketingExportResponse>>, ProblemError> {
+    let ctx = auth.into_inner();
+    application::marketing::authorize(&state.db, &ctx, "marketing.export_fields_verify").await?;
+    let observation_key_hash = request_hash(id, &key)?;
+    reserve_idempotency(
+        &state,
+        &ctx,
+        "POST /api/v1/marketing/exports/{id}/field-evidence",
+        key,
+        request_hash(id, &request)?,
+        id,
+    )
+    .await?;
+    let row = application::marketing::delivery::verify_export_fields(
+        &state.db,
+        &ctx,
+        id,
+        request,
+        &observation_key_hash,
     )
     .await?;
     Ok(AxumJson(envelope(row, &ctx.request_id)))

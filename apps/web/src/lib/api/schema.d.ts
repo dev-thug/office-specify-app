@@ -1519,6 +1519,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/marketing/exports/{id}/field-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["verify_export_fields"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/marketing/exports/{id}/refresh": {
         parameters: {
             query?: never;
@@ -4457,6 +4473,13 @@ export interface components {
             contact_field: string;
             merge_tag: string;
         };
+        /** @description Explicit operator observation when Zoho's list API omits custom values. */
+        MarketingFieldObservation: {
+            email: string;
+            fields: {
+                [key: string]: string;
+            };
+        };
         MarketingListResponse: {
             /** Format: int64 */
             contacts: number;
@@ -5544,6 +5567,11 @@ export interface components {
          * @enum {string}
          */
         VerificationStatus: "unknown" | "verified" | "invalid" | "risky";
+        VerifyMarketingFieldsRequest: {
+            evidence_ref: string;
+            expected_export_hash: string;
+            observations: components["schemas"]["MarketingFieldObservation"][];
+        };
         /** @description Field-level violation inside a problem detail (B.1.2). */
         Violation: {
             code: string;
@@ -11691,6 +11719,64 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    verify_export_fields: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyMarketingFieldsRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["MarketingExportResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
