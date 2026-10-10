@@ -4,6 +4,7 @@
 //! GET `/mcp` → 405. Auth = `Authorization: Bearer osk_…` service credential
 //! (deviation X5 — no OAuth discovery; protected-resource metadata → 404).
 
+mod guidance;
 pub mod jsonrpc;
 pub mod server;
 pub mod tools;
@@ -193,6 +194,9 @@ pub fn all_tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
     v.extend(tools::research::tools());
     v.extend(tools::sending::tools());
     v.extend(tools::templates::tools());
+    for tool in &mut v {
+        guidance::enrich(tool);
+    }
     v
 }
 

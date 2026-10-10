@@ -89,6 +89,12 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
         .await
         .unwrap();
     assert_eq!(res["result"]["protocolVersion"], "2025-11-25");
+    assert!(
+        res["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("proposed_data.contacts")
+    );
     let batch = client
         .post(&url)
         .bearer_auth(&token)
@@ -120,6 +126,21 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
         .await
         .unwrap();
     let tools = list["result"]["tools"].as_array().unwrap();
+    let research = tools
+        .iter()
+        .find(|tool| tool["name"] == "research_propose_leads")
+        .unwrap();
+    assert!(
+        research["inputSchema"]["examples"]
+            .as_array()
+            .is_some_and(|examples| !examples.is_empty())
+    );
+    assert!(
+        research["inputSchema"]["properties"]["agent_run_id"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("X-Agent-Run-Id")
+    );
     assert!(tools.iter().any(|t| t["name"] == "crm_search_companies"));
     assert!(!tools.iter().any(|t| {
         ["mail_submit", "approvals_decide", "mailbox_grant"]

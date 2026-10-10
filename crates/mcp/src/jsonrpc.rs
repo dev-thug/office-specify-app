@@ -123,5 +123,6 @@ pub fn initialize_result() -> Value {
         "protocolVersion": crate::PROTOCOL_VERSION,
         "serverInfo": { "name": crate::SERVER_NAME, "version": crate::SERVER_VERSION },
         "capabilities": { "tools": {} },
+        "instructions": crate::guidance::INSTRUCTIONS,
     })
 }

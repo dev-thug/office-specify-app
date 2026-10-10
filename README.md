@@ -24,6 +24,12 @@ The backend is a Rust workspace; the web interface is a Next.js app in
 
 ## Features
 
+For agent integration, read the [MCP connection, company-research field mapping,
+and feature coverage guide](docs/runbooks/mcp-agent-guide.md). The server exposes
+22 tools for selected read, research, proposal, and draft workflows; it does
+**not** expose every UI/REST action. Its initialization instructions and input
+schemas explain record IDs, field destinations, examples, and human handoffs.
+
 New to Office? Open **Usage guide** in the top bar for the setup-to-send flow
 and instructions for every menu. Hover or focus the question-mark icon beside
 a menu or the current screen name for a short explanation; click it (or press
@@ -142,6 +148,12 @@ bootstrap account. The optional MCP endpoint listens at
 ```sh
 set -a; source .env; set +a; cargo run -p mcp
 ```
+
+Use an HTTP MCP client with an Office service credential in its Authorization
+Bearer header. OAuth discovery and stdio are not implemented. Agent scopes and
+mailbox grants still apply; human approval and direct-send restrictions remain
+in force. See the [agent guide](docs/runbooks/mcp-agent-guide.md) before issuing
+credentials or submitting company research.
 
 These are local-only addresses. A booking or unsubscribe URL using loopback can
 only be opened on the machine running Office. Local work does not need a public
