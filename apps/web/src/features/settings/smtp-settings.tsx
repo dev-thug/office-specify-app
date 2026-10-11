@@ -80,7 +80,7 @@ const EMPTY_FORM: SmtpForm = {
   name: "",
   mailAccountId: "",
   purpose: "marketing",
-  host: "",
+  host: "smtppro.zoho.com",
   port: "587",
   security: "starttls",
   username: "",
@@ -624,11 +624,19 @@ export function SmtpSettings({
     },
   });
 
+  // Zoho 기본값: 메일 계정이 하나뿐이면 자동 선택하고, 로그인·From 주소·연결 이름은
+  // 선택한 메일 계정의 주소에서 채운다 (고급 설정에서 바꿀 수 있다).
+  const selectedAccountId =
+    form.mailAccountId || (mailAccounts.length === 1 ? (mailAccounts[0]?.id ?? "") : "");
+  const selectedAccount = mailAccounts.find((account) => account.id === selectedAccountId);
+  const autoAddress = selectedAccount?.primary_address ?? "";
+  const autoName = autoAddress ? t("autoName", { address: autoAddress }) : "";
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError(null);
 
-    if (!form.mailAccountId) {
+    if (!selectedAccountId) {
       setFormError(t("mailAccountRequired"));
       return;
     }
@@ -650,15 +658,15 @@ export function SmtpSettings({
     }
 
     create.mutate({
-      name: form.name.trim(),
-      mail_account_id: form.mailAccountId,
+      name: form.name.trim() || autoName,
+      mail_account_id: selectedAccountId,
       purpose: form.purpose,
       host: form.host.trim(),
       port,
       security: form.security,
-      username: form.username.trim(),
+      username: form.username.trim() || autoAddress,
       password: form.password,
-      from_address: form.fromAddress.trim(),
+      from_address: form.fromAddress.trim() || autoAddress,
       from_name: form.fromName.trim(),
       reply_to: form.replyTo.trim() || null,
       custom_headers: customHeaders,
@@ -855,20 +863,9 @@ export function SmtpSettings({
           </DialogHeader>
           <form onSubmit={submit} autoComplete="off" className="flex flex-col gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="smtp-name">{t("name")}</Label>
-              <Input
-                id="smtp-name"
-                value={form.name}
-                required
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, name: event.target.value }))
-                }
-              />
-            </div>
-            <div className="grid gap-1.5">
               <Label htmlFor="smtp-mail-account">{t("mailAccount")}</Label>
               <Select
-                value={form.mailAccountId}
+                value={selectedAccountId}
                 onValueChange={(mailAccountId) =>
                   setForm((current) => ({ ...current, mailAccountId }))
                 }
@@ -886,83 +883,6 @@ export function SmtpSettings({
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="smtp-purpose">{t("purpose")}</Label>
-              <Select
-                value={form.purpose}
-                onValueChange={(purpose: SmtpPurpose) =>
-                  setForm((current) => ({ ...current, purpose }))
-                }
-              >
-                <SelectTrigger id="smtp-purpose" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="marketing">{t("purposes.marketing")}</SelectItem>
-                  <SelectItem value="correspondence">{t("purposes.correspondence")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="smtp-host">{t("host")}</Label>
-              <Input
-                id="smtp-host"
-                autoComplete="off"
-                placeholder={t("hostPlaceholder")}
-                value={form.host}
-                required
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, host: event.target.value }))
-                }
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label htmlFor="smtp-port">{t("port")}</Label>
-                <Input
-                  id="smtp-port"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  step={1}
-                  value={form.port}
-                  required
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, port: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="smtp-security">{t("security")}</Label>
-                <Select
-                  value={form.security}
-                  onValueChange={(security: SmtpSecurity) =>
-                    setForm((current) => ({ ...current, security }))
-                  }
-                >
-                  <SelectTrigger id="smtp-security" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="starttls">{t("starttls")}</SelectItem>
-                    <SelectItem value="tls">{t("tls")}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="smtp-username">{t("username")}</Label>
-              <Input
-                id="smtp-username"
-                autoComplete="username"
-                placeholder={t("usernamePlaceholder")}
-                value={form.username}
-                required
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, username: event.target.value }))
-                }
-              />
-            </div>
-            <div className="grid gap-1.5">
               <Label htmlFor="smtp-password">{t("password")}</Label>
               <Input
                 id="smtp-password"
@@ -974,23 +894,7 @@ export function SmtpSettings({
                   setForm((current) => ({ ...current, password: event.target.value }))
                 }
               />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="smtp-from-address">{t("fromAddress")}</Label>
-              <Input
-                id="smtp-from-address"
-                type="email"
-                autoComplete="email"
-                placeholder={t("fromAddressPlaceholder")}
-                value={form.fromAddress}
-                required
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    fromAddress: event.target.value,
-                  }))
-                }
-              />
+              <p className="text-2xs text-muted-foreground">{t("passwordHint")}</p>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="smtp-from-name">{t("fromName")}</Label>
@@ -1002,36 +906,6 @@ export function SmtpSettings({
                   setForm((current) => ({ ...current, fromName: event.target.value }))
                 }
               />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="smtp-reply-to">{t("replyTo")}</Label>
-              <Input
-                id="smtp-reply-to"
-                type="email"
-                placeholder={t("replyToOptional")}
-                value={form.replyTo}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, replyTo: event.target.value }))
-                }
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="smtp-custom-headers">{t("customHeaders")}</Label>
-              <Textarea
-                id="smtp-custom-headers"
-                rows={3}
-                spellCheck={false}
-                value={form.customHeaders}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    customHeaders: event.target.value,
-                  }))
-                }
-              />
-              <p className="text-2xs text-muted-foreground">
-                {t("customHeadersHint")}
-              </p>
             </div>
             <div className="flex items-start gap-2">
               <Checkbox
@@ -1051,6 +925,149 @@ export function SmtpSettings({
                 {t("senderConfirmed")}
               </Label>
             </div>
+            <details className="rounded-xl border p-3">
+              <summary className="cursor-pointer text-sm font-medium">
+                {t("advancedTitle")}
+              </summary>
+              <p className="mt-2 text-2xs text-muted-foreground">{t("advancedHint")}</p>
+              <div className="mt-3 flex flex-col gap-3">
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-name">{t("name")}</Label>
+                  <Input
+                    id="smtp-name"
+                    value={form.name}
+                    placeholder={autoName}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, name: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-purpose">{t("purpose")}</Label>
+                  <Select
+                    value={form.purpose}
+                    onValueChange={(purpose: SmtpPurpose) =>
+                      setForm((current) => ({ ...current, purpose }))
+                    }
+                  >
+                    <SelectTrigger id="smtp-purpose" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="marketing">{t("purposes.marketing")}</SelectItem>
+                      <SelectItem value="correspondence">
+                        {t("purposes.correspondence")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-host">{t("host")}</Label>
+                  <Input
+                    id="smtp-host"
+                    autoComplete="off"
+                    placeholder={t("hostPlaceholder")}
+                    value={form.host}
+                    required
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, host: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="smtp-port">{t("port")}</Label>
+                    <Input
+                      id="smtp-port"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      step={1}
+                      value={form.port}
+                      required
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, port: event.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="smtp-security">{t("security")}</Label>
+                    <Select
+                      value={form.security}
+                      onValueChange={(security: SmtpSecurity) =>
+                        setForm((current) => ({ ...current, security }))
+                      }
+                    >
+                      <SelectTrigger id="smtp-security" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="starttls">{t("starttls")}</SelectItem>
+                        <SelectItem value="tls">{t("tls")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-username">{t("username")}</Label>
+                  <Input
+                    id="smtp-username"
+                    autoComplete="username"
+                    placeholder={autoAddress || t("usernamePlaceholder")}
+                    value={form.username}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, username: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-from-address">{t("fromAddress")}</Label>
+                  <Input
+                    id="smtp-from-address"
+                    type="email"
+                    autoComplete="email"
+                    placeholder={autoAddress || t("fromAddressPlaceholder")}
+                    value={form.fromAddress}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        fromAddress: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-reply-to">{t("replyTo")}</Label>
+                  <Input
+                    id="smtp-reply-to"
+                    type="email"
+                    placeholder={t("replyToOptional")}
+                    value={form.replyTo}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, replyTo: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="smtp-custom-headers">{t("customHeaders")}</Label>
+                  <Textarea
+                    id="smtp-custom-headers"
+                    rows={3}
+                    spellCheck={false}
+                    value={form.customHeaders}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        customHeaders: event.target.value,
+                      }))
+                    }
+                  />
+                  <p className="text-2xs text-muted-foreground">
+                    {t("customHeadersHint")}
+                  </p>
+                </div>
+              </div>
+            </details>
             {formError ? (
               <p role="alert" className="text-sm text-destructive">
                 {formError}

@@ -525,4 +525,57 @@ describe("mail accounts screen", () => {
     expect(screen.getByText("SMTP delivery")).toBeVisible();
     expect(screen.queryByText(/Zoho Campaigns/i)).not.toBeInTheDocument();
   });
+
+  it("needs only the app password and a From name for a single Zoho mailbox", async () => {
+    const calls: Call[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      const request = init ?? {};
+      calls.push({ url, init: request });
+      if (url === "/api/v1/smtp-connections" && request.method === "POST") {
+        return response(profile, 201);
+      }
+      return response([]);
+    });
+    mount(fetcher);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add SMTP connection" })).toBeEnabled()
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Add SMTP connection" }));
+
+    fireEvent.change(screen.getByLabelText("SMTP password"), {
+      target: { value: "zoho-app-password" },
+    });
+    fireEvent.change(screen.getByLabelText("From name"), {
+      target: { value: "Acme Sales" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "This From address is registered to the selected mail account.",
+      })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save SMTP connection" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.url === "/api/v1/smtp-connections" && c.init.method === "POST")
+      ).toBe(true)
+    );
+    const post = calls.find(
+      (c) => c.url === "/api/v1/smtp-connections" && c.init.method === "POST"
+    )!;
+    expect(JSON.parse(String(post.init.body))).toMatchObject({
+      name: "Zoho SMTP (mailbox@acme.test)",
+      mail_account_id: mailAccount.id,
+      purpose: "marketing",
+      host: "smtppro.zoho.com",
+      port: 587,
+      security: "starttls",
+      username: "mailbox@acme.test",
+      from_address: "mailbox@acme.test",
+      from_name: "Acme Sales",
+      password: "zoho-app-password",
+      sender_confirmed: true,
+    });
+  });
 });
