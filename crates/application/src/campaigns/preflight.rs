@@ -19,7 +19,6 @@ pub mod recipient_reason {
     pub const ADDRESS_NOT_FOUND: &str = "ADDRESS_NOT_FOUND";
     pub const ADDRESS_INVALID: &str = "ADDRESS_INVALID";
     pub const RECIPIENT_SUPPRESSED: &str = "RECIPIENT_SUPPRESSED";
-    pub const SEND_BASIS_UNVERIFIED: &str = "SEND_BASIS_UNVERIFIED";
     pub const RECIPIENT_ACTIVE_ELSEWHERE: &str = "RECIPIENT_ACTIVE_ELSEWHERE";
     pub const MEETING_TYPE_BINDING_REQUIRED: &str = "MEETING_TYPE_BINDING_REQUIRED";
     pub const MEETING_TYPE_BINDING_INVALID: &str = "MEETING_TYPE_BINDING_INVALID";
@@ -109,12 +108,6 @@ pub(crate) async fn recipient_block_reason(
         .is_empty()
     {
         return Ok(Some(recipient_reason::RECIPIENT_SUPPRESSED.to_string()));
-    }
-    if repo::valid_marketing_basis(tx, email_address_id)
-        .await?
-        .is_none()
-    {
-        return Ok(Some(recipient_reason::SEND_BASIS_UNVERIFIED.to_string()));
     }
     Ok(None)
 }

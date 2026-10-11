@@ -580,35 +580,10 @@ pub async fn evaluate(
         Check::fail("reply_recipient", "REPLY_RECIPIENT_MISMATCH")
     });
 
-    let basis_ok = match o.purpose.as_str() {
-        "correspondence" => {
-            if o.reply_to_message_id.is_some() {
-                // A matching inbound sender is the reply basis. A stale
-                // or retargeted snapshot must not inherit that exemption.
-                reply_recipient_ok
-            } else if let Some(basis) = o.communication_basis_id {
-                sending::basis_still_valid(tx, basis).await?
-            } else {
-                sending::any_valid_basis(tx, o.to_email_address_id, "correspondence")
-                    .await?
-                    .is_some()
-            }
-        }
-        _ => {
-            if let Some(basis) = o.communication_basis_id {
-                sending::basis_still_valid(tx, basis).await?
-            } else {
-                sending::any_valid_basis(tx, o.to_email_address_id, &o.purpose)
-                    .await?
-                    .is_some()
-            }
-        }
-    };
-    checks.push(if basis_ok {
-        Check::pass("send_basis")
-    } else {
-        Check::fail("send_basis", "SEND_BASIS_UNVERIFIED")
-    });
+    // A communication basis is reference information only (it is attached to
+    // the snapshot when one exists) and never blocks a send. Suppression,
+    // unsubscribe, hard-bounce and approval checks remain the gates.
+    checks.push(Check::pass("send_basis"));
 
     // -- New replies / bookings / duplicate contact --------------------
     if let Some(_reply_to) = o.reply_to_message_id {

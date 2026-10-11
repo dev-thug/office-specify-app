@@ -61,8 +61,9 @@ snapshot. Campaign approval also requires a separate explicit
 leaves the launch approved without a queued job. Agents cannot use `mail.send`
 or `mail.approve`. An agent mailbox `can_send` grant is only an ACL prerequisite
 for `mail_submit_approved`; it does not permit direct sending. Marketing sends are
-blocked unless current communication-basis evidence and sender/provider policy
-checks pass. Suppressed addresses are skipped. A send with an uncertain provider
+blocked unless sender/provider policy checks pass. A communication basis is
+reference information only and does not block sending. Suppressed addresses are
+skipped. A send with an uncertain provider
 outcome remains `unknown` and is never resubmitted automatically. Office does
 not run automatic email follow-ups or drip sequences.
 

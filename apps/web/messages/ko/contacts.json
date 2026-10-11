@@ -75,7 +75,7 @@
     "archivedBadge": "보관됨",
     "notFound": "담당자를 찾을 수 없거나 접근 권한이 없습니다",
     "emailsTitle": "이메일 주소",
-    "emailsDescription": "주소의 형식·도달 검증과 목적별 발송 허가는 서로 다른 축입니다. 형식이 유효해도 발송 근거가 없으면 보낼 수 없습니다.",
+    "emailsDescription": "주소의 형식·도달 검증과 목적별 발송 허가는 서로 다른 축입니다. 발송 근거는 참고 정보이며 발송을 막지 않습니다. 수신 거부와 차단 상태만 발송에서 제외됩니다.",
     "notesTitle": "메모",
     "tasksTitle": "업무",
     "activityTitle": "활동"
@@ -133,7 +133,7 @@
     "suppressed": "수신 거부됨",
     "suppressionReason": "차단 사유: {reason}",
     "emptyTitle": "연결된 주소가 없습니다",
-    "emptyDescription": "주소를 추가해도 형식만 확인되며 발송 근거는 별도 검토가 필요합니다.",
+    "emptyDescription": "주소를 추가하면 형식이 확인됩니다. 발송 근거는 필요할 때 참고용으로 기록할 수 있습니다.",
     "verificationHint": "형식·도달 검증 상태",
     "eligibilityHint": "마케팅 목적 발송 가능 여부",
     "reason": {

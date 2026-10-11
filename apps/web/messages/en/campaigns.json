@@ -405,8 +405,7 @@
     "target": {
       "manageContacts": "Manage company contacts",
       "manageEmails": "Manage contact emails",
-      "manageBasis": "Open sending-basis reviews",
-      "sendReviewRequired": "You can add this recipient and prepare a draft. Email verification, a sending basis, and human approval are required before sending.",
+      "suppressedEmail": "This address is suppressed and will be skipped when sending. You can still add the card and prepare a draft.",
       "addTitle": "Add a CRM company",
       "addDescription": "Choose a CRM company, contact, and recipient email. Adding a card does not send email.",
       "clearCompany": "Clear company",

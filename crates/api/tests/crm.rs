@@ -553,10 +553,11 @@ async fn t31_shared_address_single_row() {
         address_ids.push(e["email_address_id"].as_str().unwrap().to_string());
         // B.3.4: eligibility preview present, shared links surface after 2nd.
         assert!(
-            e["marketing_eligibility"]["reason_codes"]
+            !e["marketing_eligibility"]["reason_codes"]
                 .as_array()
                 .unwrap()
-                .contains(&json!("SEND_BASIS_UNVERIFIED"))
+                .contains(&json!("SEND_BASIS_UNVERIFIED")),
+            "a missing communication basis must not affect eligibility"
         );
         if i == 2 {
             assert_eq!(e["linked_contact_ids"].as_array().unwrap().len(), 2);

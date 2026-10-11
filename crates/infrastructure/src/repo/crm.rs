@@ -806,9 +806,8 @@ pub async fn unlink_contact_email(
 
 /// Marketing send-eligibility preview per address (B.3.4). Reason codes are
 /// the B.5 wire codes: `RECIPIENT_SUPPRESSED` for any active suppression
-/// covering marketing, `SEND_BASIS_UNVERIFIED` when no valid marketing
-/// communication basis exists (any jurisdiction — a display hint, not the
-/// §8.4 send decision).
+/// covering marketing. A communication basis is reference information and
+/// no longer affects eligibility.
 pub async fn marketing_eligibility(
     tx: &mut Tx<'_>,
     email_address_ids: &[Uuid],
@@ -827,24 +826,10 @@ pub async fn marketing_eligibility(
     .fetch_all(tx.conn())
     .await
     .map_err(map_sqlx)?;
-    let based: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT DISTINCT email_address_id FROM communication_bases
-          WHERE workspace_id = $1 AND email_address_id = ANY($2)
-            AND purpose = 'marketing' AND status = 'valid'
-            AND (valid_until IS NULL OR valid_until > now())",
-    )
-    .bind(tx.workspace_id())
-    .bind(email_address_ids)
-    .fetch_all(tx.conn())
-    .await
-    .map_err(map_sqlx)?;
     for id in email_address_ids {
         let mut codes = Vec::new();
         if suppressed.contains(id) {
             codes.push("RECIPIENT_SUPPRESSED".to_string());
-        }
-        if !based.contains(id) {
-            codes.push("SEND_BASIS_UNVERIFIED".to_string());
         }
         out.insert(*id, codes);
     }

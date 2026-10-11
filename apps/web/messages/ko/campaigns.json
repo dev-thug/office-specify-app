@@ -405,8 +405,7 @@
     "target": {
       "manageContacts": "회사 담당자 관리",
       "manageEmails": "담당자 이메일 관리",
-      "manageBasis": "발송 근거 검토 열기",
-      "sendReviewRequired": "캠페인에 추가하고 초안을 준비할 수 있습니다. 발송 전 이메일 확인, 발송 근거 및 사람 승인이 필요합니다.",
+      "suppressedEmail": "이 주소는 수신 거부(suppression) 상태라 발송 단계에서 제외됩니다. 카드 추가와 초안 작성은 가능합니다.",
       "addTitle": "CRM 회사 추가",
       "addDescription": "CRM에 등록된 회사와 담당자, 수신 이메일을 선택하세요. 카드 추가만으로 메일이 발송되지는 않습니다.",
       "clearCompany": "회사 선택 해제",

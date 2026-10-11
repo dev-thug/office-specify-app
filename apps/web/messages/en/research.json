@@ -19,7 +19,7 @@
     "decision": {
       "acceptTitle": "Accept proposal",
       "rejectTitle": "Reject proposal",
-      "acceptDescription": "Accepting registers the company in the CRM. Email addresses in the proposal are not sendable until a send basis is confirmed.",
+      "acceptDescription": "Accepting registers the company in the CRM. Email addresses in the proposal are registered with an unconfirmed send basis, which is reference information and does not block sending.",
       "rejectDescription": "You may leave a reason. Rejected proposals can be proposed again.",
       "mergeInto": "Merge into existing company",
       "mergeNew": "Register as new company",

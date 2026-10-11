@@ -2599,8 +2599,10 @@ async fn preflight_reports_suppressed_and_unbased_recipients() {
             .unwrap()
     };
     assert_eq!(find(ok)["recipient_checks_passed"], true);
+    // A communication basis is reference information, not a blocker.
+    assert_eq!(find(no_basis)["recipient_checks_passed"], true);
     assert!(
-        find(no_basis)["reason_codes"]
+        !find(no_basis)["reason_codes"]
             .as_array()
             .unwrap()
             .contains(&json!("SEND_BASIS_UNVERIFIED"))

@@ -75,7 +75,7 @@
     "archivedBadge": "Archived",
     "notFound": "Contact not found or you do not have access",
     "emailsTitle": "Email addresses",
-    "emailsDescription": "Address format/deliverability verification and per-purpose send permission are separate axes. A well-formed address still cannot be sent to without a verified basis.",
+    "emailsDescription": "Address format/deliverability verification and per-purpose send permission are separate axes. The send basis is reference information and does not block sending; only suppressed or blocked addresses are skipped.",
     "notesTitle": "Notes",
     "tasksTitle": "Tasks",
     "activityTitle": "Activity"
@@ -133,7 +133,7 @@
     "suppressed": "Suppressed",
     "suppressionReason": "Suppression reason: {reason}",
     "emptyTitle": "No addresses linked",
-    "emptyDescription": "Adding an address only checks its format — send basis needs separate review.",
+    "emptyDescription": "Adding an address checks its format. A send basis can be recorded as a reference when needed.",
     "verificationHint": "Format/deliverability verification state",
     "eligibilityHint": "Whether marketing-purpose sending is permitted",
     "reason": {

@@ -1055,13 +1055,16 @@ describe("personalized campaign routes", () => {
     );
     fireEvent.click(within(dialog).getByRole("combobox", { name: "Contact" }));
     fireEvent.click(await screen.findByRole("option", { name: /Mina Park/ }));
+    // A single address is picked automatically — no second email selection.
     await waitFor(() =>
-      expect(
-        within(dialog).getByRole("combobox", { name: "Recipient email" })
-      ).toBeEnabled()
+      expect(within(dialog).getByText("mina@northstar.example")).toBeInTheDocument()
     );
-    fireEvent.click(within(dialog).getByRole("combobox", { name: "Recipient email" }));
-    fireEvent.click(await screen.findByRole("option", { name: /mina@northstar.example/ }));
+    expect(
+      within(dialog).queryByRole("combobox", { name: "Recipient email" })
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Add company" })).toBeEnabled()
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Add company" }));
 
     await waitFor(() =>

@@ -219,21 +219,6 @@ pub async fn activate_launch(
             .await?;
             continue;
         }
-        if repo::valid_marketing_basis(tx, e.email_address_id)
-            .await?
-            .is_none()
-        {
-            repo::set_enrollment_state(
-                tx,
-                e.id,
-                d::enrollment_status::STOPPED,
-                None,
-                None,
-                Some("basis_unverified"),
-            )
-            .await?;
-            continue;
-        }
         let Some(send_at) = d::staggered_send_time(Utc::now(), i, &rules, tz) else {
             repo::set_enrollment_state(
                 tx,

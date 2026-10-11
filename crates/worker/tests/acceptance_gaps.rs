@@ -677,7 +677,7 @@ async fn run_registered_dispatch(db: &Db, workspace_id: Uuid, job_id: Uuid) {
 }
 
 #[tokio::test]
-async fn t35_accepted_candidate_fails_preflight_and_dispatch_send_basis_check() {
+async fn t35_accepted_candidate_with_pending_basis_is_not_blocked_by_basis() {
     let Some((db, api_db, world)) = test_db().await else {
         return;
     };
@@ -747,14 +747,14 @@ async fn t35_accepted_candidate_fails_preflight_and_dispatch_send_basis_check() 
         .iter()
         .find(|check| check.name == "send_basis")
         .expect("preflight must report the send-basis predicate");
+    // The communication basis is reference information: a pending basis
+    // does not fail preflight.
     assert!(
-        !basis_check.passed,
-        "pending candidate basis became eligible"
+        basis_check.passed,
+        "a pending communication basis must not block preflight"
     );
-    assert_eq!(basis_check.code.as_deref(), Some("SEND_BASIS_UNVERIFIED"));
 
-    // Approval can queue the outbound; the worker's dispatch handler must
-    // still re-evaluate the real basis before crossing the provider boundary.
+    // Approval can queue the outbound; dispatch no longer cancels on basis.
     approve_outbound(&db, &world, outbound_id, &payload_hash).await;
     let submitted = sending::submit(
         &db,
@@ -794,7 +794,10 @@ async fn t35_accepted_candidate_fails_preflight_and_dispatch_send_basis_check() 
     .unwrap();
     tx.rollback().await.unwrap();
 
-    assert_eq!(status, "canceled");
-    assert_eq!(failure_code.as_deref(), Some("SEND_BASIS_UNVERIFIED"));
-    assert_eq!(attempt_count, 0, "dispatch must stop before a send attempt");
+    assert_ne!(
+        failure_code.as_deref(),
+        Some("SEND_BASIS_UNVERIFIED"),
+        "status={status}"
+    );
+    assert!(attempt_count >= 1, "dispatch must reach a send attempt");
 }
