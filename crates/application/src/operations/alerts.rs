@@ -5,15 +5,14 @@ use contracts::operations::{
     AlertsResponse, BacklogAlert, DeadJobSample, DeadJobsAlert, ReauthMailboxAlert,
     ReauthMailboxSample, UnknownOutboundAlert,
 };
-use contracts::{AppError, Ctx, PrincipalKind, Role, Scope};
+use contracts::{AppError, Ctx, Role, Scope};
 use infrastructure::db::Db;
 use infrastructure::repo::operations as repo;
 
 /// Live operational alerts. Samples contain metadata and internal IDs only;
 /// they never include mail content, addresses, or OAuth secrets.
 pub async fn list(db: &Db, ctx: &Ctx) -> Result<AlertsResponse, AppError> {
-    if ctx.principal_kind != PrincipalKind::Human
-        || !matches!(ctx.role, Role::Admin | Role::Manager)
+    if !(matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx))
         || !ctx.scopes.contains(Scope::OperationsRead)
     {
         return Err(AppError::forbidden(

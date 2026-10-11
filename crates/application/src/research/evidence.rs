@@ -253,7 +253,7 @@ pub async fn review_evidence(
     id: Uuid,
     req: &EvidenceReviewRequest,
 ) -> Result<EvidenceResponse, AppError> {
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     authz::require_scope(ctx, Scope::ResearchWrite)?;
     let mut tx = db.begin(ctx.workspace_id).await?;
     let row = repo::get_evidence(&mut tx, id)

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,6 +8,7 @@ import { toast } from "sonner";
 import { ActivityFeed } from "@/features/companies/activity-feed";
 import { CompanyFormDialog } from "@/features/companies/company-form-dialog";
 import { principalName, useHumanPrincipals } from "@/features/companies/owner-select";
+import { ContactDetailSheet } from "@/features/contacts/contact-detail-sheet";
 import { ContactFormDialog } from "@/features/contacts/contact-form-dialog";
 import { MergeRequestDialog } from "@/features/companies/merge-request-dialog";
 import { NotesPanel } from "@/features/companies/notes-panel";
@@ -44,6 +44,7 @@ export function CompanyDetailScreen({ companyId }: { companyId: string }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [editOpen, setEditOpen] = useState(false);
   const [addContactOpen, setAddContactOpen] = useState(false);
+  const [openContact, setOpenContact] = useState<Contact | null>(null);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveReason, setArchiveReason] = useState("");
@@ -145,10 +146,12 @@ export function CompanyDetailScreen({ companyId }: { companyId: string }) {
           </div>
           {contacts.isPending ? <div className="mt-3 grid gap-2">{[1, 2, 3].map((n) => <Skeleton key={n} className="h-14 w-full rounded-lg" />)}</div> : contacts.isError ? <div className="mt-3"><ErrorState error={contacts.error} onRetry={() => void contacts.refetch()} /></div> : contactRows.length === 0 ? <div className="mt-3"><EmptyState title={t("contactsTab.emptyTitle")} description={t("contactsTab.emptyDescription")} /></div> : (
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-              {contactRows.map((contact) => <li key={contact.id} className="rounded-2xl border border-border bg-card px-4 py-3">
-                <Link className="font-medium underline-offset-4 hover:underline" href={`/app/contacts/${encodeURIComponent(contact.id)}`}>{contact.name}</Link>
-                <p className="mt-1 text-sm text-muted-foreground">{contact.job_title ?? "—"}{contact.department ? ` · ${contact.department}` : ""}</p>
-                <div className="mt-2"><StatusBadge status={contact.status} /></div>
+              {contactRows.map((contact) => <li key={contact.id}>
+                <button type="button" onClick={() => setOpenContact(contact)} aria-haspopup="dialog" className="w-full rounded-2xl border border-border bg-card px-4 py-3 text-left transition-colors hover:border-foreground/20 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="block font-medium">{contact.name}</span>
+                  <span className="mt-1 block text-sm text-muted-foreground">{contact.job_title ?? "—"}{contact.department ? ` · ${contact.department}` : ""}</span>
+                  <span className="mt-2 block"><StatusBadge status={contact.status} /></span>
+                </button>
               </li>)}
             </ul>
           )}
@@ -162,6 +165,7 @@ export function CompanyDetailScreen({ companyId }: { companyId: string }) {
       </Tabs>
       <CompanyFormDialog open={editOpen} onOpenChange={setEditOpen} company={company} etag={company.version} onSaved={() => { void queryClient.invalidateQueries({ queryKey: ["companies"] }); void detail.refetch(); }} />
       <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompany={company} onSaved={() => { void queryClient.invalidateQueries({ queryKey: ["contacts"] }); void contacts.refetch(); }} />
+      <ContactDetailSheet contact={openContact} onOpenChange={(open) => { if (!open) setOpenContact(null); }} />
       <MergeRequestDialog open={mergeOpen} onOpenChange={setMergeOpen} fixedTarget={company} pickerLabels={{ placeholder: t("list.searchPlaceholder"), none: t("list.unassigned"), empty: t("list.emptyFiltered") }} />
       <Dialog open={archiveOpen} onOpenChange={setArchiveOpen}>
         <DialogContent>

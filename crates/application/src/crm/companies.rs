@@ -117,7 +117,7 @@ pub async fn get(db: &Db, ctx: &Ctx, id: Uuid) -> Result<CompanyResponse, AppErr
 fn check_owner_assignment(ctx: &Ctx, owner: Option<Uuid>) -> Result<(), AppError> {
     if let Some(owner) = owner
         && owner != ctx.principal_id
-        && !matches!(ctx.role, Role::Admin | Role::Manager)
+        && !(matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx))
     {
         return Err(AppError::forbidden(
             "assigning another owner requires manager or admin role",
@@ -166,7 +166,7 @@ fn validate_insert(req: &CreateCompanyRequest) -> Result<CompanyInsert, AppError
     })
 }
 
-/// `POST /companies` — B.3.3. Agents are rejected (lead-proposals instead).
+/// `POST /companies` — B.3.3. Humans and agents with `crm.write` create directly.
 /// Always called with `Idempotency-Key` (route enforces) → 201 stored.
 pub async fn create(
     db: &Db,
@@ -175,9 +175,7 @@ pub async fn create(
     idem_key: String,
 ) -> Result<Stored<CompanyResponse>, AppError> {
     require_crm_write(ctx)?;
-    // B.3.3: agent direct creation is rejected — use /lead-proposals.
-    authz::require_not_agent_for(ctx, "create companies directly")?;
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     let insert = validate_insert(req)?;
     check_owner_assignment(ctx, req.owner_principal_id)?;
     let body = serde_json::to_value(req)
@@ -317,7 +315,6 @@ pub async fn patch(
     req: &PatchCompanyRequest,
 ) -> Result<CompanyResponse, AppError> {
     require_crm_write(ctx)?;
-    authz::require_not_agent_for(ctx, "modify companies")?;
     let mut tx = db.begin(ctx.workspace_id).await?;
     let row = crm::get_company(&mut tx, id)
         .await?
@@ -360,7 +357,6 @@ pub async fn archive(
     req: &ArchiveCompanyRequest,
 ) -> Result<CompanyResponse, AppError> {
     require_crm_write(ctx)?;
-    authz::require_not_agent_for(ctx, "archive companies")?;
     let mut tx = db.begin(ctx.workspace_id).await?;
     let row = crm::get_company(&mut tx, id)
         .await?
@@ -417,7 +413,6 @@ pub async fn request_merge(
     idem_key: String,
 ) -> Result<Stored<MergeCompanyResponse>, AppError> {
     require_crm_write(ctx)?;
-    authz::require_not_agent_for(ctx, "merge companies")?;
     authz::require_role(ctx, &[Role::Admin, Role::Manager])?;
     let bad = dcrm::invalid_field_choices(&req.field_choices);
     if !bad.is_empty() {

@@ -138,18 +138,9 @@ pub async fn put_grant(
         .await?
         .ok_or_else(|| AppError::not_found("principal not found"))?;
 
-    // Approved-submit separately checks human approval and the narrow
-    // mail.submit_approved scope. A can_send grant does not authorize the
-    // direct REST/mail.send path for agents.
-    if target.kind == "agent" && req.can_approve {
-        let _ = tx.rollback().await;
-        return Err(AppError::new(
-            ErrorCode::AgentDirectSendForbidden,
-            "agents cannot receive can_approve",
-        ));
-    }
-    // `can_approve` additionally requires Admin/Manager (§5.4).
-    if req.can_approve && !matches!(target.role.as_str(), "admin" | "manager") {
+    // `can_approve` additionally requires Admin/Manager or an agent (§5.4;
+    // agents hold Admin-equivalent authority gated by credential scopes).
+    if req.can_approve && !matches!(target.role.as_str(), "admin" | "manager" | "agent") {
         let _ = tx.rollback().await;
         return Err(AppError::validation(
             "can_approve requires an Admin or Manager principal",

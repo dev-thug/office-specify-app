@@ -20,7 +20,7 @@ pub struct RunListResult {
 }
 
 fn manager_or_admin(ctx: &Ctx) -> bool {
-    ctx.principal_kind == PrincipalKind::Human && matches!(ctx.role, Role::Admin | Role::Manager)
+    (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx))
 }
 
 fn may_view_run(ctx: &Ctx, run: &repo::AgentRunRow) -> bool {
@@ -539,7 +539,7 @@ pub async fn cancel_run_tx(
 fn may_finish_run(ctx: &Ctx, run: &repo::AgentRunRow) -> bool {
     if ctx.scopes.contains(contracts::Scope::AgentsRun)
         && ctx.principal_kind == PrincipalKind::Human
-        && ctx.role == Role::Admin
+        && (ctx.role == Role::Admin || crate::authz::agent_admin(ctx))
         && matches!(&ctx.auth, contracts::AuthMethod::Session { .. })
     {
         return true;

@@ -128,10 +128,10 @@ pub struct ZohoCallbackQuery {
 pub struct PutGrantRequest {
     pub can_read: bool,
     pub can_compose: bool,
-    /// Mailbox send ACL. For Agent principals this only satisfies the
-    /// approved-submit path; agents cannot use direct submit or `mail.send`.
+    /// Mailbox send ACL (direct submit additionally needs `mail.send`;
+    /// approved-submit needs `mail.submit_approved`).
     pub can_send: bool,
-    /// Human Admin/Manager approver authority. Agents cannot receive it.
+    /// Approver authority for Admin/Manager humans and agents.
     pub can_approve: bool,
     pub can_assign: bool,
 }

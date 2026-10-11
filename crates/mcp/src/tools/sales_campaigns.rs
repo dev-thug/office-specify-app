@@ -4,12 +4,19 @@
 //! Mutations reuse the application use cases and bind their explicit MCP
 //! idempotency key to the full request. Agents freeze the current draft and
 //! queue it through the existing dispatcher without a human approval step.
+//!
+//! REST parity (`crates/api/src/routes/sales_campaigns.rs`): list/create/get
+//! map to `GET|POST /sales-campaigns` and `GET /sales-campaigns/{id}`;
+//! `sales_campaigns_get_sender`/`set_sender` to `GET|PUT /sales-campaigns/sender`;
+//! `refresh_sender` to `POST /sales-campaigns/{id}/sender/refresh`; add_target,
+//! move_stage, create_message and queue to the `/targets` routes.
 
 use crate::{ToolDef, arguments, result, tool_with_db};
 use contracts::sales_campaigns::{
     AddSalesCampaignTargetRequest, CreateSalesCampaignDraftRequest, CreateSalesCampaignRequest,
     QueueSalesCampaignTargetRequest, QueueSalesCampaignTargetResponse, SalesCampaignResponse,
-    SalesCampaignSummary, SalesCampaignTargetResponse, UpdateSalesCampaignTargetRequest,
+    SalesCampaignSenderResponse, SalesCampaignSummary, SalesCampaignTargetResponse,
+    SetSalesCampaignSenderRequest, UpdateSalesCampaignTargetRequest,
 };
 use contracts::sending::MessageDraftResponse;
 use schemars::JsonSchema;
@@ -43,6 +50,25 @@ struct SalesCampaignCreateInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SalesCampaignGetInput {
+    campaign_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SalesCampaignGetSenderInput {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SalesCampaignSetSenderInput {
+    /// Stable printable ASCII key (16–128 characters) for replaying this mutation.
+    idempotency_key: String,
+    /// Active marketing SMTP profile UUID to make the workspace default sender.
+    smtp_profile_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SalesCampaignRefreshSenderInput {
     campaign_id: Uuid,
 }
 
@@ -394,6 +420,108 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
             },
         ),
         tool_with_db(
+            "sales_campaigns_get_sender",
+            "Read the workspace default SMTP sender used by new personalized sales groups, or null when none is configured or its mailbox is not readable by you. Requires campaign.compose and mail.read.",
+            schema::<SalesCampaignGetSenderInput>(),
+            schema::<SalesCampaignSenderResponse>(),
+            false,
+            |db, ctx, value| async move {
+                let _input = arguments::<SalesCampaignGetSenderInput>(value)?;
+                result(application::sales_campaigns::get_sales_campaign_sender(&db, &ctx).await?)
+            },
+        ),
+        tool_with_db(
+            "sales_campaigns_set_sender",
+            "Set the workspace default SMTP sender for new personalized sales groups. smtp_profile_id must be an active marketing SMTP profile whose mailbox you hold a send grant on. Requires mail.manage. Existing groups keep their pinned sender until sales_campaigns_refresh_sender.",
+            idempotent_schema::<SalesCampaignSetSenderInput>(),
+            schema::<SalesCampaignSenderResponse>(),
+            false,
+            |db, ctx, value| async move {
+                let input = arguments::<SalesCampaignSetSenderInput>(value)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let request = SetSalesCampaignSenderRequest {
+                    smtp_profile_id: input.smtp_profile_id,
+                };
+                let request_hash = request_hash(&request);
+                let operation_scope = scope(
+                    &ctx,
+                    "MCP tools/call sales_campaigns_set_sender",
+                    input.idempotency_key,
+                );
+                let cached_profile_id = infrastructure::idempotency::completed_response(
+                    &db,
+                    &operation_scope,
+                    &request_hash,
+                )
+                .await?
+                .as_ref()
+                .and_then(|body| body.get("sender"))
+                .and_then(|sender| sender.get("smtp_profile_id"))
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| Uuid::parse_str(id).ok());
+                if let Some(smtp_profile_id) = cached_profile_id {
+                    application::sales_campaigns::preauthorize_sales_campaign_sender_access(
+                        &db,
+                        &ctx,
+                        smtp_profile_id,
+                    )
+                    .await?;
+                } else {
+                    application::sales_campaigns::preauthorize_sales_campaign_sender_identity(
+                        &ctx,
+                    )?;
+                }
+                let smtp_profile_id = request.smtp_profile_id;
+                let outcome = infrastructure::idempotency::run(
+                    &db,
+                    &operation_scope,
+                    &request_hash,
+                    |mut tx| {
+                        let ctx = ctx.clone();
+                        let request = request;
+                        async move {
+                            let body = application::sales_campaigns::set_sales_campaign_sender(
+                                &mut tx, &ctx, &request,
+                            )
+                            .await?;
+                            Ok((
+                                tx,
+                                infrastructure::idempotency::Stored { status: 200, body },
+                            ))
+                        }
+                    },
+                )
+                .await?;
+                if outcome.is_replay() {
+                    application::sales_campaigns::preauthorize_sales_campaign_sender_access(
+                        &db,
+                        &ctx,
+                        smtp_profile_id,
+                    )
+                    .await?;
+                }
+                result(outcome.into_inner().body)
+            },
+        ),
+        tool_with_db(
+            "sales_campaigns_refresh_sender",
+            "Re-pin one personalized sales group to the current workspace default sender. Fails with a conflict once messages were queued or sent, or when the new default uses a different mailbox. Requires campaign.compose, crm.read, and mail.read plus current mailbox access.",
+            schema::<SalesCampaignRefreshSenderInput>(),
+            schema::<SalesCampaignSummary>(),
+            false,
+            |db, ctx, value| async move {
+                let input = arguments::<SalesCampaignRefreshSenderInput>(value)?;
+                result(
+                    application::sales_campaigns::refresh_sales_campaign_sender(
+                        &db,
+                        &ctx,
+                        input.campaign_id,
+                    )
+                    .await?,
+                )
+            },
+        ),
+        tool_with_db(
             "sales_campaigns_add_target",
             "Add one verified CRM recipient to a group. company_id, contact_id, and email_address_id must be UUIDs returned by this workspace's CRM tools, and the email must belong to that contact and company. Raw names and email strings are not accepted. Requires campaign.compose and crm.read.",
             idempotent_schema::<SalesCampaignAddTargetInput>(),
@@ -722,6 +850,9 @@ mod tests {
                 "sales_campaigns_list",
                 "sales_campaigns_create",
                 "sales_campaigns_get",
+                "sales_campaigns_get_sender",
+                "sales_campaigns_set_sender",
+                "sales_campaigns_refresh_sender",
                 "sales_campaigns_add_target",
                 "sales_campaigns_create_message",
                 "sales_campaigns_move_stage",
@@ -730,7 +861,12 @@ mod tests {
             ]
         );
         assert!(!names.iter().any(|name| name.contains("approve")));
-        assert!(!names.iter().any(|name| name.contains("send")));
+        // Sender-configuration tools mention "sender" but never send mail.
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.contains("send") && !name.contains("sender"))
+        );
         assert!(!tools.iter().any(|tool| tool.name == "mail_submit"));
         assert!(tools.last().unwrap().external_effect);
         assert!(
@@ -740,7 +876,14 @@ mod tests {
         );
         for tool in &tools {
             assert_eq!(tool.input_schema["additionalProperties"], false);
-            if tool.name != "sales_campaigns_list" && tool.name != "sales_campaigns_get" {
+            if ![
+                "sales_campaigns_list",
+                "sales_campaigns_get",
+                "sales_campaigns_get_sender",
+                "sales_campaigns_refresh_sender",
+            ]
+            .contains(&tool.name)
+            {
                 assert_eq!(
                     tool.input_schema["properties"]["idempotency_key"]["minLength"],
                     16

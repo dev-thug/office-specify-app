@@ -7,6 +7,7 @@ use crate::{ToolDef, arguments, result, tool_with_db};
 use chrono::{DateTime, Utc};
 use contracts::crm::{CompanyResponse, ContactResponse};
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -24,6 +25,9 @@ pub fn tools() -> Vec<ToolDef> {
 pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
     let search_key = hmac_key.to_vec();
     let company_key = search_key.clone();
+    let activities_key = search_key.clone();
+    let notes_key = search_key.clone();
+    let tasks_key = search_key.clone();
 
     vec![
         tool_with_db(
@@ -264,46 +268,6 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
             },
         ),
         tool_with_db(
-            "crm_propose_update",
-            "Create a review-pending proposal to change allowlisted company or contact fields. The CRM record is not changed until a human accepts the proposal.",
-            schema::<ProposeUpdateInput>(),
-            schema::<ProposeUpdateOutput>(),
-            false,
-            |db, ctx, args| async move {
-                let input = arguments::<ProposeUpdateInput>(args)?;
-                validate_idempotency_key(&input.idempotency_key)?;
-                let request = contracts::research::ProposeUpdateRequest {
-                    idempotency_key: input.idempotency_key,
-                    agent_run_id: input.agent_run_id,
-                    target: contracts::research::ResearchUpdateTarget {
-                        kind: match input.target.kind {
-                            UpdateTargetKind::Company => {
-                                contracts::research::ResearchTargetKind::Company
-                            }
-                            UpdateTargetKind::Contact => {
-                                contracts::research::ResearchTargetKind::Contact
-                            }
-                        },
-                        id: input.target.id,
-                    },
-                    expected_version: input.expected_version,
-                    field_changes: input.field_changes,
-                    evidence: input
-                        .evidence
-                        .into_iter()
-                        .map(EvidenceToolInput::into_contract)
-                        .collect(),
-                };
-                let proposal = application::research::propose_update(&db, &ctx, &request).await?;
-                result(ProposeUpdateOutput {
-                    proposal_id: proposal.id,
-                    status: proposal.status.as_str().to_string(),
-                    proposed_data: proposal.proposed_data,
-                    version: proposal.version,
-                })
-            },
-        ),
-        tool_with_db(
             "crm_create_note",
             "Create an internal CRM note on exactly one company, contact, or mailbox-authorized thread. Requires an explicit idempotency key.",
             schema::<CreateNoteInput>(),
@@ -328,6 +292,358 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
                 result(CreateNoteOutput {
                     note_id: note.body.id,
                 })
+            },
+        ),
+        tool_with_db(
+            "crm_create_company",
+            "Create a CRM company record immediately (scope crm.write; same as POST /companies). Search first with crm_search_companies by name and domain to avoid duplicates; the response lists advisory duplicate_candidates. Returns the created company summary including id and version. Requires an explicit idempotency key.",
+            schema::<CreateCompanyInput>(),
+            schema::<CreateCompanyOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<CreateCompanyInput>(args)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let request: contracts::crm::CreateCompanyRequest = to_contract(&input)?;
+                let mut company =
+                    application::crm::companies::create(&db, &ctx, &request, input.idempotency_key)
+                        .await?
+                        .body;
+                let duplicate_candidates = company
+                    .duplicate_candidates
+                    .take()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|candidate| DuplicateCandidateOutput {
+                        id: candidate.id,
+                        name: candidate.name,
+                        domain: candidate.domain,
+                        matched_on: candidate.matched_on,
+                    })
+                    .collect();
+                result(CreateCompanyOutput {
+                    company: company_summary(company),
+                    duplicate_candidates,
+                })
+            },
+        ),
+        tool_with_db(
+            "crm_update_company",
+            "Update a CRM company directly (scope crm.write; same as PATCH /companies/{id}). Pass expected_version from the latest read and a changes object with any of: name, domain, website_url, industry, country_code, lifecycle_stage (prospect|engaged|qualified|customer|inactive), description, custom_fields (replaces the whole object). null clears nullable fields. Returns the updated company with its new version.",
+            schema::<UpdateCompanyInput>(),
+            schema::<CompanySummary>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<UpdateCompanyInput>(args)?;
+                let request: contracts::crm::PatchCompanyRequest = from_changes(input.changes)?;
+                let company = application::crm::companies::patch(
+                    &db,
+                    &ctx,
+                    input.company_id,
+                    input.expected_version,
+                    &request,
+                )
+                .await?;
+                result(company_summary(company))
+            },
+        ),
+        tool_with_db(
+            "crm_archive_company",
+            "Archive a CRM company (scope crm.write; same as POST /companies/{id}/archive). Requires expected_version from the latest read and accepts an optional reason. Returns the archived company with its new version.",
+            schema::<ArchiveCompanyInput>(),
+            schema::<CompanySummary>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<ArchiveCompanyInput>(args)?;
+                let company = application::crm::companies::archive(
+                    &db,
+                    &ctx,
+                    input.company_id,
+                    input.expected_version,
+                    &contracts::crm::ArchiveCompanyRequest {
+                        reason: input.reason,
+                    },
+                )
+                .await?;
+                result(company_summary(company))
+            },
+        ),
+        tool_with_db(
+            "crm_request_company_merge",
+            "Queue a merge of source_id into the surviving company_id (scope crm.write plus manager/admin role; same as POST /companies/{id}/merge-requests). field_choices maps name, domain, website_url, industry, country_code, lifecycle_stage, description, custom_fields or owner_principal_id to \"source\" or \"target\". Requires an explicit idempotency key; returns the queued job.",
+            schema::<MergeCompanyInput>(),
+            schema::<MergeCompanyOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<MergeCompanyInput>(args)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let merge = application::crm::companies::request_merge(
+                    &db,
+                    &ctx,
+                    input.company_id,
+                    &contracts::crm::MergeCompanyRequest {
+                        source_id: input.source_id,
+                        field_choices: input.field_choices,
+                    },
+                    input.idempotency_key,
+                )
+                .await?
+                .body;
+                result(MergeCompanyOutput {
+                    job_id: merge.job_id,
+                    source_id: merge.source_id,
+                    target_id: merge.target_id,
+                    status: merge.status,
+                })
+            },
+        ),
+        tool_with_db(
+            "crm_list_company_activities",
+            "List a company's activity timeline (scope crm.read; same as GET /companies/{id}/activities). Mailbox-sourced rows are filtered by mailbox grants. Supports limit (1-200) and the returned cursor.",
+            schema::<ListCompanyActivitiesInput>(),
+            schema::<PageOutput<ActivityToolOutput>>(),
+            false,
+            move |db, ctx, args| {
+                let hmac_key = activities_key.clone();
+                async move {
+                    let input = arguments::<ListCompanyActivitiesInput>(args)?;
+                    let limit = checked_limit(input.limit)?;
+                    let (items, page) = application::crm::activities::list_company(
+                        &db,
+                        &ctx,
+                        &hmac_key,
+                        input.company_id,
+                        &application::crm::activities::ActivityListQuery {
+                            limit,
+                            cursor: input.cursor,
+                        },
+                    )
+                    .await?;
+                    result(PageOutput {
+                        items: items.into_iter().map(activity_output).collect(),
+                        next_cursor: page.next_cursor,
+                        has_more: page.has_more,
+                    })
+                }
+            },
+        ),
+        tool_with_db(
+            "crm_create_contact",
+            "Create a CRM contact immediately (scope crm.write; same as POST /contacts). Optional email links a primary address atomically; status is new|active|departed|inactive. Search existing contacts first to avoid duplicates. Requires an explicit idempotency key; returns the contact with id and version.",
+            schema::<CreateContactInput>(),
+            schema::<ContactToolOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<CreateContactInput>(args)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let request: contracts::crm::CreateContactRequest = to_contract(&input)?;
+                let contact = application::crm::contacts::create(
+                    &db,
+                    &ctx,
+                    &request,
+                    Some(input.idempotency_key),
+                )
+                .await?
+                .body;
+                result(contact_summary(contact))
+            },
+        ),
+        tool_with_db(
+            "crm_update_contact",
+            "Update a CRM contact directly (scope crm.write; same as PATCH /contacts/{id}). Pass expected_version from the latest read and a changes object with any of: name, phone, company_id, job_title, department, status (new|active|departed|inactive). null clears nullable fields; company_id null unlinks the company. Returns the updated contact with its new version.",
+            schema::<UpdateContactInput>(),
+            schema::<ContactToolOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<UpdateContactInput>(args)?;
+                let request: contracts::crm::PatchContactRequest = from_changes(input.changes)?;
+                let contact = application::crm::contacts::patch(
+                    &db,
+                    &ctx,
+                    input.contact_id,
+                    input.expected_version,
+                    &request,
+                )
+                .await?;
+                result(contact_summary(contact))
+            },
+        ),
+        tool_with_db(
+            "crm_add_contact_email",
+            "Link an email address to a contact (scope crm.write; same as POST /contacts/{id}/emails). Optional label, is_primary and kind (person|role|unknown). Requires an explicit idempotency key; returns the linked address with verification and send-eligibility status.",
+            schema::<AddContactEmailInput>(),
+            schema::<AddContactEmailOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<AddContactEmailInput>(args)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let request: contracts::crm::AddContactEmailRequest = to_contract(&input)?;
+                let email = application::crm::contacts::add_email(
+                    &db,
+                    &ctx,
+                    input.contact_id,
+                    &request,
+                    Some(input.idempotency_key),
+                )
+                .await?
+                .body;
+                result(AddContactEmailOutput {
+                    email_address_id: email.email_address_id,
+                    address: email.address,
+                    label: email.label,
+                    is_primary: email.is_primary,
+                    verification_status: verification_status(email.verification_status),
+                    linked_contact_ids: email.linked_contact_ids,
+                    marketing_eligibility: MarketingEligibilityOutput {
+                        eligible: email.marketing_eligibility.eligible,
+                        reason_codes: email.marketing_eligibility.reason_codes,
+                    },
+                })
+            },
+        ),
+        tool_with_db(
+            "crm_remove_contact_email",
+            "Unlink an email address from a contact (scope crm.write; same as DELETE /contacts/{id}/emails/{email_address_id}). Requires the contact's expected_version; returns the updated contact.",
+            schema::<RemoveContactEmailInput>(),
+            schema::<ContactToolOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<RemoveContactEmailInput>(args)?;
+                let contact = application::crm::contacts::remove_email(
+                    &db,
+                    &ctx,
+                    input.contact_id,
+                    input.email_address_id,
+                    input.expected_version,
+                )
+                .await?;
+                result(contact_summary(contact))
+            },
+        ),
+        tool_with_db(
+            "crm_set_primary_email",
+            "Make an already linked email address the contact's primary address (scope crm.write; same as PUT /contacts/{id}/primary-email). Requires the contact's expected_version; returns the updated contact.",
+            schema::<SetPrimaryEmailInput>(),
+            schema::<ContactToolOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<SetPrimaryEmailInput>(args)?;
+                let contact = application::crm::contacts::set_primary_email(
+                    &db,
+                    &ctx,
+                    input.contact_id,
+                    input.expected_version,
+                    &contracts::crm::SetPrimaryEmailRequest {
+                        email_address_id: input.email_address_id,
+                    },
+                )
+                .await?;
+                result(contact_summary(contact))
+            },
+        ),
+        tool_with_db(
+            "crm_list_notes",
+            "List CRM notes, optionally filtered by company_id, contact_id or thread_id (scope crm.read; same as GET /notes). Thread notes are filtered by mailbox grants. Supports limit (1-200) and the returned cursor.",
+            schema::<ListNotesInput>(),
+            schema::<PageOutput<NoteToolOutput>>(),
+            false,
+            move |db, ctx, args| {
+                let hmac_key = notes_key.clone();
+                async move {
+                    let input = arguments::<ListNotesInput>(args)?;
+                    let limit = checked_limit(input.limit)?;
+                    let (items, page) = application::crm::notes::list(
+                        &db,
+                        &ctx,
+                        &hmac_key,
+                        &application::crm::notes::NoteListQuery {
+                            company_id: input.company_id,
+                            contact_id: input.contact_id,
+                            thread_id: input.thread_id,
+                            limit,
+                            cursor: input.cursor,
+                        },
+                    )
+                    .await?;
+                    result(PageOutput {
+                        items: items.into_iter().map(note_output).collect(),
+                        next_cursor: page.next_cursor,
+                        has_more: page.has_more,
+                    })
+                }
+            },
+        ),
+        tool_with_db(
+            "crm_list_tasks",
+            "List CRM tasks, optionally filtered by status (open|done|canceled), owner_principal_id, company_id or contact_id (scope crm.read; same as GET /tasks). Supports limit (1-200) and the returned cursor.",
+            schema::<ListTasksInput>(),
+            schema::<PageOutput<TaskToolOutput>>(),
+            false,
+            move |db, ctx, args| {
+                let hmac_key = tasks_key.clone();
+                async move {
+                    let input = arguments::<ListTasksInput>(args)?;
+                    let limit = checked_limit(input.limit)?;
+                    let (items, page) = application::crm::tasks::list(
+                        &db,
+                        &ctx,
+                        &hmac_key,
+                        &application::crm::tasks::TaskListQuery {
+                            status: input.status,
+                            owner_principal_id: input.owner_principal_id,
+                            company_id: input.company_id,
+                            contact_id: input.contact_id,
+                            limit,
+                            cursor: input.cursor,
+                        },
+                    )
+                    .await?;
+                    result(PageOutput {
+                        items: items.into_iter().map(task_output).collect(),
+                        next_cursor: page.next_cursor,
+                        has_more: page.has_more,
+                    })
+                }
+            },
+        ),
+        tool_with_db(
+            "crm_create_task",
+            "Create a CRM task (scope crm.write; same as POST /tasks). Owner defaults to the caller; assigning another owner requires manager/admin. Optional company_id, contact_id, thread_id and due_at (RFC 3339). Requires an explicit idempotency key; returns the task with id and version.",
+            schema::<CreateTaskInput>(),
+            schema::<TaskToolOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<CreateTaskInput>(args)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let request: contracts::crm::CreateTaskRequest = to_contract(&input)?;
+                let task = application::crm::tasks::create(
+                    &db,
+                    &ctx,
+                    &request,
+                    Some(input.idempotency_key),
+                )
+                .await?
+                .body;
+                result(task_output(task))
+            },
+        ),
+        tool_with_db(
+            "crm_update_task",
+            "Update a CRM task (scope crm.write; same as PATCH /tasks/{id}). Pass expected_version and a changes object with any of: title, status (open|done|canceled), due_at (RFC 3339, null clears), owner_principal_id (reassignment requires manager/admin). Returns the updated task with its new version.",
+            schema::<UpdateTaskInput>(),
+            schema::<TaskToolOutput>(),
+            false,
+            |db, ctx, args| async move {
+                let input = arguments::<UpdateTaskInput>(args)?;
+                let request: contracts::crm::PatchTaskRequest = from_changes(input.changes)?;
+                let task = application::crm::tasks::patch(
+                    &db,
+                    &ctx,
+                    input.task_id,
+                    input.expected_version,
+                    &request,
+                )
+                .await?;
+                result(task_output(task))
             },
         ),
     ]
@@ -406,6 +722,76 @@ pub(super) fn contact_summary(contact: ContactResponse) -> ContactToolOutput {
     }
 }
 
+/// Converts a local, schema-documented tool input into the REST contract
+/// request so validation (including `deny_unknown_fields`) stays identical.
+fn to_contract<T: DeserializeOwned>(input: &impl Serialize) -> Result<T, contracts::AppError> {
+    let value = serde_json::to_value(input)
+        .map_err(|e| contracts::AppError::internal(format!("tool arguments: {e}")))?;
+    serde_json::from_value(value).map_err(|e| {
+        contracts::AppError::validation(format!("invalid tool arguments: {e}"), vec![])
+    })
+}
+
+/// PATCH-style `changes` map keeps the contract's absent-vs-null semantics.
+fn from_changes<T: DeserializeOwned>(
+    changes: serde_json::Map<String, serde_json::Value>,
+) -> Result<T, contracts::AppError> {
+    serde_json::from_value(serde_json::Value::Object(changes)).map_err(|e| {
+        contracts::AppError::validation(
+            format!("invalid changes: {e}"),
+            vec![contracts::Violation {
+                field: "changes".into(),
+                code: "INVALID".into(),
+            }],
+        )
+    })
+}
+
+fn activity_output(activity: contracts::crm::ActivityResponse) -> ActivityToolOutput {
+    ActivityToolOutput {
+        id: activity.id,
+        kind: activity.kind,
+        occurred_at: activity.occurred_at,
+        summary: activity.summary,
+        company_id: activity.company_id,
+        contact_id: activity.contact_id,
+        mail_account_id: activity.mail_account_id,
+        thread_id: activity.thread_id,
+        booking_id: activity.booking_id,
+        actor_principal_id: activity.actor_principal_id,
+    }
+}
+
+fn note_output(note: contracts::crm::NoteResponse) -> NoteToolOutput {
+    NoteToolOutput {
+        id: note.id,
+        company_id: note.company_id,
+        contact_id: note.contact_id,
+        thread_id: note.thread_id,
+        mail_account_id: note.mail_account_id,
+        created_by: note.created_by,
+        body: note.body,
+        version: note.version,
+        created_at: note.created_at,
+        updated_at: note.updated_at,
+    }
+}
+
+fn task_output(task: contracts::crm::TaskResponse) -> TaskToolOutput {
+    TaskToolOutput {
+        id: task.id,
+        title: task.title,
+        owner_principal_id: task.owner_principal_id,
+        company_id: task.company_id,
+        contact_id: task.contact_id,
+        thread_id: task.thread_id,
+        status: task.status.as_str().to_string(),
+        due_at: task.due_at,
+        version: task.version,
+        created_at: task.created_at,
+    }
+}
+
 fn verification_status(status: contracts::crm::VerificationStatus) -> String {
     match status {
         contracts::crm::VerificationStatus::Unknown => "unknown",
@@ -468,68 +854,227 @@ struct GetContactInput {
     contact_id: Uuid,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum LifecycleStageInput {
+    Prospect,
+    Engaged,
+    Qualified,
+    Customer,
+    Inactive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ContactStatusInput {
+    New,
+    Active,
+    Departed,
+    Inactive,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum AddressKindInput {
+    Person,
+    Role,
+    Unknown,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ProposeUpdateInput {
-    agent_run_id: Uuid,
-    target: UpdateTargetInput,
-    expected_version: i64,
-    field_changes: BTreeMap<String, serde_json::Value>,
-    evidence: Vec<EvidenceToolInput>,
+struct CreateCompanyInput {
+    name: String,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
+    website_url: Option<String>,
+    #[serde(default)]
+    industry: Option<String>,
+    /// ISO 3166-1 alpha-2 country code.
+    #[serde(default)]
+    country_code: Option<String>,
+    #[serde(default)]
+    lifecycle_stage: Option<LifecycleStageInput>,
+    #[serde(default)]
+    owner_principal_id: Option<Uuid>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    custom_fields: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(skip_serializing)]
     #[schemars(length(min = 16, max = 128))]
     idempotency_key: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct UpdateTargetInput {
-    kind: UpdateTargetKind,
-    id: Uuid,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum UpdateTargetKind {
-    Company,
-    Contact,
+struct UpdateCompanyInput {
+    company_id: Uuid,
+    expected_version: i64,
+    /// Fields to change; absent keeps, null clears nullable fields.
+    changes: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct EvidenceToolInput {
-    field_path: String,
-    source_url: String,
-    observed_at: DateTime<Utc>,
-    value: serde_json::Value,
-    evidence_type: EvidenceTypeInput,
+struct ArchiveCompanyInput {
+    company_id: Uuid,
+    expected_version: i64,
     #[serde(default)]
-    excerpt: Option<String>,
-    #[serde(default)]
-    confidence: Option<f64>,
+    reason: Option<String>,
 }
 
-impl EvidenceToolInput {
-    fn into_contract(self) -> contracts::research::EvidenceInput {
-        contracts::research::EvidenceInput {
-            field_path: self.field_path,
-            source_url: self.source_url,
-            observed_at: self.observed_at,
-            value: self.value,
-            evidence_type: match self.evidence_type {
-                EvidenceTypeInput::Observed => contracts::research::EvidenceType::Observed,
-                EvidenceTypeInput::Inferred => contracts::research::EvidenceType::Inferred,
-            },
-            excerpt: self.excerpt,
-            confidence: self.confidence,
-        }
-    }
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MergeCompanyInput {
+    /// Surviving (target) company.
+    company_id: Uuid,
+    /// Company merged into the target.
+    source_id: Uuid,
+    /// Per-field winner: "source" or "target".
+    #[serde(default)]
+    field_choices: BTreeMap<String, String>,
+    #[schemars(length(min = 16, max = 128))]
+    idempotency_key: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-enum EvidenceTypeInput {
-    Observed,
-    Inferred,
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ListCompanyActivitiesInput {
+    company_id: Uuid,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CreateContactInput {
+    name: String,
+    #[serde(default)]
+    phone: Option<String>,
+    /// Optional primary email linked atomically with creation.
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    company_id: Option<Uuid>,
+    #[serde(default)]
+    job_title: Option<String>,
+    #[serde(default)]
+    department: Option<String>,
+    #[serde(default)]
+    status: Option<ContactStatusInput>,
+    #[serde(default)]
+    owner_principal_id: Option<Uuid>,
+    #[serde(skip_serializing)]
+    #[schemars(length(min = 16, max = 128))]
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateContactInput {
+    contact_id: Uuid,
+    expected_version: i64,
+    /// Fields to change; absent keeps, null clears nullable fields.
+    changes: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct AddContactEmailInput {
+    #[serde(skip_serializing)]
+    contact_id: Uuid,
+    address: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    is_primary: Option<bool>,
+    #[serde(default)]
+    kind: Option<AddressKindInput>,
+    #[serde(skip_serializing)]
+    #[schemars(length(min = 16, max = 128))]
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RemoveContactEmailInput {
+    contact_id: Uuid,
+    email_address_id: Uuid,
+    expected_version: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SetPrimaryEmailInput {
+    contact_id: Uuid,
+    email_address_id: Uuid,
+    expected_version: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ListNotesInput {
+    #[serde(default)]
+    company_id: Option<Uuid>,
+    #[serde(default)]
+    contact_id: Option<Uuid>,
+    #[serde(default)]
+    thread_id: Option<Uuid>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ListTasksInput {
+    /// open | done | canceled
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    owner_principal_id: Option<Uuid>,
+    #[serde(default)]
+    company_id: Option<Uuid>,
+    #[serde(default)]
+    contact_id: Option<Uuid>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CreateTaskInput {
+    title: String,
+    /// Defaults to the caller; another owner requires manager/admin.
+    #[serde(default)]
+    owner_principal_id: Option<Uuid>,
+    #[serde(default)]
+    company_id: Option<Uuid>,
+    #[serde(default)]
+    contact_id: Option<Uuid>,
+    #[serde(default)]
+    thread_id: Option<Uuid>,
+    #[serde(default)]
+    due_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing)]
+    #[schemars(length(min = 16, max = 128))]
+    idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateTaskInput {
+    task_id: Uuid,
+    expected_version: i64,
+    /// Fields to change; absent keeps, due_at null clears the due date.
+    changes: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -617,11 +1162,87 @@ struct MarketingEligibilityOutput {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
-struct ProposeUpdateOutput {
-    proposal_id: Uuid,
+struct CreateCompanyOutput {
+    #[serde(flatten)]
+    company: CompanySummary,
+    /// Advisory same-domain/same-name matches; never auto-merged.
+    duplicate_candidates: Vec<DuplicateCandidateOutput>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct DuplicateCandidateOutput {
+    id: Uuid,
+    name: String,
+    domain: Option<String>,
+    matched_on: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct MergeCompanyOutput {
+    job_id: Uuid,
+    source_id: Uuid,
+    target_id: Uuid,
     status: String,
-    proposed_data: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct PageOutput<T> {
+    items: Vec<T>,
+    next_cursor: Option<String>,
+    has_more: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct ActivityToolOutput {
+    id: Uuid,
+    kind: String,
+    occurred_at: DateTime<Utc>,
+    summary: serde_json::Value,
+    company_id: Option<Uuid>,
+    contact_id: Option<Uuid>,
+    mail_account_id: Option<Uuid>,
+    thread_id: Option<Uuid>,
+    booking_id: Option<Uuid>,
+    actor_principal_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct NoteToolOutput {
+    id: Uuid,
+    company_id: Option<Uuid>,
+    contact_id: Option<Uuid>,
+    thread_id: Option<Uuid>,
+    mail_account_id: Option<Uuid>,
+    created_by: Uuid,
+    body: String,
     version: i64,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct TaskToolOutput {
+    id: Uuid,
+    title: String,
+    owner_principal_id: Uuid,
+    company_id: Option<Uuid>,
+    contact_id: Option<Uuid>,
+    thread_id: Option<Uuid>,
+    status: String,
+    due_at: Option<DateTime<Utc>>,
+    version: i64,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct AddContactEmailOutput {
+    email_address_id: Uuid,
+    address: String,
+    label: Option<String>,
+    is_primary: bool,
+    verification_status: String,
+    linked_contact_ids: Vec<Uuid>,
+    marketing_eligibility: MarketingEligibilityOutput,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -631,7 +1252,10 @@ struct CreateNoteOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateNoteInput, ToolDef, tools, tools_with_key, validate_idempotency_key};
+    use super::{
+        CreateCompanyInput, CreateNoteInput, ToolDef, from_changes, to_contract, tools,
+        tools_with_key, validate_idempotency_key,
+    };
     use crate::arguments;
     use contracts::{Ctx, Scope, ScopeSet};
     use infrastructure::db::{Db, ROLE_API};
@@ -662,6 +1286,8 @@ mod tests {
             crate::ToolServices {
                 db: db.clone(),
                 calendar,
+                config: Arc::new(infrastructure::config::Config::test()),
+                rate_limiter: None,
             },
             ctx.clone(),
             args,
@@ -670,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn crm_catalog_lists_all_five_tools() {
+    fn crm_catalog_lists_every_crm_tool() {
         let names: Vec<_> = tools().iter().map(|tool| tool.name).collect();
         assert_eq!(
             names,
@@ -678,16 +1304,37 @@ mod tests {
                 "crm_search_companies",
                 "crm_get_company",
                 "crm_get_contact",
-                "crm_propose_update",
                 "crm_create_note",
+                "crm_create_company",
+                "crm_update_company",
+                "crm_archive_company",
+                "crm_request_company_merge",
+                "crm_list_company_activities",
+                "crm_create_contact",
+                "crm_update_contact",
+                "crm_add_contact_email",
+                "crm_remove_contact_email",
+                "crm_set_primary_email",
+                "crm_list_notes",
+                "crm_list_tasks",
+                "crm_create_task",
+                "crm_update_task",
             ]
         );
+        assert!(!names.contains(&"crm_propose_update"));
     }
 
     #[test]
     fn mutation_schemas_require_idempotency_and_reject_identity_overrides() {
         let tools = tools();
-        for name in ["crm_propose_update", "crm_create_note"] {
+        for name in [
+            "crm_create_note",
+            "crm_create_company",
+            "crm_request_company_merge",
+            "crm_create_contact",
+            "crm_add_contact_email",
+            "crm_create_task",
+        ] {
             let tool = tools.iter().find(|tool| tool.name == name).unwrap();
             let properties = tool.input_schema["properties"].as_object().unwrap();
             assert!(properties.contains_key("idempotency_key"), "{name}");
@@ -704,6 +1351,55 @@ mod tests {
             assert!(!properties.contains_key("workspace_id"), "{name}");
             assert!(!properties.contains_key("principal_id"), "{name}");
         }
+    }
+
+    #[test]
+    fn versioned_update_schemas_require_expected_version() {
+        let tools = tools();
+        for name in [
+            "crm_update_company",
+            "crm_archive_company",
+            "crm_update_contact",
+            "crm_remove_contact_email",
+            "crm_set_primary_email",
+            "crm_update_task",
+        ] {
+            let tool = tools.iter().find(|tool| tool.name == name).unwrap();
+            assert!(
+                tool.input_schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v == "expected_version"),
+                "{name}"
+            );
+            let properties = tool.input_schema["properties"].as_object().unwrap();
+            assert!(!properties.contains_key("workspace_id"), "{name}");
+            assert!(!properties.contains_key("principal_id"), "{name}");
+        }
+    }
+
+    #[test]
+    fn create_company_converts_to_the_rest_contract() {
+        let input = arguments::<CreateCompanyInput>(json!({
+            "name": "Acme",
+            "lifecycle_stage": "engaged",
+            "idempotency_key": "create-company-0001"
+        }))
+        .unwrap();
+        let request: contracts::crm::CreateCompanyRequest = to_contract(&input).unwrap();
+        assert_eq!(request.name, "Acme");
+        assert_eq!(
+            request.lifecycle_stage,
+            Some(contracts::crm::LifecycleStage::Engaged)
+        );
+        let patch: Result<contracts::crm::PatchCompanyRequest, _> = from_changes(
+            json!({"workspace_id": Uuid::nil()})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        assert!(patch.is_err(), "unknown patch fields are rejected");
     }
 
     #[test]
@@ -732,12 +1428,7 @@ mod tests {
             &world,
             &world.agent,
             Uuid::new_v4(),
-            ScopeSet::of([
-                Scope::CrmRead,
-                Scope::CrmWrite,
-                Scope::ResearchPropose,
-                Scope::BookingRead,
-            ]),
+            ScopeSet::of([Scope::CrmRead, Scope::CrmWrite, Scope::BookingRead]),
             "mcp-crm-agent",
         );
         let tools = tools_with_key(&[42; 32]);
@@ -866,54 +1557,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first_note["note_id"], replay_note["note_id"]);
+    }
 
-        let run = application::agents::create_run(
-            &db,
-            &admin,
-            &contracts::agents::CreateAgentRunRequest {
-                agent_principal_id: world.agent.principal_id,
-                objective: "Review a company field".into(),
-                scope: None,
-                budget: None,
-            },
-        )
-        .await
-        .unwrap();
-        let proposal_args = json!({
-            "agent_run_id": run.id,
-            "target": {"kind": "company", "id": company.id},
-            "expected_version": company.version,
-            "field_changes": {"industry": "software"},
-            "evidence": [{
-                "field_path": "industry",
-                "source_url": "https://acme.example/about",
-                "observed_at": chrono::Utc::now().to_rfc3339(),
-                "value": "software",
-                "evidence_type": "observed"
-            }],
-            "idempotency_key": "mcp-propose-update-0001"
-        });
-        let proposal = call_tool(
+    #[tokio::test]
+    async fn agent_creates_and_updates_a_company_directly() {
+        if std::env::var("DATABASE_URL").is_err() {
+            eprintln!("skipping: DATABASE_URL not set");
+            return;
+        }
+        let (db, world) = test_world().await;
+        let agent = ctx_for_credential(
+            &world,
+            &world.agent,
+            Uuid::new_v4(),
+            ScopeSet::of([Scope::CrmRead, Scope::CrmWrite]),
+            "mcp-crm-agent-write",
+        );
+        let tools = tools_with_key(&[42; 32]);
+
+        let created = call_tool(
             &tools,
             &db,
             &agent,
-            "crm_propose_update",
-            proposal_args.clone(),
+            "crm_create_company",
+            json!({
+                "name": "Agent Direct Co",
+                "domain": "agent-direct.example",
+                "idempotency_key": "mcp-agent-create-company-0001"
+            }),
         )
         .await
         .unwrap();
-        let proposal_replay = call_tool(&tools, &db, &agent, "crm_propose_update", proposal_args)
-            .await
-            .unwrap();
-        assert_eq!(proposal["proposal_id"], proposal_replay["proposal_id"]);
-        assert_eq!(proposal["status"], "pending");
+        let company_id: Uuid = serde_json::from_value(created["id"].clone()).unwrap();
+        let version = created["version"].as_i64().unwrap();
+        assert_eq!(created["name"], "Agent Direct Co");
+        assert!(created["duplicate_candidates"].is_array());
 
-        let unchanged = application::crm::companies::get(&db, &admin, company.id)
-            .await
-            .unwrap();
-        assert_eq!(
-            unchanged.industry, None,
-            "proposal must not mutate CRM fields"
-        );
+        let updated = call_tool(
+            &tools,
+            &db,
+            &agent,
+            "crm_update_company",
+            json!({
+                "company_id": company_id,
+                "expected_version": version,
+                "changes": {"industry": "software", "description": null}
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated["id"], json!(company_id));
+        assert_eq!(updated["industry"], "software");
+        let new_version = updated["version"].as_i64().unwrap();
+        assert!(new_version > version);
+
+        let stale = call_tool(
+            &tools,
+            &db,
+            &agent,
+            "crm_update_company",
+            json!({
+                "company_id": company_id,
+                "expected_version": version,
+                "changes": {"industry": "hardware"}
+            }),
+        )
+        .await;
+        assert!(stale.is_err(), "stale expected_version is rejected");
     }
 }

@@ -1,10 +1,10 @@
-//! Read-only prerequisites for research, drafts, and booking proposals.
+//! Read-only discovery for contacts, templates, and booking meeting types.
 //! Reuses application authorization; signed cursors bind tool, workspace,
 //! caller, and filters. No approval or direct-write capability is added.
 use crate::{ToolDef, arguments, result, tool_with_db};
 use chrono::{DateTime, Utc};
 use contracts::templates::*;
-use contracts::{AppError, Ctx, PrincipalKind};
+use contracts::{AppError, Ctx};
 use infrastructure::cursor::Cursor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -104,22 +104,6 @@ struct MeetingPage {
     meeting_types: Vec<MeetingSummary>,
     has_more: bool,
     next_cursor: Option<String>,
-}
-
-#[derive(Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ProposalId {
-    lead_proposal_id: Uuid,
-}
-
-#[derive(Serialize, JsonSchema)]
-struct ProposalStatus {
-    proposal_id: Uuid,
-    agent_run_id: Option<Uuid>,
-    company_name: String,
-    status: String,
-    accepted_company_id: Option<Uuid>,
-    version: i64,
 }
 
 fn schema<T: JsonSchema>() -> Value {
@@ -424,32 +408,6 @@ pub fn tools_with_key(key: &[u8]) -> Vec<ToolDef> {
                     .find(|item| item.id == input.meeting_type_id)
                     .ok_or_else(|| AppError::not_found("meeting type not found"))?;
                 result(item)
-            },
-        ),
-        tool_with_db(
-            "research_get_proposal",
-            "Read a proposal's current status and accepted_company_id so you can continue after human review. Agents can read only their own proposals; research/CRM read conditions also apply. pending is not CRM insertion. After accepted, use the returned company ID with crm_get_company/crm_search_contacts. This cannot accept or reject a proposal.",
-            schema::<ProposalId>(),
-            schema::<ProposalStatus>(),
-            false,
-            |db, ctx, args| async move {
-                let input: ProposalId = arguments(args)?;
-                let detail =
-                    application::research::get_proposal(&db, &ctx, input.lead_proposal_id).await?;
-                let proposal = detail.proposal;
-                if ctx.principal_kind == PrincipalKind::Agent
-                    && proposal.proposed_by != ctx.principal_id
-                {
-                    return Err(AppError::not_found("lead proposal not found"));
-                }
-                result(ProposalStatus {
-                    proposal_id: proposal.id,
-                    agent_run_id: proposal.agent_run_id,
-                    company_name: proposal.company_name,
-                    status: proposal.status.as_str().into(),
-                    accepted_company_id: proposal.accepted_company_id,
-                    version: proposal.version,
-                })
             },
         ),
     ]

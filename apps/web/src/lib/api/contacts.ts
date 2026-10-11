@@ -197,6 +197,19 @@ export async function addContactEmail(
   );
 }
 
+/** 주소 연결만 해제한다 — 주소 자체와 차단 기록은 남는다. If-Match 필수. */
+export async function removeContactEmail(
+  contactId: string,
+  emailAddressId: string,
+  options: { etag: string | number; idempotencyKey?: string }
+): Promise<ApiResult<Contact>> {
+  return mutate<Contact>(
+    `${CONTACTS_PATH}/${encodeURIComponent(contactId)}/emails/${encodeURIComponent(emailAddressId)}`,
+    { method: "DELETE" },
+    { etag: options.etag, idempotencyKey: options.idempotencyKey }
+  );
+}
+
 export async function setPrimaryEmail(
   contactId: string,
   input: SetPrimaryEmailInput,

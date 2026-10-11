@@ -1,4 +1,4 @@
-//! Real HTTP MCP + cookie/CSRF REST human review against an isolated DB.
+//! Real HTTP MCP + cookie/CSRF REST fixtures against an isolated DB.
 //! No SMTP, external research fetch, or live-app records are used.
 use api::{AppState, testing::TestApp};
 use infrastructure::{
@@ -87,6 +87,8 @@ impl Rig {
         let app = build_router(McpState {
             db: db.clone(),
             calendar: Arc::new(infrastructure::providers::fake::FakeMailProvider::new()),
+            config: Arc::new(infrastructure::config::Config::test()),
+            rate_limiter: None,
             allowed_origins: Arc::new(vec![]),
             tools: Arc::new(mcp::all_tools_with_key(
                 b"isolated-mcp-workflow-hmac-key-32bytes",
@@ -176,84 +178,57 @@ impl Rig {
         assert!(status.is_success(), "{path}: {status} {value}");
         value["data"].clone()
     }
-
-    async fn review(&self, proposal: &Value) -> Value {
-        self.human_post(
-            &format!(
-                "/api/v1/lead-proposals/{}/decisions",
-                proposal["proposal_id"].as_str().unwrap()
-            ),
-            json!({"decision":"accept","reason":"Human review in isolated MCP test"}),
-            proposal["version"].as_i64(),
-        )
-        .await
-    }
 }
 
 #[tokio::test]
-async fn agent_research_to_crm_requires_real_human_review_and_supports_followup() {
+async fn agent_research_writes_crm_directly_and_supports_followup() {
     let mut rig = Rig::new().await;
     let company_name = format!("MCP Connected {}", Uuid::new_v4());
     let initial = rig
         .call("crm_search_companies", json!({"query":company_name}))
         .await;
     assert!(initial["companies"].as_array().unwrap().is_empty());
-    let run=rig.human_post("/api/v1/agent-runs",json!({"agent_principal_id":rig.world.agent.principal_id,"objective":"Sourced research to CRM; human approval required","budget":{"max_tool_calls":50,"max_proposals":5}}),None).await;
+    let run=rig.human_post("/api/v1/agent-runs",json!({"agent_principal_id":rig.world.agent.principal_id,"objective":"Sourced research written directly to CRM","budget":{"max_tool_calls":50,"max_proposals":5}}),None).await;
     rig.run_id = Some(Uuid::parse_str(run["id"].as_str().unwrap()).unwrap());
-    let evidence = json!({"field_path":"industry","source_url":"https://public.example/about","observed_at":chrono::Utc::now().to_rfc3339(),"value":"Software","evidence_type":"observed"});
-    let args = json!({"agent_run_id":run["id"],"idempotency_key":Uuid::new_v4().to_string(),"proposals":[{"company_name":company_name,"domain":"mcp-connected.example","proposed_data":{"industry":"Software","country_code":"KR","website_url":"https://mcp-connected.example","contacts":[{"name":"Agent Test One","job_title":"Sales Manager","department":"Sales","email":"one@mcp-connected.example"},{"name":"Agent Test Two","email":"two@mcp-connected.example"}]},"evidence":[evidence,{"field_path":"contacts[0].email","source_url":"https://public.example/contact","observed_at":chrono::Utc::now().to_rfc3339(),"value":"one@mcp-connected.example","evidence_type":"observed"},{"field_path":"contacts[1].email","source_url":"https://public.example/contact","observed_at":chrono::Utc::now().to_rfc3339(),"value":"two@mcp-connected.example","evidence_type":"observed"}]}]});
-    let submitted = rig.call("research_propose_leads", args.clone()).await;
-    let replay = rig.call("research_propose_leads", args).await;
-    assert_eq!(submitted["proposal_ids"], replay["proposal_ids"]);
-    let proposal_id = &submitted["proposal_ids"][0];
-    let pending = rig
-        .call(
-            "research_get_proposal",
-            json!({"lead_proposal_id":proposal_id}),
-        )
+    // The review-only lead-proposal tools are gone; agents write CRM records directly.
+    for removed in [
+        "research_propose_leads",
+        "research_get_proposal",
+        "research_accept_proposal",
+        "crm_propose_update",
+    ] {
+        let response = rig
+            .rpc("tools/call", json!({"name":removed,"arguments":{}}))
+            .await;
+        assert_eq!(response["error"]["code"], -32601, "{removed}: {response}");
+    }
+    let args = json!({"name":company_name,"domain":"mcp-connected.example","industry":"Software","country_code":"KR","website_url":"https://mcp-connected.example","idempotency_key":Uuid::new_v4().to_string()});
+    let created = rig.call("crm_create_company", args.clone()).await;
+    let replay = rig.call("crm_create_company", args).await;
+    assert!(created["id"].is_string(), "{created}");
+    assert_eq!(created["id"], replay["id"]);
+    let company_id = &created["id"];
+    let found = rig
+        .call("crm_search_companies", json!({"query":company_name}))
         .await;
-    assert_eq!(pending["status"], "pending");
-    assert!(pending["accepted_company_id"].is_null());
-    assert!(
-        rig.call("crm_search_companies", json!({"query":company_name}))
-            .await["companies"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    let forbidden = rig
-        .rpc(
-            "tools/call",
-            json!({"name":"research_accept_proposal","arguments":{"lead_proposal_id":proposal_id}}),
-        )
-        .await;
-    assert!(
-        forbidden.get("error").is_some(),
-        "no approval tool may be exposed"
-    );
-    let self_review = rig
-        .client
-        .post(rig.api.url(&format!(
-            "/api/v1/lead-proposals/{}/decisions",
-            proposal_id.as_str().unwrap()
-        )))
-        .bearer_auth(&rig.token)
-        .header("if-match", "\"1\"")
-        .header("idempotency-key", Uuid::new_v4().to_string())
-        .json(&json!({"decision":"accept"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(self_review.status(), StatusCode::FORBIDDEN);
-    rig.review(&pending).await;
-    let accepted = rig
-        .call(
-            "research_get_proposal",
-            json!({"lead_proposal_id":proposal_id}),
-        )
-        .await;
-    assert_eq!(accepted["status"], "accepted");
-    let company_id = &accepted["accepted_company_id"];
+    assert_eq!(found["companies"].as_array().unwrap().len(), 1);
+    assert_eq!(found["companies"][0]["id"], *company_id);
+    for (name, extra) in [
+        (
+            "Agent Test One",
+            json!({"job_title":"Sales Manager","department":"Sales","email":"one@mcp-connected.example"}),
+        ),
+        (
+            "Agent Test Two",
+            json!({"email":"two@mcp-connected.example"}),
+        ),
+    ] {
+        let mut contact = json!({"name":name,"company_id":company_id,"idempotency_key":Uuid::new_v4().to_string()});
+        for (key, value) in extra.as_object().unwrap() {
+            contact[key] = value.clone();
+        }
+        rig.call("crm_create_contact", contact).await;
+    }
     let company = rig
         .call(
             "crm_get_company",
@@ -284,9 +259,11 @@ async fn agent_research_to_crm_requires_real_human_review_and_supports_followup(
     assert_ne!(first["contacts"][0]["id"], second["contacts"][0]["id"]);
     for contact in [&first["contacts"][0], &second["contacts"][0]] {
         assert_eq!(contact["emails"][0]["verification_status"], "unknown");
+        // Eligibility depends only on suppressions (communication basis is
+        // reference-only); these fresh addresses are not suppressed.
         assert_eq!(
-            contact["emails"][0]["marketing_eligibility"]["eligible"],
-            false
+            contact["emails"][0]["marketing_eligibility"]["eligible"], true,
+            "{contact}"
         );
     }
     let named = rig
@@ -298,30 +275,34 @@ async fn agent_research_to_crm_requires_real_human_review_and_supports_followup(
     assert_eq!(named["contacts"].as_array().unwrap().len(), 1);
     assert_eq!(named["contacts"][0]["name"], "Agent Test One");
     rig.denied("crm_search_contacts",json!({"company_id":company_id,"limit":1,"query":"different","cursor":first["next_cursor"]})).await;
-    let update=rig.call("crm_propose_update",json!({"agent_run_id":run["id"],"target":{"kind":"company","id":company_id},"expected_version":company["company"]["version"],"field_changes":{"industry":"AI Software","description":"Human-reviewed company description"},"evidence":[{"field_path":"industry","source_url":"https://public.example/updated","observed_at":chrono::Utc::now().to_rfc3339(),"value":"AI Software","evidence_type":"observed"},{"field_path":"description","source_url":"https://public.example/updated","observed_at":chrono::Utc::now().to_rfc3339(),"value":"Human-reviewed company description","evidence_type":"observed"}],"idempotency_key":Uuid::new_v4().to_string()})).await;
+    let changes =
+        json!({"industry":"AI Software","description":"Agent-updated company description"});
+    let stale = rig
+        .denied(
+            "crm_update_company",
+            json!({"company_id":company_id,"expected_version":company["company"]["version"].as_i64().unwrap() + 1,"changes":changes}),
+        )
+        .await;
+    assert_eq!(stale["code"], "VERSION_MISMATCH", "{stale}");
     assert_eq!(
         rig.call("crm_get_company", json!({"company_id":company_id}))
             .await["company"]["industry"],
         "Software"
     );
-    let update_pending = rig
+    let update = rig
         .call(
-            "research_get_proposal",
-            json!({"lead_proposal_id":update["proposal_id"]}),
+            "crm_update_company",
+            json!({"company_id":company_id,"expected_version":company["company"]["version"],"changes":changes}),
         )
         .await;
-    rig.review(&update_pending).await;
-    assert_eq!(
-        rig.call("crm_get_company", json!({"company_id":company_id}))
-            .await["company"]["industry"],
-        "AI Software"
-    );
+    assert_eq!(update["industry"], "AI Software");
+    assert!(update["version"].as_i64() > company["company"]["version"].as_i64());
     let updated = rig
         .call("crm_get_company", json!({"company_id":company_id}))
         .await;
     assert_eq!(
         updated["company"]["description"],
-        "Human-reviewed company description"
+        "Agent-updated company description"
     );
     assert_eq!(named["contacts"][0]["job_title"], "Sales Manager");
     assert_eq!(named["contacts"][0]["department"], "Sales");
@@ -364,8 +345,8 @@ async fn agent_research_to_crm_requires_real_human_review_and_supports_followup(
     let report: Value = report.json().await.unwrap();
     for name in [
         "crm_search_contacts",
-        "research_get_proposal",
-        "crm_propose_update",
+        "crm_create_company",
+        "crm_update_company",
         "crm_create_note",
     ] {
         assert!(
@@ -380,7 +361,7 @@ async fn agent_research_to_crm_requires_real_human_review_and_supports_followup(
 }
 
 #[tokio::test]
-async fn discovery_pages_templates_renders_and_preserves_host_permissions() {
+async fn discovery_pages_templates_renders_and_gates_host_access_on_org_admin() {
     let rig = Rig::new().await;
     let template = rig
         .human_post(
@@ -478,7 +459,13 @@ async fn discovery_pages_templates_renders_and_preserves_host_permissions() {
         .human_post("/api/v1/calendar-connections/local", json!({}), None)
         .await;
     let meeting=rig.human_post("/api/v1/meeting-types",json!({"calendar_connection_id":calendar["id"],"name":"Agent readable meeting","duration_minutes":30}),None).await;
-    rig.denied("booking_list_slots", json!({"meeting_type_id":meeting["id"],"from":"2026-10-12","to":"2026-10-13","timezone":"Asia/Seoul"})).await;
+    // Without org.admin an agent has operator-level host access only, so
+    // another host's meeting type stays closed.
+    rig.denied(
+        "booking_list_slots",
+        json!({"meeting_type_id":meeting["id"],"from":"2026-10-12","to":"2026-10-13","timezone":"Asia/Seoul"}),
+    )
+    .await;
     let visible = rig.call("booking_list_meeting_types", json!({})).await;
     assert_eq!(
         visible["meeting_types"][0]["name"],
@@ -514,7 +501,47 @@ async fn discovery_pages_templates_renders_and_preserves_host_permissions() {
         json!({"limit":1,"include_disabled":true,"cursor":page["next_cursor"]}),
     )
     .await;
-    rig.denied("booking_propose",json!({"meeting_type_id":meeting["id"],"guest_name":"Test Guest","guest_email":"guest@example.com","desired_starts_at":"2026-10-12T01:00:00Z","timezone":"Asia/Seoul","purpose":"Preserve host authorization","idempotency_key":Uuid::new_v4().to_string()})).await;
+    let propose_args = json!({"meeting_type_id":meeting["id"],"guest_name":"Test Guest","guest_email":"guest@example.com","desired_starts_at":"2026-10-12T01:00:00Z","timezone":"Asia/Seoul","purpose":"Preserve host authorization","idempotency_key":Uuid::new_v4().to_string()});
+    rig.denied("booking_propose", propose_args.clone()).await;
+    // With org.admin the agent gets admin-equivalent host access.
+    let mut tx = rig.owner.begin(rig.world.workspace_id).await.unwrap();
+    let (_, admin_token) = infrastructure::repo::auth::create_service_credential(
+        &mut tx,
+        rig.world.agent.principal_id,
+        "org admin booking",
+        &[
+            "booking.read".into(),
+            "booking.propose".into(),
+            "org.admin".into(),
+        ],
+        chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let as_admin = |name: &'static str, args: Value| {
+        let request = rig.client.post(&rig.url).bearer_auth(&admin_token).json(
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args}}),
+        );
+        async move { request.send().await.unwrap().json::<Value>().await.unwrap() }
+    };
+    let slots = as_admin(
+        "booking_list_slots",
+        json!({"meeting_type_id":meeting["id"],"from":"2026-10-12","to":"2026-10-13","timezone":"Asia/Seoul"}),
+    )
+    .await;
+    assert_eq!(slots["result"]["isError"], false, "{slots}");
+    assert_eq!(
+        slots["result"]["structuredContent"]["data"]["reservation_guaranteed"],
+        false
+    );
+    let propose = as_admin("booking_propose", propose_args).await;
+    // A proposal is still only an approval request, never a confirmed booking.
+    let proposal = &propose["result"]["structuredContent"]["data"];
+    assert_eq!(propose["result"]["isError"], false, "{propose}");
+    assert_eq!(proposal["status"], "proposed");
+    assert!(proposal["booking_id"].is_null());
+    assert!(proposal["approval_request_id"].is_string());
 }
 
 #[tokio::test]
@@ -564,27 +591,6 @@ async fn new_reads_deny_missing_scopes_and_foreign_workspace_ids() {
     }
     let cursor_page = rig.call("templates_list", json!({"limit":1})).await;
     assert_eq!(cursor_page["has_more"], true);
-    let proposal_request:contracts::research::CreateLeadProposalsRequest=serde_json::from_value(json!({"proposals":[{"company_name":"Other operator's proposal","domain":"other-operator.example","proposed_data":{},"evidence":[{"field_path":"industry","source_url":"https://public.example/about","observed_at":chrono::Utc::now().to_rfc3339(),"value":"Software","evidence_type":"observed"}]}]})).unwrap();
-    let own_admin =
-        infrastructure::testing::ctx_for(&rig.world, &rig.world.admin, "other-owner-proposal");
-    let other_owned =
-        application::research::create_proposals(&rig.db, &own_admin, &proposal_request)
-            .await
-            .unwrap();
-    rig.denied(
-        "research_get_proposal",
-        json!({"lead_proposal_id":other_owned.proposals[0].id}),
-    )
-    .await;
-    let foreign_owned =
-        application::research::create_proposals(&rig.db, &foreign_admin, &proposal_request)
-            .await
-            .unwrap();
-    rig.denied(
-        "research_get_proposal",
-        json!({"lead_proposal_id":foreign_owned.proposals[0].id}),
-    )
-    .await;
     let mut tx = rig.owner.begin(rig.world.workspace_id).await.unwrap();
     let (_, token) = infrastructure::repo::auth::create_service_credential(
         &mut tx,

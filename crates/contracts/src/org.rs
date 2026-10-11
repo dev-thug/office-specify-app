@@ -163,8 +163,8 @@ pub struct DisableRequestResponse {
 #[serde(deny_unknown_fields)]
 pub struct CreateAgentRequest {
     pub name: String,
-    /// Intended scopes the agent's credentials may carry. `mail.send` /
-    /// `mail.approve` are always rejected for agents (§5.4).
+    /// Intended scopes the agent's credentials may carry. Any known scope
+    /// is accepted, including `mail.send` and `mail.approve`.
     #[serde(default)]
     pub scopes: Option<Vec<String>>,
 }

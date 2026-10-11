@@ -25,6 +25,7 @@ fn visibility(ctx: &Ctx) -> Result<repo::AuditVisibility, AppError> {
         (PrincipalKind::Human, Role::Admin) => repo::AuditVisibility::All,
         (PrincipalKind::Human, Role::Manager) => repo::AuditVisibility::BusinessOnly,
         (PrincipalKind::Human, _) => repo::AuditVisibility::OwnActivity(ctx.principal_id),
+        (PrincipalKind::Agent, _) if crate::authz::agent_admin(ctx) => repo::AuditVisibility::All,
         (PrincipalKind::Agent, _) => repo::AuditVisibility::AgentRuns {
             principal_id: ctx.principal_id,
         },

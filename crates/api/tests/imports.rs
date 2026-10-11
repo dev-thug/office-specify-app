@@ -420,58 +420,88 @@ async fn imports_list_is_cursor_paged_scoped_and_validates_status() {
     let _csrf = login_csrf(&app, world.admin.email.as_deref().unwrap()).await;
 
     let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
-    let _admin_job = seed_import_job_record(&mut tx, world.admin.principal_id, "validating").await;
+    let admin_job = seed_import_job_record(&mut tx, world.admin.principal_id, "validating").await;
     let agent_job_a = seed_import_job_record(&mut tx, world.agent.principal_id, "validating").await;
     let agent_job_b = seed_import_job_record(&mut tx, world.agent.principal_id, "ready").await;
     let (_credential_id, agent_token) = infrastructure::repo::auth::create_service_credential(
         &mut tx,
         world.agent.principal_id,
         "imports-list-test",
-        &["crm.import".to_string()],
+        &["crm.import".to_string(), "org.admin".to_string()],
         chrono::Duration::hours(1),
     )
     .await
     .unwrap();
+    let (_plain_credential_id, plain_agent_token) =
+        infrastructure::repo::auth::create_service_credential(
+            &mut tx,
+            world.agent.principal_id,
+            "imports-list-plain",
+            &["crm.import".to_string()],
+            chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
 
-    // An agent with import scope sees only its own jobs, with a principal-
-    // bound cursor across the two owned rows.
-    let first = app
+    // Without org.admin an agent sees only its own jobs.
+    let own = app
         .client
-        .get(app.url("/api/v1/imports?limit=1"))
-        .header("authorization", format!("Bearer {agent_token}"))
+        .get(app.url("/api/v1/imports?limit=10"))
+        .header("authorization", format!("Bearer {plain_agent_token}"))
         .send()
         .await
         .unwrap();
-    assert_eq!(first.status(), StatusCode::OK);
-    let first_body: serde_json::Value = first.json().await.unwrap();
-    assert_eq!(first_body["data"].as_array().unwrap().len(), 1);
-    assert_eq!(first_body["page"]["has_more"], true);
-    let first_id = first_body["data"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(own.status(), StatusCode::OK);
+    let own_body: serde_json::Value = own.json().await.unwrap();
+    let own_ids = own_body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|job| job["id"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert!(own_ids.contains(&agent_job_a.to_string()));
+    assert!(own_ids.contains(&agent_job_b.to_string()));
     assert!(
-        [agent_job_a.to_string(), agent_job_b.to_string()].contains(&first_id),
-        "agent received a job owned by another principal: {first_body}"
+        !own_ids.contains(&admin_job.to_string()),
+        "agent without org.admin saw another principal's job: {own_body}"
     );
-    assert_eq!(
-        first_body["data"][0]["requested_by"],
-        world.agent.principal_id.to_string()
-    );
-    let cursor = first_body["page"]["next_cursor"].as_str().unwrap();
-    let second = app
-        .client
-        .get(app.url(&format!("/api/v1/imports?limit=1&cursor={cursor}")))
-        .header("authorization", format!("Bearer {agent_token}"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(second.status(), StatusCode::OK);
-    let second_body: serde_json::Value = second.json().await.unwrap();
-    assert_eq!(second_body["data"].as_array().unwrap().len(), 1);
-    assert_ne!(second_body["data"][0]["id"], first_id);
-    assert_eq!(
-        second_body["data"][0]["requested_by"],
-        world.agent.principal_id.to_string()
-    );
+
+    // Agent/human parity: an agent with org.admin sees every workspace job
+    // (like an Admin), paged with a stable cursor and no duplicates.
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let path = match &cursor {
+            Some(c) => format!("/api/v1/imports?limit=1&cursor={c}"),
+            None => "/api/v1/imports?limit=1".to_string(),
+        };
+        let page = app
+            .client
+            .get(app.url(&path))
+            .header("authorization", format!("Bearer {agent_token}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let body: serde_json::Value = page.json().await.unwrap();
+        assert_eq!(body["data"].as_array().unwrap().len(), 1);
+        let id = body["data"][0]["id"].as_str().unwrap().to_string();
+        assert!(!seen.contains(&id), "cursor repeated job {id}: {body}");
+        seen.push(id);
+        if body["page"]["has_more"] == true {
+            cursor = Some(body["page"]["next_cursor"].as_str().unwrap().to_string());
+        } else {
+            break;
+        }
+        assert!(seen.len() <= 10, "unexpectedly long import list");
+    }
+    for job in [admin_job, agent_job_a, agent_job_b] {
+        assert!(
+            seen.contains(&job.to_string()),
+            "agent did not see workspace job {job}: {seen:?}"
+        );
+    }
 
     let invalid = app
         .client

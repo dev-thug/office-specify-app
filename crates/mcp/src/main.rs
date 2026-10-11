@@ -38,9 +38,22 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(DisabledCalendarProvider)
         };
     let calendar = Arc::new(CalendarProviderRouter::new(db.clone(), calendar_fallback));
+    let rate_limiter = match &config.redis_url {
+        Some(url) => Some(infrastructure::ratelimit::RateLimiter::new(
+            infrastructure::redis::RedisClient::connect(url).await?,
+        )),
+        None => {
+            if config.app_env == infrastructure::config::AppEnv::Prod {
+                anyhow::bail!("REDIS_URL is required in prod (rate limits fail closed)");
+            }
+            None
+        }
+    };
     let state = mcp::server::McpState {
         calendar,
         db,
+        config: Arc::new(config.clone()),
+        rate_limiter,
         allowed_origins: Arc::new(config.mcp_allowed_origins.clone()),
         tools: Arc::new(mcp::all_tools_with_key(&config.hmac_key)),
     };

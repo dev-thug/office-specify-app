@@ -316,7 +316,7 @@ async fn execute_launch(
     Json(req): Json<ExecuteLaunchRequest>,
 ) -> Result<impl IntoResponse, ProblemError> {
     let ctx = auth.into_inner();
-    application::authz::require_human(&ctx)?;
+    application::authz::require_operator(&ctx)?;
     let request_id = ctx.request_id.clone();
     let hash = crypto::sha256_bytes(
         &serde_json::to_vec(&serde_json::json!({"launch_id": id, "body": &req}))

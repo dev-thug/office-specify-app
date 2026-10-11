@@ -75,8 +75,8 @@ pub async fn summary(
             "system principals cannot read the dashboard",
         ));
     }
-    let can_view_team = ctx.principal_kind == PrincipalKind::Human
-        && matches!(ctx.role, Role::Admin | Role::Manager);
+    let can_view_team =
+        (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx));
     let requested_scope =
         filters
             .scope

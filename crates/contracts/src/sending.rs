@@ -162,7 +162,7 @@ pub struct OutboundApprovalRequestResponse {
 }
 
 /// `POST /api/v1/outbound-messages/{id}/submit` (B.3.10). Requires
-/// `Idempotency-Key`; agents are rejected (AGENT_DIRECT_SEND_FORBIDDEN).
+/// `Idempotency-Key` and the `mail.send` scope for credential callers.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SubmitOutboundRequest {

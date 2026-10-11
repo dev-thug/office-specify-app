@@ -7,20 +7,36 @@ use uuid::Uuid;
 use infrastructure::db::Tx;
 use infrastructure::error::map_sqlx;
 
-/// Human principals only — approvals, grants, suppression release,
-/// permission changes.
-pub fn require_human(ctx: &Ctx) -> Result<(), AppError> {
-    if ctx.principal_kind == PrincipalKind::Human {
+/// Operator principals only (human or agent, never the internal system
+/// principal) — approvals, grants, suppression release, permission changes.
+/// Agents act with the same authority as humans; their credential scopes
+/// are the gate.
+pub fn require_operator(ctx: &Ctx) -> Result<(), AppError> {
+    if matches!(
+        ctx.principal_kind,
+        PrincipalKind::Human | PrincipalKind::Agent
+    ) {
         Ok(())
     } else {
         Err(AppError::forbidden(
-            "this action requires a human principal",
+            "this action requires a human or agent principal",
         ))
     }
 }
 
+/// An agent acting with Admin/Manager authority: only when its credential
+/// carries `org.admin`. Agents without it act at operator (Member) level,
+/// still gated by each feature's own scope.
+pub fn agent_admin(ctx: &Ctx) -> bool {
+    ctx.role == Role::Agent && ctx.scopes.contains(Scope::OrgAdmin)
+}
+
+/// Agents pass operator-level role gates (any gate a Member passes); gates
+/// limited to Admin/Manager additionally need the `org.admin` scope.
 pub fn require_role(ctx: &Ctx, roles: &[Role]) -> Result<(), AppError> {
-    if roles.contains(&ctx.role) {
+    let agent_ok = ctx.role == Role::Agent
+        && (roles.contains(&Role::Member) || roles.contains(&Role::Agent) || agent_admin(ctx));
+    if agent_ok || roles.contains(&ctx.role) {
         Ok(())
     } else {
         Err(AppError::forbidden(format!(
@@ -43,18 +59,6 @@ pub fn require_scope(ctx: &Ctx, scope: Scope) -> Result<(), AppError> {
             format!("missing scope {}", scope.as_str()),
         ))
     }
-}
-
-/// Agent principals may never approve, grant, send directly, reveal tokens,
-/// or unsuppress (§5.4). `action` is a stable key for the error detail.
-pub fn require_not_agent_for(ctx: &Ctx, action: &str) -> Result<(), AppError> {
-    if ctx.principal_kind == PrincipalKind::Agent {
-        return Err(AppError::new(
-            ErrorCode::AgentDirectSendForbidden,
-            format!("agents cannot {action}"),
-        ));
-    }
-    Ok(())
 }
 
 /// Mailbox ACL from `mail_account_grants` (spec §4.6 — agents read the same
@@ -117,15 +121,14 @@ fn perm_scope(perm: MailboxPerm) -> Scope {
 }
 
 /// §5.4 role/kind clause: `can_approve` additionally requires an
-/// Admin/Manager human; agents cannot use the direct MailboxPerm::Send
-/// path. The explicit approved-submit service checks can_send separately.
+/// Admin/Manager human or an agent (agents hold Admin-equivalent authority).
 fn perm_role_ok(ctx: &Ctx, perm: MailboxPerm) -> bool {
     match perm {
         MailboxPerm::Approve => {
-            ctx.principal_kind == PrincipalKind::Human
-                && matches!(ctx.role, Role::Admin | Role::Manager)
+            ctx.principal_kind == PrincipalKind::Agent
+                || (ctx.principal_kind == PrincipalKind::Human
+                    && matches!(ctx.role, Role::Admin | Role::Manager))
         }
-        MailboxPerm::Send => ctx.principal_kind != PrincipalKind::Agent,
         _ => true,
     }
 }
@@ -166,10 +169,10 @@ pub async fn require_mailbox(
 }
 
 /// CRM edit rule (spec §4.6): Member may edit own or unassigned-new records
-/// only; Manager/Admin may edit any.
+/// only; Manager/Admin/Agent may edit any.
 pub fn crm_can_edit(ctx: &Ctx, owner_principal_id: Option<Uuid>) -> Result<(), AppError> {
     match ctx.role {
-        Role::Admin | Role::Manager => Ok(()),
+        Role::Admin | Role::Manager | Role::Agent => Ok(()),
         Role::Member
             if owner_principal_id.is_none() || owner_principal_id == Some(ctx.principal_id) =>
         {

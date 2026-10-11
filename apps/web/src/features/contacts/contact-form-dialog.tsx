@@ -6,9 +6,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CompanyPicker } from "@/features/companies/company-picker";
 import { OwnerSelect } from "@/features/companies/owner-select";
-import { createContact, patchContact, type Contact, type CreateContactInput, type PatchContactInput } from "@/lib/api/contacts";
+import { CONTACT_STATUSES, createContact, patchContact, type Contact, type CreateContactInput, type PatchContactInput } from "@/lib/api/contacts";
 import type { Company } from "@/lib/api/companies";
 import { idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
@@ -30,15 +31,17 @@ export function ContactFormDialog({
 }) {
   const t = useTranslations("contacts.form");
   const tc = useTranslations("common");
+  const ts = useTranslations("status");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <ContactFormBody
-        key={`${contact?.id ?? "new"}:${defaultCompany?.id ?? ""}`}
+        key={`${contact?.id ?? "new"}:${contact?.version ?? ""}:${defaultCompany?.id ?? ""}`}
         contact={contact}
         defaultCompany={defaultCompany}
         etag={etag}
         t={t}
         tc={tc}
+        ts={ts}
         onClose={() => onOpenChange(false)}
         onSaved={onSaved}
       />
@@ -52,6 +55,7 @@ function ContactFormBody({
   etag,
   t,
   tc,
+  ts,
   onClose,
   onSaved,
 }: {
@@ -60,6 +64,7 @@ function ContactFormBody({
   etag?: string | number;
   t: ReturnType<typeof useTranslations>;
   tc: ReturnType<typeof useTranslations>;
+  ts: ReturnType<typeof useTranslations>;
   onClose: () => void;
   onSaved?: (contact: Contact, mode: "created" | "updated") => void;
 }) {
@@ -68,6 +73,7 @@ function ContactFormBody({
   const [phone, setPhone] = useState(contact?.phone ?? "");
   const [jobTitle, setJobTitle] = useState(contact?.job_title ?? "");
   const [department, setDepartment] = useState(contact?.department ?? "");
+  const [status, setStatus] = useState<string>(contact?.status ?? "active");
   const [company, setCompany] = useState<Company | null>(
     contact?.company_id ? { id: contact.company_id, name: contact.company_name?.trim() || tc("nameUnavailable") } as Company : defaultCompany ?? null
   );
@@ -91,6 +97,7 @@ function ContactFormBody({
           job_title: jobTitle.trim() || null,
           department: department.trim() || null,
           phone: phone.trim() || null,
+          ...(status !== contact.status ? { status } : {}),
         };
         saved = (await patchContact(contact.id, patch, {
           etag: etag ?? contact.version,
@@ -108,6 +115,8 @@ function ContactFormBody({
         };
         saved = (await createContact(input, { idempotencyKey: idem.current })).data;
       }
+      // 다음 저장은 별개 작업이다 — 같은 키를 다시 보내면 이전 요청으로 취급된다.
+      idem.current = idempotencyKey();
       onSaved?.(saved, editing ? "updated" : "created");
       onClose();
     } catch (cause) {
@@ -153,6 +162,15 @@ function ContactFormBody({
           <Label htmlFor="contact-department">{t("department")}</Label>
           <Input id="contact-department" value={department} onChange={(event) => setDepartment(event.target.value)} maxLength={300} />
         </div>
+        {editing ? <div className="grid gap-1.5">
+          <Label htmlFor="contact-status">{t("status")}</Label>
+          <Select value={status} onValueChange={setStatus}>
+            <SelectTrigger id="contact-status" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {CONTACT_STATUSES.map((value) => <SelectItem key={value} value={value}>{ts(value)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div> : null}
         <div className="grid gap-1.5">
           <Label htmlFor="contact-owner">{t("owner")}</Label>
           <OwnerSelect id="contact-owner" value={ownerId} onChange={setOwnerId} unassignedLabel={t("ownerUnassigned")} disabled={editing} />

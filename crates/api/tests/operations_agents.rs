@@ -1175,7 +1175,9 @@ async fn t01_dashboard_queues_count_only_visible_mail_approvals_and_meetings() {
     assert_eq!(team.status(), StatusCode::OK);
     let team: serde_json::Value = team.json().await.unwrap();
     assert_eq!(dashboard_queue_count(&team, "inbox_unhandled"), Some(1));
-    assert_eq!(dashboard_queue_count(&team, "approvals_pending"), Some(1));
+    // Requesters may decide their own approvals (migration 0044), so the
+    // admin's own booking approval is actionable alongside member_a's.
+    assert_eq!(dashboard_queue_count(&team, "approvals_pending"), Some(2));
     assert_eq!(dashboard_queue_count(&team, "meetings_today"), Some(2));
     assert_eq!(dashboard_queue_count(&team, "outbound_unknown"), Some(1));
     assert_eq!(dashboard_queue_count(&team, "sync_lag"), Some(1));

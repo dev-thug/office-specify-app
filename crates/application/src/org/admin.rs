@@ -147,7 +147,9 @@ pub async fn check_roster_read(
     action: &str,
     target_id: Option<Uuid>,
 ) -> Result<(), AppError> {
-    if !matches!(&ctx.auth, AuthMethod::Session { .. }) {
+    if !matches!(&ctx.auth, AuthMethod::Session { .. })
+        && ctx.principal_kind != PrincipalKind::Agent
+    {
         let err = AppError::forbidden("principal roster requires an admin session");
         audit_denied(db, ctx, action, "principal", target_id, &err).await?;
         return Err(err);
@@ -158,8 +160,9 @@ pub async fn check_roster_read(
 /// Human sessions may read only the active-human picker; service credentials
 /// and agents have no organization-read scope and cannot enumerate the roster.
 pub async fn check_principal_picker_read(db: &Db, ctx: &Ctx) -> Result<(), AppError> {
-    let allowed = ctx.principal_kind == PrincipalKind::Human
-        && matches!(&ctx.auth, AuthMethod::Session { .. });
+    let allowed = ctx.principal_kind == PrincipalKind::Agent
+        || (ctx.principal_kind == PrincipalKind::Human
+            && matches!(&ctx.auth, AuthMethod::Session { .. }));
     if allowed {
         return Ok(());
     }
@@ -176,8 +179,7 @@ async fn require_admin_audited(
     target_id: Option<Uuid>,
 ) -> Result<(), AppError> {
     let res = (|| {
-        crate::authz::require_not_agent_for(ctx, "administer the organization")?;
-        crate::authz::require_human(ctx)?;
+        crate::authz::require_operator(ctx)?;
         crate::authz::require_role(ctx, &[Role::Admin])
     })();
     match res {
@@ -928,8 +930,7 @@ pub async fn set_emergency_stop(
 ) -> Result<EmergencyStopResponse, AppError> {
     let action = "operations.emergency_stop";
     let res = (|| {
-        crate::authz::require_not_agent_for(ctx, "toggle the emergency stop")?;
-        crate::authz::require_human(ctx)?;
+        crate::authz::require_operator(ctx)?;
         if req.enabled {
             crate::authz::require_role(ctx, &[Role::Admin, Role::Manager])
         } else {

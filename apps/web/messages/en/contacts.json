@@ -78,7 +78,9 @@
     "emailsDescription": "Address format/deliverability verification and per-purpose send permission are separate axes. The send basis is reference information and does not block sending; only suppressed or blocked addresses are skipped.",
     "notesTitle": "Notes",
     "tasksTitle": "Tasks",
-    "activityTitle": "Activity"
+    "activityTitle": "Activity",
+    "openFullPage": "Open full page",
+    "infoTitle": "Details"
   },
   "compose": {
     "action": "New message",
@@ -144,7 +146,11 @@
       "PROVIDER_POLICY_UNVERIFIED": "Provider policy unverified",
       "EMAIL_INVALID": "Invalid address format",
       "EMAIL_RISKY": "Risky address"
-    }
+    },
+    "remove": "Unlink",
+    "removeConfirm": "Unlink {address} from this contact? Opt-out and suppression records for the address are kept.",
+    "removed": "Address unlinked",
+    "removeError": "Couldn't unlink the address"
   },
   "notes": {
     "title": "Notes",

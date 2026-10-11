@@ -53,7 +53,7 @@ afterEach(() => {
 });
 
 describe("UnsubscribeConfirm", () => {
-  it("GET shows confirmation data only — org and scope, no side effect", async () => {
+  it("GET shows confirmation data only — org and masked address, no side effect", async () => {
     const calls = stubFetch(() =>
       json({
         data: {
@@ -68,9 +68,6 @@ describe("UnsubscribeConfirm", () => {
       expect(screen.getByText("Example Corp")).toBeInTheDocument()
     );
     expect(screen.getByText("u***@example.com")).toBeInTheDocument();
-    expect(
-      screen.getByText("All marketing email from this organization")
-    ).toBeInTheDocument();
     // GET만 호출됐다 — 버튼을 누르기 전 POST는 없다.
     expect(calls).toHaveLength(1);
     expect(calls[0]!.init?.method ?? "GET").toBe("GET");
@@ -99,7 +96,7 @@ describe("UnsubscribeConfirm", () => {
     expect(calls.map((c) => c.init?.method)).toContain("POST");
     expect(
       screen.getByText(
-        "Office recorded your unsubscribe. This organization's marketing sends will exclude you."
+        "You won't receive marketing email from this sender anymore. Thank you for being with us."
       )
     ).toBeInTheDocument();
     expect(screen.queryByText("Unsubscribed from Example Corp marketing.")).toBeNull();

@@ -2106,7 +2106,7 @@
             "type": "string"
           },
           "scopes": {
-            "description": "Intended scopes the agent's credentials may carry. `mail.send` /\n`mail.approve` are always rejected for agents (§5.4).",
+            "description": "Intended scopes the agent's credentials may carry. Any known scope\nis accepted, including `mail.send` and `mail.approve`.",
             "items": {
               "type": "string"
             },
@@ -7549,7 +7549,7 @@
         "description": "`PUT /mail-accounts/{id}/grants/{principal_id}` — full flag replace.",
         "properties": {
           "can_approve": {
-            "description": "Human Admin/Manager approver authority. Agents cannot receive it.",
+            "description": "Approver authority for Admin/Manager humans and agents.",
             "type": "boolean"
           },
           "can_assign": {
@@ -7562,7 +7562,7 @@
             "type": "boolean"
           },
           "can_send": {
-            "description": "Mailbox send ACL. For Agent principals this only satisfies the\napproved-submit path; agents cannot use direct submit or `mail.send`.",
+            "description": "Mailbox send ACL (direct submit additionally needs `mail.send`;\napproved-submit needs `mail.submit_approved`).",
             "type": "boolean"
           }
         },
@@ -8703,7 +8703,7 @@
       },
       "SubmitOutboundRequest": {
         "additionalProperties": false,
-        "description": "`POST /api/v1/outbound-messages/{id}/submit` (B.3.10). Requires\n`Idempotency-Key`; agents are rejected (AGENT_DIRECT_SEND_FORBIDDEN).",
+        "description": "`POST /api/v1/outbound-messages/{id}/submit` (B.3.10). Requires\n`Idempotency-Key` and the `mail.send` scope for credential callers.",
         "properties": {
           "expected_payload_hash": {
             "description": "Client must resend the payload hash it expects to submit — a changed\nsnapshot yields SNAPSHOT_MISMATCH.",

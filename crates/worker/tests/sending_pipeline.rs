@@ -1046,7 +1046,9 @@ async fn submit_guards_snapshot_approval_agent() {
     .unwrap_err();
     assert_eq!(err.code, ErrorCode::SnapshotMismatch);
 
-    // Agents can never submit — denial is audited (§5.4/T03).
+    // Agent/human parity: agents may submit directly (no blanket
+    // AGENT_DIRECT_SEND_FORBIDDEN), but the mailbox ACL still applies — an
+    // agent without a can_send grant is denied like any other principal.
     let agent_ctx = ctx_for(&world, &world.agent, "agent-submit");
     let err = sending::submit(
         &db,
@@ -1060,9 +1062,9 @@ async fn submit_guards_snapshot_approval_agent() {
     )
     .await
     .unwrap_err();
-    assert_eq!(err.code, ErrorCode::AgentDirectSendForbidden);
+    assert_eq!(err.code, ErrorCode::MailboxAccessDenied);
     let mut tx = db.begin(ws).await.unwrap();
-    let denied: i64 = sqlx::query_scalar(
+    let blanket_denials: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit_logs
           WHERE workspace_id = $1 AND action = 'outbound.submit'
             AND details->>'outcome' = 'denied:AGENT_DIRECT_SEND_FORBIDDEN'
@@ -1073,7 +1075,7 @@ async fn submit_guards_snapshot_approval_agent() {
     .fetch_one(tx.conn())
     .await
     .unwrap();
-    assert_eq!(denied, 1);
+    assert_eq!(blanket_denials, 0);
     tx.rollback().await.unwrap();
 
     // Emergency stop rejects new submissions (B.5) — put it back after.

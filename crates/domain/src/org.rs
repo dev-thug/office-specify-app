@@ -31,18 +31,13 @@ pub fn role_to_str(role: Role) -> &'static str {
 }
 
 /// Validate an agent/credential scope list: every entry must be a known
-/// scope and must not be in `Scope::AGENT_FORBIDDEN` (§5.4 — agents never
-/// approve, grant, send directly, or unsuppress). Duplicates are removed;
-/// order is preserved.
+/// scope. Agents may hold every scope a human can, including `mail.send`
+/// and `mail.approve`. Duplicates are removed; order is preserved.
 pub fn validate_agent_scopes(scopes: &[String]) -> Result<Vec<String>, Vec<Violation>> {
     let mut out: Vec<String> = Vec::new();
     let mut violations = Vec::new();
     for s in scopes {
         match Scope::parse(s) {
-            Some(scope) if Scope::AGENT_FORBIDDEN.contains(&scope) => violations.push(Violation {
-                field: "scopes".into(),
-                code: format!("AGENT_SCOPE_FORBIDDEN:{s}"),
-            }),
             Some(_) => {
                 if !out.contains(s) {
                     out.push(s.clone());
@@ -77,11 +72,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_scopes_reject_send_and_approve() {
-        let bad = validate_agent_scopes(&["crm.read".into(), "mail.send".into()]);
-        assert!(bad.is_err());
-        let bad = validate_agent_scopes(&["mail.approve".into()]);
-        assert!(bad.is_err());
+    fn agent_scopes_accept_send_and_approve() {
+        let ok = validate_agent_scopes(&["crm.read".into(), "mail.send".into()]);
+        assert_eq!(ok.unwrap(), vec!["crm.read", "mail.send"]);
+        let ok = validate_agent_scopes(&["mail.approve".into()]);
+        assert_eq!(ok.unwrap(), vec!["mail.approve"]);
         let ok = validate_agent_scopes(&["crm.read".into(), "mail.read".into(), "crm.read".into()]);
         assert_eq!(ok.unwrap(), vec!["crm.read", "mail.read"]);
         let unknown = validate_agent_scopes(&["nope".into()]);

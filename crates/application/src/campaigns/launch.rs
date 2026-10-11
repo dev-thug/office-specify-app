@@ -370,7 +370,7 @@ pub async fn execute_launch(
             ));
         }
     } else {
-        authz::require_human(ctx)?;
+        authz::require_operator(ctx)?;
     }
 
     let Some(launch) = repo::get_launch_for_update(tx, launch_id).await? else {

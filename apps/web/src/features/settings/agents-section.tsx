@@ -58,6 +58,8 @@ export const AGENT_SCOPES = [
   "crm.read",
   "crm.write",
   "crm.propose",
+  "crm.import",
+  "crm.export",
   "research.propose",
   "research.write",
   "templates.read",
@@ -67,6 +69,8 @@ export const AGENT_SCOPES = [
   "mail.compose",
   "mail.assign",
   "mail.submit_approved",
+  "mail.send",
+  "mail.approve",
   "campaign.compose",
   "campaign.pause",
   "campaign.submit_approved",
@@ -75,16 +79,17 @@ export const AGENT_SCOPES = [
   "approvals.read",
   "operations.read",
   "agents.run",
+  "org.admin",
 ] as const;
 
 /** 자주 쓰는 scope 묶음 — 선택만으로 시작할 수 있게 한다. */
 export const SCOPE_PRESETS: { id: "research" | "sales"; scopes: readonly string[] }[] = [
-  { id: "research", scopes: ["crm.read", "research.propose", "research.write"] },
+  { id: "research", scopes: ["crm.read", "crm.write", "research.write"] },
   {
     id: "sales",
     scopes: [
       "crm.read",
-      "research.propose",
+      "crm.write",
       "research.write",
       "templates.read",
       "mail.read",

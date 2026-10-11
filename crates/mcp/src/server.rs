@@ -17,7 +17,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use contracts::{AuthMethod, Ctx, PrincipalKind, ScopeSet};
+use contracts::{AuthMethod, Ctx, ScopeSet};
 use serde_json::Value;
 
 use crate::jsonrpc::*;
@@ -30,6 +30,8 @@ use infrastructure::repo::auth as auth_repo;
 pub struct McpState {
     pub db: Db,
     pub calendar: Arc<dyn infrastructure::providers::CalendarProvider>,
+    pub config: Arc<infrastructure::config::Config>,
+    pub rate_limiter: Option<infrastructure::ratelimit::RateLimiter>,
     pub allowed_origins: Arc<Vec<String>>,
     pub tools: Arc<Vec<ToolDef>>,
 }
@@ -88,15 +90,7 @@ async fn authenticate(state: &McpState, headers: &HeaderMap) -> Result<Ctx, (Sta
     if cred.principal.status != "active" {
         return Err((StatusCode::FORBIDDEN, "PRINCIPAL_DISABLED".into()));
     }
-    let mut scopes = ScopeSet::from_strings(cred.scopes.iter());
-    if cred.principal.principal_kind() == PrincipalKind::Agent {
-        // Agents never get forbidden scopes even if issued (§5.4).
-        let kept: Vec<_> = scopes
-            .iter()
-            .filter(|s| !contracts::Scope::AGENT_FORBIDDEN.contains(s))
-            .collect();
-        scopes = ScopeSet::of(kept);
-    }
+    let scopes = ScopeSet::from_strings(cred.scopes.iter());
     Ok(Ctx {
         request_id: uuid::Uuid::new_v4().to_string(),
         workspace_id: cred.principal.workspace_id,
@@ -299,6 +293,8 @@ async fn dispatch(state: &McpState, ctx: &Ctx, req: RpcRequest) -> RpcResponse {
                 crate::ToolServices {
                     db: state.db.clone(),
                     calendar: state.calendar.clone(),
+                    config: state.config.clone(),
+                    rate_limiter: state.rate_limiter.clone(),
                 },
                 call_ctx.clone(),
                 args,

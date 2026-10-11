@@ -1,9 +1,9 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { CircleCheckIcon, Link2OffIcon } from "lucide-react";
+import { CheckIcon, Link2OffIcon, MailIcon, MailXIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import { ErrorState } from "@/components/patterns/error-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/compliance";
 import { idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
+import { cn } from "@/lib/utils";
 
 /** 토큰의 현재 상태 — GET 미리보기 status 또는 POST 결과로 정한다. */
 type ViewState =
@@ -28,8 +29,7 @@ type ViewState =
  *
  * - GET /public/v1/unsubscribe/{token}는 확인 데이터만 반환한다 — 부작용 없음.
  * - 버튼의 POST만 실제 차단을 실행한다. 반복 클릭·새로고침 재제출은 같은 성공.
- * - 발신 조직·차단 범위만 보여주고 주소 전체·CRM ID는 표시하지 않는다
- *   (마스킹된 주소만). 로그인·이메일 재입력·설문을 요구하지 않는다.
+ * - 발신 조직과 마스킹된 주소만 보여주고 주소 전체·CRM ID는 표시하지 않는다. 로그인·이메일 재입력·설문을 요구하지 않는다.
  * - 추적 픽셀·외부 스크립트는 두지 않는다.
  */
 export function UnsubscribeConfirm({ token }: { token: string }) {
@@ -84,14 +84,14 @@ export function UnsubscribeConfirm({ token }: { token: string }) {
   if (preview.isPending) {
     return (
       <div
-        className="flex flex-col gap-5"
+        className="mx-auto flex w-full max-w-sm flex-1 flex-col items-center gap-3 pt-10 sm:max-w-md sm:justify-center sm:pt-0 sm:pb-16"
         role="status"
         aria-label={t("checking")}
       >
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="h-4 w-full max-w-sm" />
-        <Skeleton className="h-24 w-full rounded-2xl" />
-        <Skeleton className="h-10 w-full rounded-full" />
+        <Skeleton className="size-14 rounded-full" />
+        <Skeleton className="mt-3 h-8 w-52" />
+        <Skeleton className="h-4 w-64" />
+        <Skeleton className="mt-6 h-12 w-full rounded-full" />
       </div>
     );
   }
@@ -106,13 +106,15 @@ export function UnsubscribeConfirm({ token }: { token: string }) {
       return <InvalidLink t={t} />;
     }
     return (
-      <ErrorState
-        title={t("errorTitle")}
-        description={t("loadError")}
-        error={e}
-        onRetry={() => preview.refetch()}
-        retryLabel={t("retry")}
-      />
+      <div className="mx-auto flex w-full max-w-sm flex-1 flex-col pt-10 sm:max-w-md sm:justify-center sm:pt-0 sm:pb-16">
+        <ErrorState
+          title={t("errorTitle")}
+          description={t("loadError")}
+          error={e}
+          onRetry={() => preview.refetch()}
+          retryLabel={t("retry")}
+        />
+      </div>
     );
   }
 
@@ -122,104 +124,150 @@ export function UnsubscribeConfirm({ token }: { token: string }) {
 
   if (effectiveState.kind === "done") {
     return (
-      <div className="flex flex-col gap-5">
-        <div className="flex items-start gap-3">
-          <CircleCheckIcon
-            className="mt-0.5 size-6 shrink-0 text-success-on-subtle"
-            aria-hidden
-          />
-          <div>
-            <h1 className="text-2xl font-semibold">{t("doneTitle")}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("doneDescription")}
-            </p>
-          </div>
-        </div>
-        <p className="rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-          {t("doneScope", { scope: t("scope.workspace_marketing") })}
-        </p>
-      </div>
+      <StatusScreen
+        icon={
+          <IconCircle className="bg-success/10 text-success-on-subtle">
+            <CheckIcon className="size-7" strokeWidth={2.5} aria-hidden />
+          </IconCircle>
+        }
+        title={t("doneTitle")}
+        description={t("doneDescription")}
+      />
     );
   }
 
   const previewData = preview.data?.data;
+  const organization = previewData?.organization_name;
 
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <h1 className="text-2xl font-semibold">{t("title")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t("description")}
+    <StatusScreen
+      icon={
+        <IconCircle className="bg-muted text-muted-foreground">
+          <MailXIcon className="size-6" aria-hidden />
+        </IconCircle>
+      }
+      title={
+        organization
+          ? t.rich("titleWithOrganization", {
+              organization,
+              org: (chunks) => (
+                <span className="text-brand-on-subtle">{chunks}</span>
+              ),
+            })
+          : t("title")
+      }
+      description={t("description")}
+      actions={
+        <>
+          {submit.isError ? (
+            <Alert variant="destructive" className="text-left">
+              <AlertTitle>{t("errorTitle")}</AlertTitle>
+              <AlertDescription>
+                {submit.error instanceof ApiError &&
+                submit.error.problem.retryable === false
+                  ? (submit.error.problem.detail ?? t("submitError"))
+                  : t("submitError")}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+          <Button
+            type="button"
+            size="xl"
+            className="w-full"
+            disabled={submit.isPending}
+            onClick={() => submit.mutate()}
+          >
+            {submit.isPending ? t("confirming") : t("confirm")}
+          </Button>
+          <p className="text-ui break-keep text-muted-foreground">
+            {t("footnote")}
+          </p>
+        </>
+      }
+    >
+      {previewData?.masked_address ? (
+        <p className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-ui text-muted-foreground">
+          <MailIcon className="size-3.5" aria-hidden />
+          <span className="sr-only">{t("address")}</span>
+          <span>{previewData.masked_address}</span>
         </p>
-      </div>
-
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-2xl border border-border bg-card px-4 py-3 text-sm">
-        <dt className="text-muted-foreground">{t("organization")}</dt>
-        <dd className="font-medium">
-          {previewData?.organization_name ?? t("organizationFallback")}
-        </dd>
-        <dt className="text-muted-foreground">{t("scopeLabel")}</dt>
-        <dd className="font-medium">
-          {scopeLabel(t, previewData?.scope)}
-        </dd>
-        {previewData?.masked_address ? (
-          <>
-            <dt className="text-muted-foreground">{t("address")}</dt>
-            <dd className="font-medium">{previewData.masked_address}</dd>
-          </>
-        ) : null}
-      </dl>
-
-      {submit.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>{t("errorTitle")}</AlertTitle>
-          <AlertDescription>
-            {submit.error instanceof ApiError &&
-            submit.error.problem.retryable === false
-              ? (submit.error.problem.detail ?? t("submitError"))
-              : t("submitError")}
-          </AlertDescription>
-        </Alert>
       ) : null}
+    </StatusScreen>
+  );
+}
 
-      <Button
-        type="button"
-        variant="destructive"
-        className="w-full"
-        disabled={submit.isPending}
-        onClick={() => submit.mutate()}
-      >
-        {submit.isPending ? t("confirming") : t("confirm")}
-      </Button>
-      <p className="text-xs text-muted-foreground">{t("footnote")}</p>
+function IconCircle({
+  className,
+  children,
+}: {
+  className: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "flex size-14 items-center justify-center rounded-full sm:size-16",
+        className
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * 공개 수신 거부의 모든 상태가 공유하는 가운데 정렬 화면 골격.
+ * 모바일은 actions를 화면 하단에 고정하고, 넓은 화면은 콘텐츠와 한 묶음으로
+ * 세로 가운데에 둔다.
+ */
+function StatusScreen({
+  icon,
+  title,
+  description,
+  children,
+  actions,
+}: {
+  icon: ReactNode;
+  title: ReactNode;
+  description: string;
+  children?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="mx-auto flex w-full max-w-sm flex-1 flex-col sm:max-w-md sm:justify-center sm:pb-16">
+      <div className="flex flex-col items-center pt-10 text-center sm:pt-0">
+        {icon}
+        <h1 className="mt-6 text-2xl leading-snug font-semibold break-keep whitespace-pre-line sm:mt-8 sm:text-3xl">
+          {title}
+        </h1>
+        <p className="mt-3 text-sm leading-relaxed break-keep whitespace-pre-line text-muted-foreground sm:mt-4 sm:text-base">
+          {description}
+        </p>
+        {children ? (
+          <div className="mt-6 flex flex-col items-center gap-3 sm:mt-8">
+            {children}
+          </div>
+        ) : null}
+      </div>
+      {actions ? (
+        <div className="sticky bottom-0 mt-auto flex flex-col gap-3 bg-background pt-10 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-center sm:static sm:mt-10 sm:p-0">
+          {actions}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-/** 범위 문자열 → 지역화 라벨. 알 수 없는 값은 원문을 그대로 보인다. */
-function scopeLabel(
-  t: ReturnType<typeof useTranslations>,
-  scope: string | undefined
-) {
-  const key = `scope.${scope ?? "workspace_marketing"}`;
-  return t.has(key) ? t(key) : (scope ?? t("scope.workspace_marketing"));
-}
-
 function InvalidLink({ t }: { t: ReturnType<typeof useTranslations> }) {
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-start gap-3">
-        <Link2OffIcon
-          className="mt-0.5 size-6 shrink-0 text-muted-foreground"
-          aria-hidden
-        />
-        <div>
-          <h1 className="text-2xl font-semibold">{t("invalidTitle")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t("invalidDescription")}
-          </p>
-        </div>
-      </div>
-    </div>
+    <StatusScreen
+      icon={
+        <IconCircle className="bg-muted text-muted-foreground">
+          <Link2OffIcon className="size-6" aria-hidden />
+        </IconCircle>
+      }
+      title={t("invalidTitle")}
+      description={t("invalidDescription")}
+    />
   );
 }

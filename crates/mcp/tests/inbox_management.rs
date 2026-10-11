@@ -115,6 +115,8 @@ impl Rig {
         let app = build_router(McpState {
             db: db.clone(),
             calendar: Arc::new(FakeMailProvider::new()),
+            config: Arc::new(infrastructure::config::Config::test()),
+            rate_limiter: None,
             allowed_origins: Arc::new(vec![]),
             tools: Arc::new(mcp::all_tools_with_key(
                 b"isolated-mcp-inbox-verify-hmac-key-32bytes",

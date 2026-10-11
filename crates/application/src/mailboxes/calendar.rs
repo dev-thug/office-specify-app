@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use contracts::AppError;
 use contracts::Ctx;
 use contracts::mailboxes::{CalendarConnectionResponse, OAuthStartResponse};
-use contracts::{AuthMethod, ErrorCode, Role, Scope};
+use contracts::{AuthMethod, ErrorCode, PrincipalKind, Role, Scope};
 use infrastructure::audit::{self, AuditEntry};
 use infrastructure::config::Config;
 use infrastructure::db::Db;
@@ -41,7 +41,7 @@ pub async fn list_calendar_connections(
     limit: i64,
 ) -> Result<CalendarPage, AppError> {
     let mut tx = db.begin(ctx.workspace_id).await?;
-    let all = matches!(ctx.role, Role::Admin | Role::Manager);
+    let all = (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx));
     let rows = repo::list_calendar_connections(
         &mut tx,
         (!all).then_some(ctx.principal_id),
@@ -79,9 +79,11 @@ pub async fn connect_local_calendar_in_tx(
     tx: &mut infrastructure::db::Tx<'_>,
     ctx: &Ctx,
 ) -> Result<(CalendarConnectionResponse, bool), AppError> {
-    crate::authz::require_human(ctx)?;
+    crate::authz::require_operator(ctx)?;
     crate::authz::require_scope(ctx, Scope::BookingPropose)?;
-    if !matches!(&ctx.auth, AuthMethod::Session { .. }) {
+    if !matches!(&ctx.auth, AuthMethod::Session { .. })
+        && ctx.principal_kind != PrincipalKind::Agent
+    {
         return Err(AppError::forbidden(
             "local calendar connection requires a browser session",
         ));
@@ -90,7 +92,7 @@ pub async fn connect_local_calendar_in_tx(
         "SELECT EXISTS (
              SELECT 1 FROM principals
               WHERE workspace_id = $1 AND id = $2
-                AND kind = 'human' AND status = 'active'
+                AND kind IN ('human', 'agent') AND status = 'active'
          )",
     )
     .bind(ctx.workspace_id)

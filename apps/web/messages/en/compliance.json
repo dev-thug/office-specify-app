@@ -148,22 +148,16 @@
     }
   },
   "unsubscribe": {
-    "title": "Unsubscribe",
-    "description": "Nothing changes until you press the button below. Opening this page does nothing.",
-    "organization": "Sender organization",
-    "organizationFallback": "the sender of this email",
-    "scopeLabel": "Blocked scope",
-    "scope": {
-      "workspace_marketing": "All marketing email from this organization"
-    },
+    "title": "Stop receiving\nmarketing email?",
+    "titleWithOrganization": "Stop receiving marketing\nemail from <org>{organization}</org>?",
+    "description": "Press the button below to unsubscribe.\nThank you for reading our emails.",
     "address": "Address",
     "confirm": "Confirm unsubscribe",
     "confirming": "Processing…",
-    "footnote": "Processed immediately without sign-in. Pressing again gives the same result.",
+    "footnote": "No sign-in needed — it takes effect right away.",
     "checking": "Checking the link…",
     "doneTitle": "Unsubscribe processed",
-    "doneDescription": "Office recorded your unsubscribe. This organization's marketing sends will exclude you.",
-    "doneScope": "Applied scope: {scope}",
+    "doneDescription": "You won't receive marketing email from this sender anymore.\nThank you for being with us.",
     "invalidTitle": "This link cannot be used",
     "invalidDescription": "The link is expired or invalid. Use the latest unsubscribe link from the email you received.",
     "errorTitle": "Could not process",

@@ -315,7 +315,9 @@ async fn principals_list_get_patch_versioning() {
 }
 
 #[tokio::test]
-async fn empty_scope_agent_cannot_read_principal_roster_or_detail() {
+async fn agent_credential_reads_principal_roster_and_detail() {
+    // Agent/human parity: an agent credential carrying `org.admin` holds
+    // Admin-equivalent authority and may read the roster and a detail.
     let Some((app, world)) = test_app().await else {
         return;
     };
@@ -323,8 +325,51 @@ async fn empty_scope_agent_cannot_read_principal_roster_or_detail() {
     let (_credential_id, secret) = infrastructure::repo::auth::create_service_credential(
         &mut tx,
         world.agent.principal_id,
-        "empty-scope",
+        "org-admin",
+        &["org.admin".to_string()],
+        chrono::Duration::days(1),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let res = bearer(
+        &app,
+        reqwest::Method::GET,
+        "/api/v1/principals",
+        None,
+        &secret,
         &[],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value = res.json().await.unwrap();
+    assert!(
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == world.member_a.principal_id.to_string()),
+        "roster must include member_a: {body}"
+    );
+
+    let detail_path = format!("/api/v1/principals/{}", world.member_a.principal_id);
+    let res = bearer(&app, reqwest::Method::GET, &detail_path, None, &secret, &[]).await;
+    let data = TestApp::data(res).await;
+    assert_eq!(data["id"], world.member_a.principal_id.to_string());
+}
+
+#[tokio::test]
+async fn agent_without_org_admin_cannot_read_principal_roster_or_detail() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+    let (_credential_id, secret) = infrastructure::repo::auth::create_service_credential(
+        &mut tx,
+        world.agent.principal_id,
+        "no-org-admin",
+        &["mail.read".to_string()],
         chrono::Duration::days(1),
     )
     .await
@@ -991,15 +1036,25 @@ async fn agent_and_credential_lifecycle() {
     };
     let csrf = admin_csrf(&app, &world).await;
 
-    // Forbidden agent scopes are rejected at creation (§5.4).
+    // Unknown agent scopes are rejected at creation.
     let res = app
         .post_with_csrf(
             "/api/v1/agents",
-            json!({"name": "Bad Agent", "scopes": ["mail.send"]}),
+            json!({"name": "Bad Agent", "scopes": ["not.a_scope"]}),
             &csrf,
         )
         .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    // Agent/human parity: send/approve scopes are valid for agents.
+    let res = app
+        .post_with_csrf(
+            "/api/v1/agents",
+            json!({"name": "Sender Agent", "scopes": ["mail.send", "mail.approve"]}),
+            &csrf,
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
 
     // Create agent.
     let res = app
@@ -1415,21 +1470,21 @@ async fn emergency_stop_requires_roles_reason_and_version() {
 }
 
 // --------------------------------------------------------------------------
-// T03 — agents can never grant/change roles/disable; denial is audited
+// T03 — agent/human parity: agents administer like an Admin; audited
 // --------------------------------------------------------------------------
 
 #[tokio::test]
-async fn t03_agent_admin_endpoints_denied_and_audited() {
+async fn t03_agent_admin_endpoints_allowed_and_audited() {
     let Some((app, world)) = test_app().await else {
         return;
     };
     let csrf = admin_csrf(&app, &world).await;
 
-    // Fresh agent + credential (mail.read only — legit scope).
+    // Fresh agent + credential carrying org.admin (Admin-equivalent).
     let res = app
         .post_with_csrf(
             "/api/v1/agents",
-            json!({"name": "T03 Agent", "scopes": ["mail.read"]}),
+            json!({"name": "T03 Agent", "scopes": ["mail.read", "org.admin"]}),
             &csrf,
         )
         .await;
@@ -1440,7 +1495,7 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
     let res = app
         .post_with_csrf(
             &format!("/api/v1/agents/{agent_id}/credentials"),
-            json!({"name": "k", "scopes": ["mail.read"]}),
+            json!({"name": "k", "scopes": ["mail.read", "org.admin"]}),
             &csrf,
         )
         .await;
@@ -1450,7 +1505,7 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
         .to_string();
     let agent_uuid = Uuid::parse_str(&agent_id).unwrap();
 
-    // 1) grant a mailbox (forbidden: agents cannot grant)
+    // 1) grant a mailbox (allowed: agents hold Admin-equivalent authority)
     let res = bearer(
         &app,
         reqwest::Method::PUT,
@@ -1466,10 +1521,10 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
         &[("if-none-match", "*")],
     )
     .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
+    let data = TestApp::data(res).await;
+    assert_eq!(data["can_read"], true);
 
-    // 2) change a role (forbidden: agents cannot administer)
+    // 2) change a role (allowed)
     let res = bearer(
         &app,
         reqwest::Method::PATCH,
@@ -1479,10 +1534,10 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
         &[("if-match", "\"1\"")],
     )
     .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
+    let data = TestApp::data(res).await;
+    assert_eq!(data["role"], "manager");
 
-    // 3) request a disable (forbidden)
+    // 3) request a disable (allowed)
     let res = bearer(
         &app,
         reqwest::Method::POST,
@@ -1495,11 +1550,13 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
         &[("idempotency-key", &Uuid::new_v4().to_string())],
     )
     .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
+    assert!(
+        res.status().is_success(),
+        "agent disable request failed: {}",
+        res.status()
+    );
 
-    // 4) submit-on behalf equivalent at org level: create another agent
-    // (agents cannot create agents either).
+    // 4) create another agent (allowed)
     let res = bearer(
         &app,
         reqwest::Method::POST,
@@ -1509,10 +1566,9 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
         &[],
     )
     .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
+    assert_eq!(res.status(), StatusCode::CREATED);
 
-    // Every denial wrote an audit row (T03).
+    // No denials; every action still wrote an audit row.
     for action in [
         "mailbox.grant",
         "principal.update",
@@ -1520,6 +1576,12 @@ async fn t03_agent_admin_endpoints_denied_and_audited() {
         "agent.create",
     ] {
         let n = denied_audits(&app.state.db, world.workspace_id, agent_uuid, action).await;
-        assert!(n >= 1, "missing denied audit for {action}");
+        assert_eq!(n, 0, "unexpected denied audit for {action}");
+        let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+        let total = infrastructure::repo::org::audit_action_count(&mut tx, action)
+            .await
+            .unwrap();
+        let _ = tx.rollback().await;
+        assert!(total >= 1, "missing audit row for {action}");
     }
 }

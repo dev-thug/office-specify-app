@@ -82,6 +82,8 @@ impl Rig {
         let app = build_router(McpState {
             db: db.clone(),
             calendar: Arc::new(infrastructure::providers::fake::FakeMailProvider::new()),
+            config: Arc::new(infrastructure::config::Config::test()),
+            rate_limiter: None,
             allowed_origins: Arc::new(vec![]),
             tools: Arc::new(mcp::all_tools_with_key(
                 b"isolated-mcp-template-authoring-key",

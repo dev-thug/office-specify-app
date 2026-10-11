@@ -48,7 +48,7 @@ pub fn preauthorize_sales_campaign_create_identity(ctx: &Ctx) -> Result<(), AppE
 /// Check identity and permission scope before examining a sender-setting
 /// idempotency record. Readiness is evaluated only for a fresh write.
 pub fn preauthorize_sales_campaign_sender_identity(ctx: &Ctx) -> Result<(), AppError> {
-    if ctx.principal_kind != PrincipalKind::Human || ctx.role != Role::Admin {
+    if !(ctx.role == Role::Admin || crate::authz::agent_admin(ctx)) {
         return Err(AppError::forbidden(
             "only a human administrator can set the workspace sender",
         ));
@@ -594,7 +594,7 @@ pub async fn set_sales_campaign_sender(
     ctx: &Ctx,
     req: &SetSalesCampaignSenderRequest,
 ) -> Result<SalesCampaignSenderResponse, AppError> {
-    if ctx.principal_kind != PrincipalKind::Human || ctx.role != Role::Admin {
+    if !(ctx.role == Role::Admin || crate::authz::agent_admin(ctx)) {
         return Err(AppError::forbidden(
             "only a human administrator can set the workspace sender",
         ));

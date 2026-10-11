@@ -170,7 +170,7 @@ async fn check_company_ref(tx: &mut Tx<'_>, company_id: Option<Uuid>) -> Result<
 }
 
 /// `POST /contacts` — optional `Idempotency-Key` (synchronous create).
-/// Agent direct creation is rejected (B.3.3 — /lead-proposals).
+/// Humans and agents with `crm.write` create directly.
 pub async fn create(
     db: &Db,
     ctx: &Ctx,
@@ -178,11 +178,10 @@ pub async fn create(
     idem_key: Option<String>,
 ) -> Result<Stored<ContactResponse>, AppError> {
     require_crm_write(ctx)?;
-    authz::require_not_agent_for(ctx, "create contacts directly")?;
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     if let Some(owner) = req.owner_principal_id
         && owner != ctx.principal_id
-        && !matches!(ctx.role, Role::Admin | Role::Manager)
+        && !(matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx))
     {
         return Err(AppError::forbidden(
             "assigning another owner requires manager or admin role",
@@ -314,7 +313,6 @@ pub async fn patch(
     req: &PatchContactRequest,
 ) -> Result<ContactResponse, AppError> {
     require_crm_write(ctx)?;
-    authz::require_not_agent_for(ctx, "modify contacts")?;
     let mut tx = db.begin(ctx.workspace_id).await?;
     let row = crm::get_contact(&mut tx, id)
         .await?

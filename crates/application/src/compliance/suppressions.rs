@@ -256,7 +256,6 @@ pub async fn request_release(
     req: ReleaseSuppressionRequest,
 ) -> Result<ReleaseRequestResponse, AppError> {
     authz::require_role(ctx, REVIEW_ROLES)?;
-    authz::require_not_agent_for(ctx, "request suppression release")?;
     if req.evidence_ref.trim().is_empty() {
         return Err(field_violation(
             "evidence_ref",

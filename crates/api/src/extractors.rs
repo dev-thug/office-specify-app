@@ -9,7 +9,7 @@
 
 use axum::http::request::Parts;
 use chrono::Utc;
-use contracts::{AppError, AuthMethod, Ctx, ErrorCode, PrincipalKind, Scope, ScopeSet};
+use contracts::{AppError, AuthMethod, Ctx, ErrorCode, ScopeSet};
 use infrastructure::repo::auth as auth_repo;
 use serde::de::DeserializeOwned;
 
@@ -92,13 +92,7 @@ impl axum::extract::FromRequestParts<AppState> for AuthCtx {
                     "principal is disabled",
                 )));
             }
-            let mut scopes = ScopeSet::from_strings(auth.scopes.iter());
-            // Agents may never hold forbidden scopes even if issued (§5.4).
-            if auth.principal.principal_kind() == PrincipalKind::Agent {
-                for s in Scope::AGENT_FORBIDDEN {
-                    scopes = ScopeSet::of(scopes.iter().filter(|x| x != s));
-                }
-            }
+            let scopes = ScopeSet::from_strings(auth.scopes.iter());
             return Ok(AuthCtx(Ctx {
                 request_id,
                 workspace_id: auth.principal.workspace_id,

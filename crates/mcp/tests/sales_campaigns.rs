@@ -134,6 +134,8 @@ impl Rig {
         let router = build_router(McpState {
             db: db.clone(),
             calendar: Arc::new(infrastructure::providers::fake::FakeMailProvider::new()),
+            config: Arc::new(infrastructure::config::Config::test()),
+            rate_limiter: None,
             allowed_origins: Arc::new(vec![]),
             tools: Arc::new(mcp::all_tools_with_key(
                 b"isolated-sales-campaign-mcp-hmac-key-2026",
@@ -692,8 +694,9 @@ async fn personalized_campaign_keeps_target_copy_and_queues_only_approved_curren
     ] {
         assert!(tool_names.contains(&name), "missing MCP tool {name}");
     }
-    assert!(!tool_names.contains(&"approvals_decide"));
-    assert!(!tool_names.contains(&"mail_submit"));
+    // Operator-parity tools are listed; credential scopes gate their use.
+    assert!(tool_names.contains(&"approvals_decide"));
+    assert!(tool_names.contains(&"mail_submit"));
 
     let campaign = rig
         .call(

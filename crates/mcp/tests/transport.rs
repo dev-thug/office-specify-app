@@ -44,6 +44,8 @@ async fn server() -> (String, String, uuid::Uuid, tokio::task::JoinHandle<()>) {
     let app = build_router(McpState {
         db,
         calendar: Arc::new(infrastructure::providers::fake::FakeMailProvider::new()),
+        config: Arc::new(infrastructure::config::Config::test()),
+        rate_limiter: None,
         allowed_origins: Arc::new(vec!["https://allowed.test".into()]),
         tools: Arc::new(mcp::all_tools_with_key(
             b"test-cursor-key-with-at-least-32-bytes",
@@ -93,7 +95,7 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
         res["result"]["instructions"]
             .as_str()
             .unwrap()
-            .contains("proposed_data.contacts")
+            .contains("crm_create_company")
     );
     let batch = client
         .post(&url)
@@ -128,7 +130,7 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let research = tools
         .iter()
-        .find(|tool| tool["name"] == "research_propose_leads")
+        .find(|tool| tool["name"] == "research_add_evidence")
         .unwrap();
     assert!(
         research["inputSchema"]["examples"]
@@ -142,10 +144,11 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
             .contains("X-Agent-Run-Id")
     );
     assert!(tools.iter().any(|t| t["name"] == "crm_search_companies"));
-    assert!(!tools.iter().any(|t| {
-        ["mail_submit", "approvals_decide", "mailbox_grant"]
-            .contains(&t["name"].as_str().unwrap_or(""))
-    }));
+    // Operator-parity tools are listed for every credential; scopes gate the call.
+    for listed in ["mail_submit", "approvals_decide", "crm_create_company"] {
+        assert!(tools.iter().any(|t| t["name"] == listed), "{listed}");
+    }
+    assert!(!tools.iter().any(|t| t["name"] == "research_propose_leads"));
     let read: Value = client
         .post(&url)
         .bearer_auth(&token)
@@ -199,12 +202,19 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
         }
     })).send().await.unwrap().json().await.unwrap();
     assert_eq!(injection["result"]["structuredContent"]["ok"], true);
+    // The credential holds only crm.read/mail.read: a listed send tool is
+    // callable but cannot submit anything (mail.send is enforced together with
+    // the mailbox send grant once the outbound is resolved).
     let forbidden: Value = client
         .post(&url)
         .bearer_auth(&token)
         .json(&json!({
             "jsonrpc":"2.0", "id":7, "method":"tools/call", "params": {
-                "name":"mail_submit", "arguments": {}
+                "name":"mail_submit", "arguments": {
+                    "outbound_message_id": uuid::Uuid::new_v4(),
+                    "expected_payload_hash": "0".repeat(64),
+                    "idempotency_key": "transport-scope-check-0001"
+                }
             }
         }))
         .send()
@@ -213,6 +223,25 @@ async fn transport_auth_origin_protocol_and_scoped_tools() {
         .json()
         .await
         .unwrap();
-    assert_eq!(forbidden["error"]["code"], -32601);
+    assert_eq!(forbidden["result"]["isError"], true, "{forbidden}");
+    assert_eq!(
+        forbidden["result"]["structuredContent"]["ok"], false,
+        "{forbidden}"
+    );
+    let unknown: Value = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&json!({
+            "jsonrpc":"2.0", "id":9, "method":"tools/call", "params": {
+                "name":"mailbox_grant", "arguments": {}
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(unknown["error"]["code"], -32601);
     handle.abort();
 }

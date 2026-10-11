@@ -6,7 +6,7 @@ use contracts::imports::{
     CreateExportRequest, CreateImportRequest, ImportResponse, ImportRowResponse,
     JobAcceptedResponse,
 };
-use contracts::{AppError, Ctx, ErrorCode, PrincipalKind, Role, Scope, Violation};
+use contracts::{AppError, Ctx, ErrorCode, Role, Scope, Violation};
 use domain::imports as d;
 use infrastructure::audit::{self, AuditEntry};
 use infrastructure::config::Config;
@@ -207,7 +207,7 @@ fn can_read_job(ctx: &Ctx, job: &repo::ImportJobRow) -> Result<(), AppError> {
 }
 
 fn can_read_all_jobs(ctx: &Ctx) -> bool {
-    ctx.principal_kind == PrincipalKind::Human && matches!(ctx.role, Role::Manager | Role::Admin)
+    (matches!(ctx.role, Role::Manager | Role::Admin) || crate::authz::agent_admin(ctx))
 }
 
 /// `GET /imports` — newest-first signed-cursor page. Requesters see only

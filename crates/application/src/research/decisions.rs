@@ -36,7 +36,7 @@ pub async fn decide(
     expected_version: i64,
     req: &LeadProposalDecisionRequest,
 ) -> Result<LeadProposalDecisionResponse, AppError> {
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     authz::require_scope(ctx, Scope::ResearchWrite)?;
 
     let mut tx = db.begin(ctx.workspace_id).await?;

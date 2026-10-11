@@ -75,7 +75,7 @@ describe("MCP credential issuance", () => {
       expires_in_days: 365,
     });
     expect(posts[0]!.body).not.toHaveProperty("expires_at");
-    expect(posts[0]!.body.scopes).toEqual(["crm.read", "research.propose", "research.write"]);
+    expect(posts[0]!.body.scopes).toEqual(["crm.read", "crm.write", "research.write"]);
     expect(await screen.findByDisplayValue(/Bearer ok_live_SECRETVALUE/)).toBeInTheDocument();
     expect(screen.getByDisplayValue(/:8081\/mcp$/)).toBeInTheDocument();
   });

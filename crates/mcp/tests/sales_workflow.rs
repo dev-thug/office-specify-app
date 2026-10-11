@@ -108,6 +108,8 @@ impl Rig {
         let app = build_router(McpState {
             db: db.clone(),
             calendar: Arc::new(infrastructure::providers::fake::FakeMailProvider::new()),
+            config: Arc::new(infrastructure::config::Config::test()),
+            rate_limiter: None,
             allowed_origins: Arc::new(vec![]),
             tools: Arc::new(mcp::all_tools_with_key(
                 b"isolated-mcp-sales-workflow-hmac-key-32bytes",
@@ -431,20 +433,6 @@ async fn fake_delivery_channel(rig: &Rig) -> Uuid {
     channel_id
 }
 
-async fn review_lead(rig: &Rig, proposal_id: Uuid) -> Value {
-    human_data(
-        rig.human_post(
-            &format!("/api/v1/lead-proposals/{proposal_id}/decisions"),
-            json!({"decision":"accept","reason":"Human reviewed sourced company proposal"}),
-            Some(1),
-            &format!("sales-review-lead-{proposal_id}"),
-        )
-        .await,
-        StatusCode::OK,
-    )
-    .await
-}
-
 async fn add_and_verify_evidence(
     rig: &Rig,
     company_id: Uuid,
@@ -501,124 +489,76 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert!(tool_names.contains(&"research_propose_leads"));
+    assert!(!tool_names.contains(&"research_propose_leads"));
+    assert!(tool_names.contains(&"crm_create_company"));
+    assert!(tool_names.contains(&"crm_create_contact"));
     assert!(tool_names.contains(&"crm_get_company"));
     assert!(tool_names.contains(&"mail_create_draft"));
     assert!(tool_names.contains(&"mail_submit_approved"));
-    assert!(!tool_names.contains(&"mail_submit"));
-    assert!(!tool_names.contains(&"approvals_decide"));
+    // Operator-parity tools are listed; credential scopes gate their use.
+    assert!(tool_names.contains(&"mail_submit"));
+    assert!(tool_names.contains(&"approvals_decide"));
     assert!(tool_names.contains(&"mail_get_outbound"));
     assert!(tool_names.contains(&"mail_get_thread"));
 
-    let proposal_args = json!({
-        "agent_run_id":rig.run_id,
-        "idempotency_key":format!("sales-lead-batch-{suffix}"),
-        "proposals":[
-            {
-                "company_name":aurora_name,
-                "domain":format!("aurora-{suffix}.example"),
-                "proposed_data":{
-                    "industry":"Energy storage",
-                    "country_code":"KR",
-                    "website_url":format!("https://aurora-{suffix}.example"),
-                    "contacts":[{
-                        "name":"Ara Kim",
-                        "job_title":"Sales Director",
-                        "department":"Sales",
-                        "email":format!("ara-{suffix}@aurora.example.test")
-                    }]
-                },
-                "evidence":[{
-                    "field_path":"industry",
-                    "source_url":format!("https://public.example/aurora/{suffix}/company"),
-                    "observed_at":chrono::Utc::now().to_rfc3339(),
-                    "value":"Energy storage",
-                    "evidence_type":"observed",
-                    "excerpt":"Company profile identifies grid-scale storage as its sector"
-                }]
-            },
-            {
-                "company_name":forge_name,
-                "domain":format!("forge-{suffix}.example"),
-                "proposed_data":{
-                    "industry":"Industrial automation",
-                    "country_code":"KR",
-                    "website_url":format!("https://forge-{suffix}.example"),
-                    "contacts":[{
-                        "name":"Min Lee",
-                        "job_title":"Commercial Lead",
-                        "department":"Partnerships",
-                        "email":format!("min-{suffix}@forge.example.test")
-                    }]
-                },
-                "evidence":[{
-                    "field_path":"industry",
-                    "source_url":format!("https://public.example/forge/{suffix}/company"),
-                    "observed_at":chrono::Utc::now().to_rfc3339(),
-                    "value":"Industrial automation",
-                    "evidence_type":"observed",
-                    "excerpt":"Company profile identifies warehouse robotics as its sector"
-                }]
-            }
-        ]
-    });
-    let proposed = rig
-        .call("research_propose_leads", proposal_args.clone())
-        .await;
-    let replay = rig.call("research_propose_leads", proposal_args).await;
-    assert_eq!(proposed["proposal_ids"], replay["proposal_ids"]);
-    assert_eq!(proposed["status"], "pending");
-    let proposal_ids = proposed["proposal_ids"].as_array().unwrap();
-    assert_eq!(proposal_ids.len(), 2);
-
-    assert!(
-        rig.call("crm_search_companies", json!({"query":aurora_name}))
-            .await["companies"]
-            .as_array()
-            .unwrap()
-            .is_empty(),
-        "a sourced proposal must not create a CRM company before human review"
-    );
-    let accept_attempt = rig
-        .tool_error(
-            "research_accept_proposal",
-            json!({"lead_proposal_id":proposal_ids[0]}),
+    // Agents create sourced companies and contacts directly in the CRM.
+    let mut created_companies = Vec::new();
+    for (slug, name, industry, contact_name, job_title, department, local) in [
+        (
+            "aurora",
+            &aurora_name,
+            "Energy storage",
+            "Ara Kim",
+            "Sales Director",
+            "Sales",
+            "ara",
+        ),
+        (
+            "forge",
+            &forge_name,
+            "Industrial automation",
+            "Min Lee",
+            "Commercial Lead",
+            "Partnerships",
+            "min",
+        ),
+    ] {
+        assert!(
+            rig.call("crm_search_companies", json!({"query":name}))
+                .await["companies"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "search before create finds no duplicate"
+        );
+        let company_args = json!({
+            "idempotency_key":format!("sales-company-{slug}-{suffix}"),
+            "name":name,
+            "domain":format!("{slug}-{suffix}.example"),
+            "industry":industry,
+            "country_code":"KR",
+            "website_url":format!("https://{slug}-{suffix}.example")
+        });
+        let company = rig.call("crm_create_company", company_args.clone()).await;
+        let replay = rig.call("crm_create_company", company_args).await;
+        assert_eq!(company["id"], replay["id"]);
+        let company_id = Uuid::parse_str(company["id"].as_str().unwrap()).unwrap();
+        rig.call(
+            "crm_create_contact",
+            json!({
+                "idempotency_key":format!("sales-contact-{slug}-{suffix}"),
+                "name":contact_name,
+                "company_id":company_id,
+                "job_title":job_title,
+                "department":department,
+                "email":format!("{local}-{suffix}@{slug}.example.test")
+            }),
         )
         .await;
-    assert!(accept_attempt.get("error").is_some());
-
-    let first_review = review_lead(
-        &rig,
-        Uuid::parse_str(proposal_ids[0].as_str().unwrap()).unwrap(),
-    )
-    .await;
-    let second_review = review_lead(
-        &rig,
-        Uuid::parse_str(proposal_ids[1].as_str().unwrap()).unwrap(),
-    )
-    .await;
-    let aurora_company =
-        Uuid::parse_str(first_review["accepted_company_id"].as_str().unwrap()).unwrap();
-    let forge_company =
-        Uuid::parse_str(second_review["accepted_company_id"].as_str().unwrap()).unwrap();
-    assert_ne!(aurora_company, forge_company);
-
-    for (proposal_id, expected_company_id) in [
-        (proposal_ids[0].clone(), aurora_company),
-        (proposal_ids[1].clone(), forge_company),
-    ] {
-        let accepted = rig
-            .call(
-                "research_get_proposal",
-                json!({"lead_proposal_id":proposal_id}),
-            )
-            .await;
-        assert_eq!(accepted["status"], "accepted");
-        assert_eq!(
-            accepted["accepted_company_id"],
-            expected_company_id.to_string()
-        );
+        created_companies.push(company_id);
     }
+    let (aurora_company, forge_company) = (created_companies[0], created_companies[1]);
+    assert_ne!(aurora_company, forge_company);
 
     let aurora_news = add_and_verify_evidence(
         &rig,
@@ -1014,16 +954,25 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
             "sales-workflow-agent-preapproval-submit",
         )
         .await;
+    // Agents may submit directly only with mail.send plus a can_send grant;
+    // this credential holds neither.
     let agent_preapproval = problem(agent_preapproval, StatusCode::FORBIDDEN).await;
-    assert_eq!(agent_preapproval["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
+    assert_eq!(agent_preapproval["code"], "MAILBOX_ACCESS_DENIED");
 
     let mcp_submit = rig
         .tool_error(
             "mail_submit",
-            json!({"outbound_message_id":outbound_id,"expected_payload_hash":payload_hash}),
+            json!({
+                "outbound_message_id":outbound_id,
+                "expected_payload_hash":payload_hash,
+                "idempotency_key":"sales-workflow-mcp-direct-submit"
+            }),
         )
         .await;
-    assert!(mcp_submit.get("error").is_some());
+    assert_eq!(
+        mcp_submit["result"]["structuredContent"]["error"]["code"], "MAILBOX_ACCESS_DENIED",
+        "{mcp_submit}"
+    );
     let preapproval_send_grant = human_data(
         rig.admin_put_agent_grant(
             json!({
@@ -1057,10 +1006,19 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     let mcp_decide = rig
         .tool_error(
             "approvals_decide",
-            json!({"approval_request_id":approval_id,"decision":"approved"}),
+            json!({
+                "idempotency_key":"sales-workflow-mcp-self-decide",
+                "approval_request_id":approval_id,
+                "expected_version":1,
+                "decision":"approved",
+                "expected_snapshot_hash":payload_hash
+            }),
         )
         .await;
-    assert!(mcp_decide.get("error").is_some());
+    assert_eq!(
+        mcp_decide["result"]["structuredContent"]["error"]["code"], "SCOPE_REQUIRED",
+        "{mcp_decide}"
+    );
 
     let decision_body = json!({
         "decision":"approved",
@@ -1153,7 +1111,10 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     let effective_actions = effective_mailbox["allowed_actions"].as_array().unwrap();
     assert!(effective_actions.contains(&json!("mail.read")));
     assert!(effective_actions.contains(&json!("mail.compose")));
-    assert!(!effective_actions.contains(&json!("mail.send")));
+    // allowed_actions mirrors the mailbox grant for agents as for humans
+    // (can_send=true, can_approve=false); the credential scope is enforced
+    // separately when the action is attempted.
+    assert!(effective_actions.contains(&json!("mail.send")));
     assert!(!effective_actions.contains(&json!("mail.approve")));
 
     let agent_me = rig
@@ -1171,7 +1132,7 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
         .find(|mailbox| mailbox["id"] == rig.world.mail_account_id.to_string())
         .unwrap();
     let me_actions = me_mailbox["allowed_actions"].as_array().unwrap();
-    assert!(!me_actions.contains(&json!("mail.send")));
+    assert!(me_actions.contains(&json!("mail.send")));
     assert!(!me_actions.contains(&json!("mail.approve")));
 
     let direct_send_after_grant = rig
@@ -1182,11 +1143,9 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
             "sales-workflow-agent-direct-after-grant",
         )
         .await;
+    // The can_send grant alone is not enough: the credential lacks mail.send.
     let direct_send_after_grant = problem(direct_send_after_grant, StatusCode::FORBIDDEN).await;
-    assert_eq!(
-        direct_send_after_grant["code"],
-        "AGENT_DIRECT_SEND_FORBIDDEN"
-    );
+    assert_eq!(direct_send_after_grant["code"], "MAILBOX_ACCESS_DENIED");
 
     let approved = human_data(
         rig.api

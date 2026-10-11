@@ -4,7 +4,7 @@
 use crate::{ToolDef, arguments, result, tool_with_db};
 use contracts::templates::{
     CreateEmailTemplateRequest, CreateTemplateVersionRequest, CreateTemplateVersionResponse,
-    EmailTemplateResponse,
+    EmailTemplateResponse, PatchEmailTemplateRequest,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -29,6 +29,18 @@ struct CreateDraftVersionInput {
     body_text: String,
     body_html: Option<String>,
     variable_schema: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct UpdateTemplateInput {
+    template_id: Uuid,
+    /// Current template version from templates_get (optimistic concurrency).
+    expected_version: i64,
+    /// New template name; omit to keep it.
+    name: Option<String>,
+    /// `true` archives, `false` unarchives; omit to keep the current state.
+    archived: Option<bool>,
 }
 
 fn validate_idempotency_key(key: &str) -> Result<(), contracts::AppError> {
@@ -146,7 +158,34 @@ pub fn tools() -> Vec<ToolDef> {
         },
     );
 
-    vec![create, create_version]
+    let update = tool_with_db(
+        "templates_update",
+        "Rename, archive or unarchive an email template using its expected_version from templates_get. Requires templates.write. Content changes go through templates_create_draft_version; this never sends email.",
+        serde_json::to_value(schemars::schema_for!(UpdateTemplateInput))
+            .expect("schema serializes"),
+        serde_json::to_value(schemars::schema_for!(EmailTemplateResponse))
+            .expect("schema serializes"),
+        false,
+        |db, ctx, value| async move {
+            let input = arguments::<UpdateTemplateInput>(value)?;
+            let request = PatchEmailTemplateRequest {
+                name: input.name,
+                archived: input.archived,
+            };
+            result(
+                application::templates::patch(
+                    &db,
+                    &ctx,
+                    input.template_id,
+                    input.expected_version,
+                    &request,
+                )
+                .await?,
+            )
+        },
+    );
+
+    vec![create, create_version, update]
 }
 
 #[cfg(test)]
@@ -156,10 +195,18 @@ mod tests {
     #[test]
     fn exposes_template_authoring_tools_with_explicit_keys() {
         let tools = tools();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0].name, "templates_create");
         assert_eq!(tools[1].name, "templates_create_draft_version");
-        for tool in &tools {
+        assert_eq!(tools[2].name, "templates_update");
+        assert!(
+            tools[2].input_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "expected_version")
+        );
+        for tool in &tools[..2] {
             assert_eq!(tool.input_schema["additionalProperties"], false);
             assert!(
                 tool.input_schema["required"]

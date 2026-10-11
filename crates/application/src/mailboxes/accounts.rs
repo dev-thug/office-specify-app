@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use contracts::AppError;
 use contracts::Ctx;
 use contracts::mailboxes::MailAccountResponse;
-use contracts::{PrincipalKind, Role};
+use contracts::{AuthMethod, Role, Scope};
 use infrastructure::db::Db;
 use infrastructure::repo::mailboxes as repo;
 use uuid::Uuid;
@@ -21,15 +21,13 @@ pub struct AccountPage {
     pub cursor_seed: Option<(DateTime<Utc>, Uuid)>,
 }
 
-fn response(
-    (account, grant): repo::AccountWithGrant,
-    principal_kind: PrincipalKind,
-) -> MailAccountResponse {
+fn response(ctx: &Ctx, (account, grant): repo::AccountWithGrant) -> MailAccountResponse {
     let mut allowed_actions = grant.map(|g| g.allowed_actions()).unwrap_or_default();
-    if principal_kind == PrincipalKind::Agent {
-        // The can_send ACL is used only by the explicit approved-submit
-        // service. It must not advertise direct `mail.send`/`mail.approve`.
-        allowed_actions.retain(|action| action != "mail.send" && action != "mail.approve");
+    // Credential callers can act only within their scopes; action names are
+    // the `mail.*` scope strings.
+    if let AuthMethod::ServiceCredential { .. } = ctx.auth {
+        allowed_actions
+            .retain(|action| Scope::parse(action).is_none_or(|scope| ctx.scopes.contains(scope)));
     }
     MailAccountResponse {
         id: account.id,
@@ -54,7 +52,7 @@ pub async fn list_mail_accounts(
     limit: i64,
 ) -> Result<AccountPage, AppError> {
     let mut tx = db.begin(ctx.workspace_id).await?;
-    let rows = if ctx.role == Role::Admin {
+    let rows = if ctx.role == Role::Admin || crate::authz::agent_admin(ctx) {
         repo::list_mail_accounts(&mut tx, ctx.principal_id, after, limit + 1).await?
     } else {
         repo::list_accessible_mail_accounts(&mut tx, ctx.principal_id, after, limit + 1).await?
@@ -66,10 +64,7 @@ pub async fn list_mail_accounts(
         .then(|| rows.last().map(|(a, _)| (a.created_at, a.id)))
         .flatten();
     Ok(AccountPage {
-        items: rows
-            .into_iter()
-            .map(|row| response(row, ctx.principal_kind))
-            .collect(),
+        items: rows.into_iter().map(|row| response(ctx, row)).collect(),
         has_more,
         cursor_seed,
     })
@@ -88,8 +83,10 @@ pub async fn get_mail_account(
     let Some(pair) = row else {
         return Err(AppError::not_found("mail account not found"));
     };
-    if ctx.role != Role::Admin && !pair.1.as_ref().is_some_and(|g| g.can_read) {
+    if !(ctx.role == Role::Admin || crate::authz::agent_admin(ctx))
+        && !pair.1.as_ref().is_some_and(|g| g.can_read)
+    {
         return Err(AppError::not_found("mail account not found"));
     }
-    Ok(response(pair, ctx.principal_kind))
+    Ok(response(ctx, pair))
 }

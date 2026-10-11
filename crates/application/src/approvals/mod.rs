@@ -89,7 +89,9 @@ async fn can_view(
     req: &repo::ApprovalRequestRow,
     target_mail_account: Option<Uuid>,
 ) -> Result<bool, AppError> {
-    if req.requested_by == ctx.principal_id || matches!(ctx.role, Role::Admin | Role::Manager) {
+    if req.requested_by == ctx.principal_id
+        || (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx))
+    {
         return Ok(true);
     }
     if let Some(ma) = target_mail_account {
@@ -230,7 +232,8 @@ pub async fn list(
     };
 
     let mut tx = db.begin(ctx.workspace_id).await?;
-    let see_all = matches!(ctx.role, Role::Admin | Role::Manager);
+    let see_all =
+        (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx));
     // Members with can_approve still see only their own + approve-mailbox
     // queue — implemented as: fetch a wider page and filter in-app when
     // !see_all (mailbox grant checks are per-row).
@@ -609,9 +612,13 @@ pub async fn decide(
     expected_version: i64,
     req: &CreateDecisionRequest,
 ) -> Result<DecisionResponse, AppError> {
-    // Human-only, admin/manager only (§5.3 — agents can never approve).
-    authz::require_human(ctx)?;
-    authz::require_role(ctx, &[Role::Admin, Role::Manager])?;
+    // Admin/Manager humans, or agents whose credential carries mail.approve.
+    authz::require_operator(ctx)?;
+    if ctx.role == Role::Agent {
+        authz::require_scope(ctx, contracts::Scope::MailApprove)?;
+    } else {
+        authz::require_role(ctx, &[Role::Admin, Role::Manager])?;
+    }
     let decision = d::decision::parse(&req.decision).ok_or_else(|| {
         AppError::validation(
             "decision must be 'approved' or 'rejected'",
@@ -985,7 +992,7 @@ pub async fn revoke(
     expected_version: i64,
     reason: Option<&str>,
 ) -> Result<RevokeResponse, AppError> {
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     let Some(row) = repo::get_request_for_update(tx, id).await? else {
         return Err(AppError::not_found("approval request not found"));
     };
@@ -998,8 +1005,8 @@ pub async fn revoke(
             ),
         ));
     }
-    let allowed =
-        row.requested_by == ctx.principal_id || matches!(ctx.role, Role::Admin | Role::Manager);
+    let allowed = row.requested_by == ctx.principal_id
+        || (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx));
     if !allowed {
         return Err(AppError::forbidden(
             "only the requester or an admin/manager may revoke",

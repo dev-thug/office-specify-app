@@ -17,7 +17,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use contracts::mailboxes::{CalendarConnectionResponse, OAuthStartResponse};
-use contracts::{AppError, AuthMethod, Ctx, ErrorCode, PrincipalKind, Role, Violation};
+use contracts::{AppError, AuthMethod, Ctx, ErrorCode, Role, Violation};
 use infrastructure::audit::{self, AuditEntry};
 use infrastructure::config::Config;
 use infrastructure::crypto;
@@ -411,7 +411,6 @@ pub async fn request_calendar_connection(
     host: Option<Uuid>,
     region: &str,
 ) -> Result<OAuthStartResponse, AppError> {
-    crate::authz::require_not_agent_for(ctx, "connect a calendar")?;
     let host = host.unwrap_or(ctx.principal_id);
     if host != ctx.principal_id {
         super::require_admin_audited(db, ctx, "calendar.connect", "integration_connection", None)
@@ -846,7 +845,7 @@ async fn zoho_callback_fake(
 }
 
 fn require_live_mail_callback_owner(ctx: &Ctx) -> Result<Uuid, AppError> {
-    if ctx.principal_kind != PrincipalKind::Human || ctx.role != Role::Admin {
+    if !(ctx.role == Role::Admin || crate::authz::agent_admin(ctx)) {
         return Err(AppError::forbidden(
             "live Zoho Mail OAuth requires a human administrator",
         ));

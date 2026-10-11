@@ -70,7 +70,8 @@ pub async fn list_delivery_channels(
     limit: i64,
 ) -> Result<ChannelPage, AppError> {
     let mut tx = db.begin(ctx.workspace_id).await?;
-    let restricted = (ctx.role != Role::Admin).then_some(ctx.principal_id);
+    let restricted =
+        (!(ctx.role == Role::Admin || crate::authz::agent_admin(ctx))).then_some(ctx.principal_id);
     let rows = repo::list_delivery_channels(&mut tx, restricted, after, limit + 1).await?;
     tx.commit().await?;
     let has_more = rows.len() as i64 > limit;

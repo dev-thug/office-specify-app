@@ -53,18 +53,22 @@ fn require_scope(ctx: &Ctx, scope: Scope) -> Result<(), AppError> {
     }
 }
 
-fn require_human(ctx: &Ctx) -> Result<(), AppError> {
-    if ctx.principal_kind == PrincipalKind::Human {
+fn require_operator(ctx: &Ctx) -> Result<(), AppError> {
+    if matches!(
+        ctx.principal_kind,
+        PrincipalKind::Human | PrincipalKind::Agent
+    ) {
         Ok(())
     } else {
         Err(AppError::forbidden(
-            "booking changes require a human principal",
+            "booking changes require a human or agent principal",
         ))
     }
 }
 
 fn can_manage_host(ctx: &Ctx, host_id: Uuid) -> bool {
-    ctx.principal_id == host_id || matches!(ctx.role, Role::Admin | Role::Manager)
+    ctx.principal_id == host_id
+        || (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx))
 }
 
 fn hidden_not_found() -> AppError {
@@ -225,7 +229,7 @@ pub async fn create_meeting_type_in_tx(
     ctx: &Ctx,
     req: &CreateMeetingTypeRequest,
 ) -> Result<MeetingTypeResponse, AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingPropose)?;
     validate_meeting_type(req)?;
     if !repo::calendar_connection_active_for_host(tx, req.calendar_connection_id, ctx.principal_id)
@@ -255,11 +259,12 @@ pub async fn create_meeting_type_in_tx(
 
 pub async fn list_meeting_types(db: &Db, ctx: &Ctx) -> Result<Vec<MeetingTypeResponse>, AppError> {
     require_scope(ctx, Scope::BookingRead)?;
-    let host = if matches!(ctx.role, Role::Admin | Role::Manager) {
-        None
-    } else {
-        Some(ctx.principal_id)
-    };
+    let host =
+        if (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx)) {
+            None
+        } else {
+            Some(ctx.principal_id)
+        };
     let mut tx = db.begin(ctx.workspace_id).await?;
     let rows = repo::list_meeting_types(&mut tx, host).await?;
     tx.rollback().await?;
@@ -298,7 +303,7 @@ pub async fn update_meeting_type(
     expected_version: i64,
     req: UpdateMeetingTypeRequest,
 ) -> Result<MeetingTypeResponse, AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingPropose)?;
     validate_update_meeting_type(&req)?;
     let mut tx = db.begin(ctx.workspace_id).await?;
@@ -335,7 +340,7 @@ pub async fn update_meeting_type(
 }
 
 async fn authorize_host_access(tx: &mut Tx<'_>, ctx: &Ctx, host_id: Uuid) -> Result<(), AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingRead)?;
     if !can_manage_host(ctx, host_id) {
         return Err(hidden_not_found());
@@ -485,7 +490,7 @@ pub async fn create_booking_link_in_tx(
     req: &CreateBookingLinkRequest,
     raw_token: &str,
 ) -> Result<BookingLinkStored, AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingPropose)?;
     if req.max_uses < 1 || req.expires_at.is_some_and(|t| t <= Utc::now()) {
         return Err(field_error(
@@ -1656,11 +1661,12 @@ pub async fn list_bookings(
     if from.zip(to).is_some_and(|(a, b)| b <= a) {
         return Err(field_error("to", "to must be after from"));
     }
-    let host_ids = if matches!(ctx.role, Role::Admin | Role::Manager) {
-        vec![]
-    } else {
-        vec![ctx.principal_id]
-    };
+    let host_ids =
+        if (matches!(ctx.role, Role::Admin | Role::Manager) || crate::authz::agent_admin(ctx)) {
+            vec![]
+        } else {
+            vec![ctx.principal_id]
+        };
     let mut tx = db.begin(ctx.workspace_id).await?;
     let rows = repo::list_bookings(&mut tx, &host_ids, from, to).await?;
     tx.rollback().await?;
@@ -1702,7 +1708,7 @@ pub async fn record_attendance_in_tx(
     expected_version: i64,
     request: BookingAttendanceRequest,
 ) -> Result<BookingResponse, AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingPropose)?;
     if !matches!(request.attendance_status.as_str(), "attended" | "no_show") {
         return Err(field_error(
@@ -2246,7 +2252,7 @@ pub async fn reschedule_booking_in_tx(
     expected_version: i64,
     request: PublicRescheduleRequest,
 ) -> Result<BookingChangeResponse, AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingPropose)?;
     let booking = repo::get_booking(tx, id)
         .await?
@@ -2285,7 +2291,7 @@ pub async fn cancel_booking_in_tx(
     id: Uuid,
     expected_version: i64,
 ) -> Result<BookingChangeResponse, AppError> {
-    require_human(ctx)?;
+    require_operator(ctx)?;
     require_scope(ctx, Scope::BookingPropose)?;
     let booking = repo::get_booking(tx, id)
         .await?

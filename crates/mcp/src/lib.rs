@@ -17,6 +17,10 @@ use contracts::Ctx;
 pub struct ToolServices {
     pub db: infrastructure::db::Db,
     pub calendar: Arc<dyn infrastructure::providers::CalendarProvider>,
+    /// Runtime configuration shared with the REST API (keys, URLs, limits).
+    pub config: Arc<infrastructure::config::Config>,
+    /// `None` when REDIS_URL is unset (dev/test) — same rule as REST.
+    pub rate_limiter: Option<infrastructure::ratelimit::RateLimiter>,
 }
 
 /// Protocol version this server speaks.
@@ -212,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_contains_every_approved_agent_tool_and_no_privileged_actions() {
+    fn catalog_contains_operator_parity_tools_and_no_lead_proposals() {
         let definitions = all_tools();
         let names: std::collections::HashSet<_> = definitions.iter().map(|t| t.name).collect();
         assert_eq!(names.len(), definitions.len(), "duplicate tool names");
@@ -235,11 +239,15 @@ mod tests {
             "mail_set_thread_read",
             "mail_assign_thread",
             "mail_get_outbound",
-            "research_propose_leads",
             "research_add_evidence",
             "research_get_run",
-            "crm_propose_update",
+            "crm_create_company",
+            "crm_update_company",
+            "crm_create_contact",
+            "crm_update_contact",
             "crm_create_note",
+            "approvals_decide",
+            "mail_submit",
             "mail_create_draft",
             "mail_create_reply_draft",
             "templates_create",
@@ -263,13 +271,13 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing B.6 tool: {expected}");
         }
-        for forbidden in [
-            "mail_submit",
-            "approvals_decide",
-            "mailbox_grant",
-            "suppression_release",
+        // Agents create CRM records directly; the review-only proposal tools are gone.
+        for removed in [
+            "research_propose_leads",
+            "research_get_proposal",
+            "crm_propose_update",
         ] {
-            assert!(!names.contains(forbidden));
+            assert!(!names.contains(removed), "{removed} must not be exposed");
         }
     }
 
@@ -283,9 +291,9 @@ mod tests {
             "sales_campaigns_move_stage",
             "sales_campaigns_freeze_message",
             "sales_campaigns_queue",
-            "research_propose_leads",
             "research_add_evidence",
-            "crm_propose_update",
+            "crm_create_company",
+            "crm_create_contact",
             "crm_create_note",
             "mail_create_draft",
             "mail_create_reply_draft",

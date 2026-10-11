@@ -148,27 +148,21 @@
     }
   },
   "unsubscribe": {
-    "title": "수신 거부",
-    "description": "아래 버튼을 눌러야만 처리됩니다. 이 페이지를 여는 것만으로는 아무것도 변경되지 않습니다.",
-    "organization": "발신 조직",
-    "organizationFallback": "이 이메일의 발신 조직",
-    "scopeLabel": "차단 범위",
-    "scope": {
-      "workspace_marketing": "이 조직의 모든 마케팅 이메일"
-    },
-    "address": "대상 주소",
-    "confirm": "수신 거부 확인",
-    "confirming": "처리 중…",
-    "footnote": "로그인 없이 즉시 처리됩니다. 다시 눌러도 같은 결과입니다.",
-    "checking": "링크 확인 중…",
-    "doneTitle": "수신 거부가 처리되었습니다",
-    "doneDescription": "Office에 마케팅 메일 수신 거부 기록을 저장했습니다. 이 조직의 마케팅 발송에서 제외됩니다.",
-    "doneScope": "적용 범위: {scope}",
-    "invalidTitle": "링크를 사용할 수 없습니다",
-    "invalidDescription": "링크가 만료되었거나 올바르지 않습니다. 받은 메일의 최신 수신 거부 링크를 사용하세요.",
-    "errorTitle": "처리하지 못했습니다",
-    "loadError": "링크를 확인하지 못했습니다. 잠시 후 다시 시도하세요.",
-    "submitError": "수신 거부를 처리하지 못했습니다. 잠시 후 다시 시도하세요.",
-    "retry": "다시 시도"
+    "title": "마케팅 메일을\n그만 받을까요?",
+    "titleWithOrganization": "<org>{organization}</org>의\n마케팅 메일을 그만 받을까요?",
+    "description": "아래 버튼을 누르면 수신 거부가 완료돼요.\n그동안 메일을 받아 주셔서 감사합니다.",
+    "address": "받는 주소",
+    "confirm": "수신 거부하기",
+    "confirming": "처리하고 있어요…",
+    "footnote": "로그인 없이 바로 처리돼요.",
+    "checking": "링크를 확인하고 있어요",
+    "doneTitle": "수신 거부를 완료했어요",
+    "doneDescription": "앞으로 이곳의 마케팅 메일은 더 이상 오지 않아요.\n그동안 관심 가져 주셔서 감사합니다.",
+    "invalidTitle": "이 링크는 사용할 수 없어요",
+    "invalidDescription": "링크 유효 기간이 지났을 수 있어요.\n가장 최근에 받은 메일의 수신 거부 링크를 눌러 주세요.",
+    "errorTitle": "처리하지 못했어요",
+    "loadError": "링크를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.",
+    "submitError": "수신 거부를 처리하지 못했어요. 잠시 후 다시 시도해 주세요.",
+    "retry": "다시 시도하기"
   }
 }

@@ -1,7 +1,7 @@
 //! Restore lock management for outbound submission workers (T30).
 
 use contracts::operations::ReleaseSendWorkersLockRequest;
-use contracts::{AppError, Ctx, PrincipalKind, Role};
+use contracts::{AppError, Ctx, Role};
 use infrastructure::db::{Db, Tx};
 use infrastructure::repo::operations as repo;
 
@@ -25,7 +25,7 @@ pub async fn release_lock_tx(
     ctx: &Ctx,
     req: &ReleaseSendWorkersLockRequest,
 ) -> Result<bool, AppError> {
-    if ctx.principal_kind != PrincipalKind::Human || ctx.role != Role::Admin {
+    if !(ctx.role == Role::Admin || crate::authz::agent_admin(ctx)) {
         return Err(AppError::forbidden(
             "releasing the send-worker restore lock requires an Admin",
         ));

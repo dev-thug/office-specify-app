@@ -3132,8 +3132,8 @@ export interface components {
         CreateAgentRequest: {
             name: string;
             /**
-             * @description Intended scopes the agent's credentials may carry. `mail.send` /
-             *     `mail.approve` are always rejected for agents (§5.4).
+             * @description Intended scopes the agent's credentials may carry. Any known scope
+             *     is accepted, including `mail.send` and `mail.approve`.
              */
             scopes?: string[] | null;
         };
@@ -5143,14 +5143,14 @@ export interface components {
         Purpose: "correspondence" | "marketing" | "transactional";
         /** @description `PUT /mail-accounts/{id}/grants/{principal_id}` — full flag replace. */
         PutGrantRequest: {
-            /** @description Human Admin/Manager approver authority. Agents cannot receive it. */
+            /** @description Approver authority for Admin/Manager humans and agents. */
             can_approve: boolean;
             can_assign: boolean;
             can_compose: boolean;
             can_read: boolean;
             /**
-             * @description Mailbox send ACL. For Agent principals this only satisfies the
-             *     approved-submit path; agents cannot use direct submit or `mail.send`.
+             * @description Mailbox send ACL (direct submit additionally needs `mail.send`;
+             *     approved-submit needs `mail.submit_approved`).
              */
             can_send: boolean;
         };
@@ -5535,7 +5535,7 @@ export interface components {
         };
         /**
          * @description `POST /api/v1/outbound-messages/{id}/submit` (B.3.10). Requires
-         *     `Idempotency-Key`; agents are rejected (AGENT_DIRECT_SEND_FORBIDDEN).
+         *     `Idempotency-Key` and the `mail.send` scope for credential callers.
          */
         SubmitOutboundRequest: {
             /**

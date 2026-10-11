@@ -22,7 +22,7 @@ pub async fn review_classification(
     message_id: Uuid,
     req: &ClassificationReviewRequest,
 ) -> Result<ClassificationReviewResponse, AppError> {
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     authz::require_scope(ctx, Scope::MailRead)?;
 
     let Some(msg) = repo::get_message(tx, message_id).await? else {

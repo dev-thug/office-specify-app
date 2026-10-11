@@ -78,7 +78,9 @@
     "emailsDescription": "주소의 형식·도달 검증과 목적별 발송 허가는 서로 다른 축입니다. 발송 근거는 참고 정보이며 발송을 막지 않습니다. 수신 거부와 차단 상태만 발송에서 제외됩니다.",
     "notesTitle": "메모",
     "tasksTitle": "업무",
-    "activityTitle": "활동"
+    "activityTitle": "활동",
+    "openFullPage": "전체 페이지로 열기",
+    "infoTitle": "기본 정보"
   },
   "compose": {
     "action": "새 메시지",
@@ -144,7 +146,11 @@
       "PROVIDER_POLICY_UNVERIFIED": "공급자 정책 미검증",
       "EMAIL_INVALID": "주소 형식 오류",
       "EMAIL_RISKY": "위험 주소"
-    }
+    },
+    "remove": "연결 해제",
+    "removeConfirm": "{address} 주소를 이 담당자에게서 연결 해제할까요? 주소의 수신 거부·차단 기록은 그대로 남습니다.",
+    "removed": "주소 연결을 해제했습니다",
+    "removeError": "주소 연결을 해제하지 못했습니다"
   },
   "notes": {
     "title": "메모",

@@ -322,8 +322,7 @@ async fn grant_put_preconditions_and_rules() {
     .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 
-    // An Agent may hold the mailbox can_send ACL needed by the separate
-    // human-approved submit path; this does not grant direct send authority.
+    // Agent/human parity: an Agent may hold can_send and can_approve.
     let res = put_grant(
         &app,
         acct,
@@ -345,7 +344,6 @@ async fn grant_put_preconditions_and_rules() {
     assert_eq!(agent_grant["can_send"], true);
     assert_eq!(agent_grant["can_approve"], false);
 
-    // The same Agent can never receive independent approval authority.
     let res = put_grant(
         &app,
         acct,
@@ -355,18 +353,26 @@ async fn grant_put_preconditions_and_rules() {
         flags(true, true, true, true, false),
     )
     .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
+    let agent_grant = TestApp::data(res).await;
+    assert_eq!(agent_grant["can_approve"], true);
 
-    // An Agent caller cannot administer grants, even with a valid service
-    // credential and a mail.read scope. Authorization is checked on the
-    // authenticated actor as well as on the requested grant flags.
+    // An Agent caller without org.admin cannot administer grants; the
+    // denial is audited.
     let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+    let (_plain_credential_id, plain_secret) = auth_repo::create_service_credential(
+        &mut tx,
+        world.agent.principal_id,
+        "grant-attempt-plain",
+        &["mail.read".to_string()],
+        chrono::Duration::days(1),
+    )
+    .await
+    .unwrap();
     let (_agent_credential_id, agent_secret) = auth_repo::create_service_credential(
         &mut tx,
         world.agent.principal_id,
         "grant-attempt",
-        &["mail.read".to_string()],
+        &["mail.read".to_string(), "org.admin".to_string()],
         chrono::Duration::days(1),
     )
     .await
@@ -375,15 +381,14 @@ async fn grant_put_preconditions_and_rules() {
     let res = app
         .client
         .put(app.url(&format!("/api/v1/mail-accounts/{acct}/grants/{grantee}")))
-        .header("authorization", format!("Bearer {agent_secret}"))
+        .header("authorization", format!("Bearer {plain_secret}"))
         .header("if-match", "\"2\"")
         .json(&flags(true, false, false, false, false))
         .send()
         .await
         .unwrap();
     let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "AGENT_DIRECT_SEND_FORBIDDEN");
-
+    assert_eq!(p["code"], "FORBIDDEN");
     let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
     let denied = infrastructure::repo::org::denied_audit_count(
         &mut tx,
@@ -394,6 +399,45 @@ async fn grant_put_preconditions_and_rules() {
     .unwrap();
     let _ = tx.rollback().await;
     assert_eq!(denied, 1, "agent grant denial must be audited");
+
+    // With org.admin an Agent administers grants like an Admin; version
+    // preconditions still apply and the change is audited.
+    let res = app
+        .client
+        .put(app.url(&format!("/api/v1/mail-accounts/{acct}/grants/{grantee}")))
+        .header("authorization", format!("Bearer {agent_secret}"))
+        .json(&flags(true, false, false, false, false))
+        .send()
+        .await
+        .unwrap();
+    let p = TestApp::problem(res, StatusCode::PRECONDITION_REQUIRED).await;
+    assert_eq!(p["code"], "VERSION_PRECONDITION_REQUIRED");
+    let res = app
+        .client
+        .put(app.url(&format!("/api/v1/mail-accounts/{acct}/grants/{grantee}")))
+        .header("authorization", format!("Bearer {agent_secret}"))
+        .header("if-match", "\"2\"")
+        .json(&flags(true, false, false, false, false))
+        .send()
+        .await
+        .unwrap();
+    let data = TestApp::data(res).await;
+    assert_eq!(data["can_compose"], false);
+
+    let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+    let denied = infrastructure::repo::org::denied_audit_count(
+        &mut tx,
+        world.agent.principal_id,
+        "mailbox.grant",
+    )
+    .await
+    .unwrap();
+    let total = infrastructure::repo::org::audit_action_count(&mut tx, "mailbox.grant")
+        .await
+        .unwrap();
+    let _ = tx.rollback().await;
+    assert_eq!(denied, 1, "only the org.admin-less attempt is denied");
+    assert!(total >= 1, "grant changes must be audited");
 
     // Non-admin principal cannot administer grants at all.
     let member_csrf = login_csrf(&app, &world.member_a).await;

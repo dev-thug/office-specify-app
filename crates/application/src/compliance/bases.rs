@@ -184,7 +184,7 @@ pub async fn review_basis(
     expected_version: i64,
     req: ReviewBasisRequest,
 ) -> Result<CommunicationBasisResponse, AppError> {
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     authz::require_role(ctx, REVIEW_ROLES)?;
     let Some(decision) = domain::compliance::ReviewDecision::parse(&req.decision) else {
         return Err(field_violation(
@@ -247,7 +247,7 @@ pub async fn revoke_basis(
     id: Uuid,
     expected_version: i64,
 ) -> Result<CommunicationBasisResponse, AppError> {
-    authz::require_human(ctx)?;
+    authz::require_operator(ctx)?;
     authz::require_role(ctx, REVIEW_ROLES)?;
 
     let mut tx = db.begin(ctx.workspace_id).await?;

@@ -164,15 +164,6 @@ async fn reconstruct_requester_ctx(
                 scopes.insert(scope);
             }
         }
-        if principal_kind == PrincipalKind::Agent {
-            for forbidden in Scope::AGENT_FORBIDDEN {
-                if scopes.contains(*forbidden) {
-                    return Err(AppError::forbidden(
-                        "agent credential cannot hold a send or approval scope",
-                    ));
-                }
-            }
-        }
         scopes
     } else if principal_kind == PrincipalKind::Human {
         role.implied_scopes()

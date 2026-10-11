@@ -1,10 +1,14 @@
 use serde_json::Value;
 
 #[test]
-fn discovery_tools_complete_the_research_prerequisites_without_approval_actions() {
+fn catalog_exposes_operator_parity_tools_and_no_lead_proposal_tools() {
     let tools = mcp::all_tools();
     for name in [
+        "crm_search_companies",
         "crm_search_contacts",
+        "crm_create_company",
+        "crm_update_company",
+        "crm_create_contact",
         "templates_list",
         "templates_get",
         "templates_list_versions",
@@ -12,41 +16,73 @@ fn discovery_tools_complete_the_research_prerequisites_without_approval_actions(
         "templates_render_version",
         "booking_list_meeting_types",
         "booking_get_meeting_type",
-        "research_get_proposal",
+        "approvals_decide",
+        "mail_freeze_draft",
+        "mail_submit",
+        "mail_submit_approved",
     ] {
         assert!(
             tools.iter().any(|tool| tool.name == name),
-            "missing discovery tool: {name}"
+            "missing parity tool: {name}"
         );
     }
-    for forbidden in [
+    // Lead proposals were replaced by direct CRM writes.
+    for removed in [
+        "research_propose_leads",
+        "research_get_proposal",
         "research_accept_proposal",
-        "approvals_decide",
-        "mail_submit",
-        "mailbox_grant",
+        "crm_propose_update",
     ] {
-        assert!(!tools.iter().any(|tool| tool.name == forbidden));
+        assert!(
+            !tools.iter().any(|tool| tool.name == removed),
+            "{removed} must not be exposed"
+        );
     }
 }
 
 #[test]
-fn initialization_explains_company_research_storage_and_human_handoffs() {
+fn initialization_explains_direct_crm_writes_scope_gating_and_kept_safeguards() {
     let response = mcp::jsonrpc::initialize_result();
     let instructions = response["instructions"].as_str().unwrap_or_default();
     for required in [
+        // Direct CRM workflow.
         "crm_search_companies",
-        "research_propose_leads",
-        "crm_propose_update",
-        "proposed_data.contacts",
+        "crm_create_company",
+        "crm_update_company",
+        "crm_create_contact",
         "expected_version",
+        "VERSION_MISMATCH",
+        "research_add_evidence",
+        // Authority is gated by credential scopes.
+        "scopes",
+        "SCOPE_REQUIRED",
+        "org.admin",
+        "mail.approve",
+        // Email workflow with approval/submission tools.
+        "mail_freeze_draft",
+        "approvals_decide",
+        "mail_submit",
+        "mail_submit_approved",
+        // Kept safeguards.
+        "agent drafts require approval",
+        "mailbox grants",
+        "Suppressions",
+        "emergency stop",
         "idempotency_key",
-        "pending",
-        "human",
+        "untrusted",
     ] {
         assert!(
             instructions.contains(required),
             "missing guidance: {required}"
         );
+    }
+    for removed in [
+        "research_propose_leads",
+        "crm_propose_update",
+        "research_get_proposal",
+        "human review",
+    ] {
+        assert!(!instructions.contains(removed), "stale guidance: {removed}");
     }
 }
 
@@ -67,26 +103,27 @@ fn inbox_and_approved_send_fields_explain_their_actual_context() {
     assert!(field("mail_search_messages", "query").contains("plain-text bodies"));
     assert!(field("mail_create_reply_draft", "visibility").contains("mailbox (default)"));
     assert!(field("mail_submit_approved", "outbound_message_id").contains("frozen outbound"));
-    assert!(field("mail_submit_approved", "expected_payload_hash").contains("reviewed by a human"));
+    assert!(field("mail_submit_approved", "expected_payload_hash").contains("binds the sender"));
 }
 
 #[test]
 fn personalized_groups_explain_reuse_target_identity_and_approval_bound_batches() {
     let initialized = mcp::jsonrpc::initialize_result();
     let instructions = initialized["instructions"].as_str().unwrap();
-    assert!(instructions.contains("sales_campaigns_create_message"));
+    assert!(instructions.contains("sales_campaigns_create/add_target/create_message"));
     assert!(instructions.contains("sales_campaigns_freeze_message"));
+    assert!(instructions.contains("sales_campaigns_queue"));
     assert!(
         instructions
             .to_ascii_lowercase()
             .contains("moving a card alone does not send")
     );
-    assert!(instructions.contains("ten-minute batch"));
     let tools = mcp::all_tools();
     let queue = tools
         .iter()
         .find(|tool| tool.name == "sales_campaigns_queue")
         .unwrap();
+    assert!(queue.description.contains("ten-minute"));
     let group_description = queue.input_schema["properties"]["campaign_id"]["description"]
         .as_str()
         .unwrap();
@@ -149,8 +186,7 @@ fn company_research_examples_only_use_registered_arguments() {
     let tools = mcp::all_tools();
     for name in [
         "crm_search_companies",
-        "research_propose_leads",
-        "crm_propose_update",
+        "crm_create_company",
         "research_add_evidence",
         "crm_create_note",
     ] {
@@ -177,35 +213,4 @@ fn company_research_examples_only_use_registered_arguments() {
             }
         }
     }
-}
-
-#[test]
-fn lead_example_uses_fields_consumed_by_the_acceptance_path() {
-    let tools = mcp::all_tools();
-    let research = tools
-        .iter()
-        .find(|tool| tool.name == "research_propose_leads")
-        .unwrap();
-    let example = &research.input_schema["examples"][0]["proposals"][0];
-    let lead: contracts::research::LeadProposalInput =
-        serde_json::from_value(example.clone()).unwrap();
-    assert!(domain::research::validate_proposal(&lead, 0).is_empty());
-    let company = domain::research::extract_company_fields(&lead.proposed_data);
-    assert_eq!(company.industry.as_deref(), Some("Software"));
-    assert_eq!(company.country_code.as_deref(), Some("KR"));
-    assert_eq!(company.website_url.as_deref(), Some("https://example.com"));
-    let contacts = domain::research::extract_contacts(&lead.proposed_data);
-    assert_eq!(contacts[0].email.as_deref(), Some("sales@example.com"));
-    assert!(
-        lead.evidence
-            .iter()
-            .any(|evidence| evidence.field_path == "contacts[0].email"
-                && evidence.value == "sales@example.com")
-    );
-    let update = tools
-        .iter()
-        .find(|tool| tool.name == "crm_propose_update")
-        .unwrap();
-    let _: contracts::research::ProposeUpdateRequest =
-        serde_json::from_value(update.input_schema["examples"][0].clone()).unwrap();
 }

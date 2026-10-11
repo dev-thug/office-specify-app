@@ -63,8 +63,7 @@ pub(crate) async fn require_admin_audited(
     target_id: Option<Uuid>,
 ) -> Result<(), AppError> {
     let res = (|| {
-        crate::authz::require_not_agent_for(ctx, "administer mailboxes")?;
-        crate::authz::require_human(ctx)?;
+        crate::authz::require_operator(ctx)?;
         crate::authz::require_role(ctx, &[Role::Admin])
     })();
     match res {

@@ -1405,25 +1405,11 @@ pub async fn submit(
     req: &SubmitOutboundRequest,
     idempotency_key: &str,
 ) -> Result<idem::Stored<SubmitOutboundResponse>, AppError> {
-    // §5.4/T03: agents can never submit — deny + audit.
-    if ctx.principal_kind == PrincipalKind::Agent {
-        let mut tx = db.begin(ctx.workspace_id).await?;
-        let entry = AuditEntry::new(
-            ctx.principal_id,
-            "outbound.submit",
-            "outbound_message",
-            ctx.request_id.clone(),
-        )
-        .with_target(id)
-        .denied(&ErrorCode::AgentDirectSendForbidden);
-        audit::record(&mut tx, entry).await?;
-        tx.commit().await?;
-        return Err(AppError::new(
-            ErrorCode::AgentDirectSendForbidden,
-            "agents cannot submit outbound messages",
-        ));
+    // Credential callers (agents) need mail.send up front; the mailbox check
+    // below still requires it conjunctively with the can_send grant.
+    if let AuthMethod::ServiceCredential { .. } = ctx.auth {
+        authz::require_scope(ctx, Scope::MailSend)?;
     }
-
     let request_hash = crypto::sha256_bytes(
         serde_json::to_string(&serde_json::json!({
             "outbound_message_id": id,
@@ -2017,8 +2003,8 @@ pub async fn cancel(
     let grant = authz::mailbox_grant(&mut tx, ctx, o.mail_account_id).await?;
     let allowed = o.requested_by == ctx.principal_id
         || grant.is_some_and(|g| g.can_compose)
-        || (ctx.principal_kind == PrincipalKind::Human
-            && matches!(ctx.role, contracts::Role::Admin | contracts::Role::Manager));
+        || (matches!(ctx.role, contracts::Role::Admin | contracts::Role::Manager)
+            || crate::authz::agent_admin(ctx));
     if !allowed {
         return Err(AppError::new(
             ErrorCode::MailboxAccessDenied,

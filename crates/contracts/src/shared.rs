@@ -63,6 +63,7 @@ impl Role {
             ApprovalsRead,
             OperationsRead,
             AgentsRun,
+            OrgAdmin,
         ];
         let set: &[Scope] = match self {
             Role::Admin => &all,
@@ -118,8 +119,8 @@ impl Role {
     }
 }
 
-/// Bearer-credential scopes (spec §4.6). Agents never receive approve/grant/
-/// unrestricted-send scopes; approved-submit is a separate explicit scope.
+/// Bearer-credential scopes (spec §4.6). Agents may hold any scope a human
+/// operator holds; approved-submit is a separate explicit scope.
 #[derive(
     Debug,
     Clone,
@@ -182,6 +183,11 @@ pub enum Scope {
     OperationsRead,
     #[serde(rename = "agents.run")]
     AgentsRun,
+    /// Admin/Manager-level operations (org, principals, credentials,
+    /// mailboxes, SMTP, emergency stop, workspace-wide visibility). Humans
+    /// get this through their role; agents only through their credential.
+    #[serde(rename = "org.admin")]
+    OrgAdmin,
 }
 
 impl Scope {
@@ -212,6 +218,7 @@ impl Scope {
             ApprovalsRead => "approvals.read",
             OperationsRead => "operations.read",
             AgentsRun => "agents.run",
+            OrgAdmin => "org.admin",
         }
     }
 
@@ -242,12 +249,10 @@ impl Scope {
             "approvals.read" => ApprovalsRead,
             "operations.read" => OperationsRead,
             "agents.run" => AgentsRun,
+            "org.admin" => OrgAdmin,
             _ => return None,
         })
     }
-
-    /// Scopes an agent principal may never hold (§5.4, §13.2).
-    pub const AGENT_FORBIDDEN: &'static [Scope] = &[Scope::MailSend, Scope::MailApprove];
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -372,6 +377,7 @@ mod tests {
                     ApprovalsRead,
                     OperationsRead,
                     AgentsRun,
+                    OrgAdmin,
                 ],
                 &[],
             ),
@@ -400,7 +406,7 @@ mod tests {
                     OperationsRead,
                     AgentsRun,
                 ],
-                &[],
+                &[OrgAdmin],
             ),
             (
                 &[
@@ -428,6 +434,7 @@ mod tests {
                     MailApprove,
                     MailAssign,
                     AgentsRun,
+                    OrgAdmin,
                 ],
             ),
         ];
@@ -454,6 +461,5 @@ mod tests {
     fn mail_manage_scope_round_trips() {
         assert_eq!(Scope::parse("mail.manage"), Some(Scope::MailManage));
         assert_eq!(Scope::MailManage.as_str(), "mail.manage");
-        assert!(!Scope::AGENT_FORBIDDEN.contains(&Scope::MailManage));
     }
 }
