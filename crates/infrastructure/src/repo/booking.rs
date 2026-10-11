@@ -51,6 +51,7 @@ pub struct BookingLinkRow {
     pub calendar_status: String,
     pub integration_status: String,
     pub host_name: String,
+    pub host_avatar_updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -620,7 +621,10 @@ const LINK_COLS: &str = "l.id, l.meeting_type_id, l.host_principal_id,
     m.booking_horizon_days, m.location_kind, m.location_detail, m.status AS meeting_status,
     c.id AS calendar_connection_id, c.provider_calendar_id, c.status AS calendar_status,
     i.status AS integration_status,
-    p.name AS host_name";
+    p.name AS host_name,
+    (SELECT a.updated_at FROM principal_avatars a
+      WHERE a.workspace_id = l.workspace_id AND a.principal_id = l.host_principal_id)
+      AS host_avatar_updated_at";
 
 pub async fn get_booking_link(
     tx: &mut Tx<'_>,

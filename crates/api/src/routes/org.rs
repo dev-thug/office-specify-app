@@ -8,6 +8,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::IntoResponse;
 use chrono::{DateTime, Utc};
 use contracts::org::{
+    AvatarResponse,
     AcceptInvitationRequest, ChangePasswordRequest, CreateAgentRequest, CreateCredentialRequest,
     CreateInvitationRequest, CredentialCreatedResponse, CredentialResponse,
     CredentialRevokedResponse, DisableRequestRequest, DisableRequestResponse, EmergencyStopRequest,
@@ -43,6 +44,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_principals))
         .routes(routes!(get_principal))
         .routes(routes!(patch_principal))
+        .routes(routes!(put_principal_avatar, delete_principal_avatar, get_principal_avatar))
         .routes(routes!(request_disable_principal))
         .routes(routes!(create_invitation))
         .routes(routes!(list_invitations))
@@ -623,6 +625,84 @@ struct PrincipalsQuery {
     role: Option<String>,
     #[serde(default)]
     status: Option<String>,
+}
+
+/// Image response for a stored profile photo. `nosniff` keeps browsers from
+/// reinterpreting the bytes; the sniffed type was verified on upload.
+pub(crate) fn avatar_image_response(
+    content_type: &str,
+    bytes: Vec<u8>,
+    cache: &'static str,
+) -> (HeaderMap, Vec<u8>) {
+    let mut headers = HeaderMap::new();
+    if let Ok(value) = HeaderValue::from_str(content_type) {
+        headers.insert(header::CONTENT_TYPE, value);
+    }
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+    headers.insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    (headers, bytes)
+}
+
+#[utoipa::path(
+    put, path = "/principals/{id}/avatar",
+    params(("id" = Uuid, Path, description = "Principal id")),
+    request_body(content = Vec<u8>, content_type = "image/png", description = "PNG, JPEG or WebP, at most 512 KB. The type is sniffed from the bytes."),
+    responses(
+        (status = 200, description = "Photo stored", body = AvatarResponse),
+        (status = 400, description = "Not an image or too large", body = Problem),
+        (status = 403, description = "Only admins may change another member's photo", body = Problem),
+        (status = 404, description = "Not found", body = Problem),
+    )
+)]
+async fn put_principal_avatar(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthCtx,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let request_id = ctx.request_id.clone();
+    let res = application::org::admin::set_avatar(&state.db, &ctx, id, &body).await?;
+    Ok(axum::Json(envelope(res, &request_id)))
+}
+
+#[utoipa::path(
+    delete, path = "/principals/{id}/avatar",
+    params(("id" = Uuid, Path, description = "Principal id")),
+    responses(
+        (status = 204, description = "Photo removed (idempotent)"),
+        (status = 403, description = "Only admins may change another member's photo", body = Problem),
+    )
+)]
+async fn delete_principal_avatar(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthCtx,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    application::org::admin::delete_avatar(&state.db, &ctx, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    get, path = "/principals/{id}/avatar",
+    params(("id" = Uuid, Path, description = "Principal id")),
+    responses(
+        (status = 200, description = "Photo bytes", content_type = "image/*"),
+        (status = 404, description = "No photo", body = Problem),
+    )
+)]
+async fn get_principal_avatar(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthCtx,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let (content_type, bytes, _) = application::org::admin::get_avatar(&state.db, &ctx, id).await?;
+    Ok(avatar_image_response(&content_type, bytes, "private, max-age=300"))
 }
 
 #[utoipa::path(

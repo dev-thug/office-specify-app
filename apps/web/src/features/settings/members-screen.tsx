@@ -9,6 +9,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
+import { PencilIcon } from "lucide-react";
 
 import { DataTable, type ColumnDef } from "@/components/patterns/data-table";
 import { EmptyState } from "@/components/patterns/empty-state";
@@ -51,6 +52,7 @@ import {
   type WorkspaceRole,
 } from "@/lib/api/settings";
 import { AgentsSection } from "@/features/settings/agents-section";
+import { MemberProfileDialog, PrincipalAvatar } from "@/features/settings/member-profile-dialog";
 import { apiErrorText } from "@/features/settings/api-error";
 import { CopyField } from "@/features/settings/copy-field";
 import { formatDate, formatDateTime } from "@/features/settings/format";
@@ -70,6 +72,7 @@ export function MembersScreen() {
   const [kindFilter, setKindFilter] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [disableFor, setDisableFor] = useState<Principal | null>(null);
+  const [profileFor, setProfileFor] = useState<Principal | null>(null);
 
   const principals = usePrincipals({ kind: (kindFilter || undefined) as never });
   const rows = principals.data?.pages.flatMap((p) => p.data) ?? [];
@@ -96,7 +99,20 @@ export function MembersScreen() {
     {
       key: "name",
       header: t("columns.name"),
-      cell: (row) => <span className="font-medium">{row.name}</span>,
+      cell: (row) => {
+        const editable = row.kind !== "system" && (isAdmin || row.id === me?.principal_id);
+        return (
+          <div className="flex items-center gap-2.5">
+            <PrincipalAvatar principal={row} />
+            <span className="font-medium">{row.name}</span>
+            {editable ? (
+              <Button type="button" size="icon-xs" variant="ghost" aria-label={t("profile.edit", { name: row.name })} onClick={() => setProfileFor(row)}>
+                <PencilIcon aria-hidden />
+              </Button>
+            ) : null}
+          </div>
+        );
+      },
     },
     {
       key: "kind",
@@ -223,6 +239,14 @@ export function MembersScreen() {
       <AgentsSection />
 
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      {profileFor ? (
+        <MemberProfileDialog
+          key={profileFor.id}
+          principal={profileFor}
+          canRename={isAdmin}
+          onOpenChange={(open) => { if (!open) setProfileFor(null); }}
+        />
+      ) : null}
       <DisableDialog
         principal={disableFor}
         onOpenChange={(open) => !open && setDisableFor(null)}

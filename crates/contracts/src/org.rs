@@ -98,6 +98,17 @@ pub struct PrincipalResponse {
     pub permission_version: i64,
     pub version: i64,
     pub created_at: DateTime<Utc>,
+    /// Set when a profile photo exists; GET `/principals/{id}/avatar`
+    /// (append `?v=<this>` to bust caches after a change).
+    pub avatar_updated_at: Option<DateTime<Utc>>,
+}
+
+/// `PUT /principals/{id}/avatar` result.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AvatarResponse {
+    pub principal_id: Uuid,
+    pub content_type: String,
+    pub avatar_updated_at: DateTime<Utc>,
 }
 
 /// Limited active-human roster fields for assignment pickers. Non-admin
@@ -131,6 +142,10 @@ pub struct PatchPrincipalRequest {
     /// `active` | `disabled` only — `invited` is never settable.
     #[serde(default)]
     pub status: Option<String>,
+    /// Display name (1..=100 characters), shown in the app and to guests on
+    /// public booking pages when the principal hosts meetings.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// `POST /principals/{id}/disable-requests` — reassignment + pending-work

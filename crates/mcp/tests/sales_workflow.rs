@@ -955,9 +955,9 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
         )
         .await;
     // Agents may submit directly only with mail.send plus a can_send grant;
-    // this credential holds neither.
+    // this credential holds neither, and the scope is checked first.
     let agent_preapproval = problem(agent_preapproval, StatusCode::FORBIDDEN).await;
-    assert_eq!(agent_preapproval["code"], "MAILBOX_ACCESS_DENIED");
+    assert_eq!(agent_preapproval["code"], "SCOPE_REQUIRED");
 
     let mcp_submit = rig
         .tool_error(
@@ -970,7 +970,7 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
         )
         .await;
     assert_eq!(
-        mcp_submit["result"]["structuredContent"]["error"]["code"], "MAILBOX_ACCESS_DENIED",
+        mcp_submit["result"]["structuredContent"]["error"]["code"], "SCOPE_REQUIRED",
         "{mcp_submit}"
     );
     let preapproval_send_grant = human_data(
@@ -1111,10 +1111,9 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
     let effective_actions = effective_mailbox["allowed_actions"].as_array().unwrap();
     assert!(effective_actions.contains(&json!("mail.read")));
     assert!(effective_actions.contains(&json!("mail.compose")));
-    // allowed_actions mirrors the mailbox grant for agents as for humans
-    // (can_send=true, can_approve=false); the credential scope is enforced
-    // separately when the action is attempted.
-    assert!(effective_actions.contains(&json!("mail.send")));
+    // Credential callers see only actions their scopes allow: the grant has
+    // can_send, but this credential lacks mail.send.
+    assert!(!effective_actions.contains(&json!("mail.send")));
     assert!(!effective_actions.contains(&json!("mail.approve")));
 
     let agent_me = rig
@@ -1145,7 +1144,7 @@ async fn sourced_two_company_context_becomes_reviewed_immutable_approved_sales_d
         .await;
     // The can_send grant alone is not enough: the credential lacks mail.send.
     let direct_send_after_grant = problem(direct_send_after_grant, StatusCode::FORBIDDEN).await;
-    assert_eq!(direct_send_after_grant["code"], "MAILBOX_ACCESS_DENIED");
+    assert_eq!(direct_send_after_grant["code"], "SCOPE_REQUIRED");
 
     let approved = human_data(
         rig.api

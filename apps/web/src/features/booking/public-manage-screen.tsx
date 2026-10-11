@@ -113,7 +113,7 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
     const current: PublicSlot = { starts_at: data.starts_at, ends_at: data.ends_at };
     return <BookingCard>
       <MeetingSummary
-        meeting={{ name: data.meeting_name, description: data.meeting_description, host: data.host_display_name, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }}
+        meeting={{ name: data.meeting_name, description: data.meeting_description, host: data.host_display_name, hostAvatarUrl: data.host_avatar_url, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }}
         slot={newSlot ?? current}
         slotLabel={newSlot ? t("newTime") : t("currentTime")}
         timezone={timezone}

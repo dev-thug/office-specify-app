@@ -1612,3 +1612,68 @@ async fn t03_agent_admin_endpoints_allowed_and_audited() {
         assert!(total >= 1, "missing audit row for {action}");
     }
 }
+
+#[tokio::test]
+async fn admins_rename_members_and_members_manage_their_own_photo() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let csrf = admin_csrf(&app, &world).await;
+    let path = format!("/api/v1/principals/{}", world.member_b.principal_id);
+    let res = app.get(&path).await;
+    let etag = res.headers().get("etag").unwrap().to_str().unwrap().to_string();
+    let before = TestApp::data(res).await;
+
+    // Blank names are rejected; a rename keeps permission_version.
+    let res = patch(&app, &path, json!({"name": "   "}), &csrf, Some(&etag)).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = patch(&app, &path, json!({"name": "  Jamie Park  "}), &csrf, Some(&etag)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let renamed = TestApp::data(res).await;
+    assert_eq!(renamed["name"], "Jamie Park");
+    assert_eq!(renamed["permission_version"], before["permission_version"]);
+
+    // Only real images are stored; the type comes from the bytes.
+    let avatar_path = format!("{path}/avatar");
+    let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0u8; 32]].concat();
+    let upload = |bytes: Vec<u8>, csrf: String| {
+        let request = app
+            .client
+            .put(app.url(&avatar_path))
+            .header("x-csrf-token", csrf)
+            .header("content-type", "image/png")
+            .body(bytes);
+        async move { request.send().await.unwrap() }
+    };
+    assert_eq!(upload(b"<svg/>".to_vec(), csrf.clone()).await.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(upload(png.clone(), csrf.clone()).await.status(), StatusCode::OK);
+    let image = app.get(&avatar_path).await;
+    assert_eq!(image.status(), StatusCode::OK);
+    assert_eq!(image.headers()["content-type"], "image/png");
+    assert_eq!(image.bytes().await.unwrap().to_vec(), png);
+    assert!(!TestApp::data(app.get(&path).await).await["avatar_updated_at"].is_null());
+
+    // A member cannot replace someone else's photo, but can set their own.
+    let member_csrf = login_csrf(&app, &world.member_a).await;
+    assert_eq!(upload(png.clone(), member_csrf.clone()).await.status(), StatusCode::FORBIDDEN);
+    let own = app
+        .client
+        .put(app.url(&format!("/api/v1/principals/{}/avatar", world.member_a.principal_id)))
+        .header("x-csrf-token", &member_csrf)
+        .body(png.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(own.status(), StatusCode::OK);
+
+    let csrf = admin_csrf(&app, &world).await;
+    let removed = app
+        .client
+        .delete(app.url(&avatar_path))
+        .header("x-csrf-token", &csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::NO_CONTENT);
+    assert_eq!(app.get(&avatar_path).await.status(), StatusCode::NOT_FOUND);
+}

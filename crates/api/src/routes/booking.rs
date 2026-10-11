@@ -74,6 +74,8 @@ pub fn public_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_public_link))
         .routes(routes!(get_public_link_booking))
+        .routes(routes!(get_public_link_host_avatar))
+        .routes(routes!(get_manage_host_avatar))
         .routes(routes!(list_public_slots))
         .routes(routes!(create_public_booking))
         .routes(routes!(get_manage_booking))
@@ -505,6 +507,32 @@ async fn get_public_link_booking(
         },
         &request_id.0,
     )))
+}
+
+#[utoipa::path(get, path = "/booking-links/{token}/host-avatar", params(("token" = String, Path)),
+    responses((status = 200, description = "Host photo", content_type = "image/*"), (status = 404, body = Problem)))]
+async fn get_public_link_host_avatar(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<impl IntoResponse, ProblemError> {
+    public_booking_read_limit(&state, &headers, &addr).await?;
+    let (content_type, bytes, _) = application::booking::link_host_avatar(&state.db, &token).await?;
+    Ok(crate::routes::org::avatar_image_response(&content_type, bytes, "public, max-age=86400, immutable"))
+}
+
+#[utoipa::path(get, path = "/bookings/{manage_token}/host-avatar", params(("manage_token" = String, Path)),
+    responses((status = 200, description = "Host photo", content_type = "image/*"), (status = 404, body = Problem)))]
+async fn get_manage_host_avatar(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<impl IntoResponse, ProblemError> {
+    public_booking_read_limit(&state, &headers, &addr).await?;
+    let (content_type, bytes, _) = application::booking::manage_host_avatar(&state.db, &token).await?;
+    Ok(crate::routes::org::avatar_image_response(&content_type, bytes, "private, max-age=86400, immutable"))
 }
 
 #[utoipa::path(get, path = "/booking-links/{token}/slots", params(("token" = String, Path), ("from" = String, Query), ("to" = String, Query), ("timezone" = String, Query)),

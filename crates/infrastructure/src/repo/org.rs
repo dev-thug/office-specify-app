@@ -162,10 +162,14 @@ pub struct PrincipalFull {
     pub permission_version: i64,
     pub version: i64,
     pub created_at: DateTime<Utc>,
+    pub avatar_updated_at: Option<DateTime<Utc>>,
 }
 
 const PRINCIPAL_COLS: &str =
-    "id, kind, user_id, name, role, status, permission_version, version, created_at";
+    "id, kind, user_id, name, role, status, permission_version, version, created_at,
+     (SELECT a.updated_at FROM principal_avatars a
+       WHERE a.workspace_id = principals.workspace_id AND a.principal_id = principals.id)
+       AS avatar_updated_at";
 
 /// Keyset page of principals, `(created_at DESC, id DESC)` (B.1.5).
 /// `after` = (created_at, id) of the last row of the previous page.
@@ -346,12 +350,16 @@ pub async fn update_principal(
     expected_version: i64,
     role: &str,
     status: &str,
+    name: &str,
 ) -> Result<Option<PrincipalFull>, AppError> {
+    // A rename alone does not change authority, so it leaves
+    // permission_version (and every cached permission) untouched.
     sqlx::query_as::<_, PrincipalFull>(&format!(
         "UPDATE principals
-                SET role = $3, status = $4,
-                    version = version + 1,
-                    permission_version = permission_version + 1
+                SET permission_version = permission_version
+                        + CASE WHEN role <> $3 OR status <> $4 THEN 1 ELSE 0 END,
+                    role = $3, status = $4, name = $6,
+                    version = version + 1
               WHERE workspace_id = $1 AND id = $2 AND version = $5
               RETURNING {PRINCIPAL_COLS}"
     ))
@@ -360,6 +368,7 @@ pub async fn update_principal(
     .bind(role)
     .bind(status)
     .bind(expected_version)
+    .bind(name)
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)
@@ -832,4 +841,60 @@ pub async fn reassign_principal_ownership(
     .map_err(map_sqlx)?
     .rows_affected();
     Ok((companies, contacts, tasks, threads))
+}
+
+// --------------------------------------------------------------------------
+// profile photos
+// --------------------------------------------------------------------------
+
+/// Stored profile photo: (content_type, bytes, updated_at).
+pub type Avatar = (String, Vec<u8>, DateTime<Utc>);
+
+pub async fn get_avatar(tx: &mut Tx<'_>, principal_id: Uuid) -> Result<Option<Avatar>, AppError> {
+    sqlx::query_as(
+        "SELECT content_type, bytes, updated_at FROM principal_avatars
+          WHERE workspace_id = $1 AND principal_id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(principal_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+pub async fn put_avatar(
+    tx: &mut Tx<'_>,
+    principal_id: Uuid,
+    content_type: &str,
+    bytes: &[u8],
+    updated_by: Uuid,
+) -> Result<DateTime<Utc>, AppError> {
+    sqlx::query_scalar(
+        "INSERT INTO principal_avatars (workspace_id, principal_id, content_type, bytes, updated_by)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (workspace_id, principal_id) DO UPDATE
+            SET content_type = EXCLUDED.content_type, bytes = EXCLUDED.bytes,
+                updated_by = EXCLUDED.updated_by, updated_at = clock_timestamp()
+         RETURNING updated_at",
+    )
+    .bind(tx.workspace_id())
+    .bind(principal_id)
+    .bind(content_type)
+    .bind(bytes)
+    .bind(updated_by)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+pub async fn delete_avatar(tx: &mut Tx<'_>, principal_id: Uuid) -> Result<bool, AppError> {
+    let result = sqlx::query(
+        "DELETE FROM principal_avatars WHERE workspace_id = $1 AND principal_id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(principal_id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(result.rows_affected() > 0)
 }

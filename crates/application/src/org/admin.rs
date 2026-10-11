@@ -10,6 +10,7 @@
 
 use chrono::{DateTime, Utc};
 use contracts::org::{
+    AvatarResponse,
     CreateAgentRequest, CreateCredentialRequest, CreateInvitationRequest,
     CredentialCreatedResponse, CredentialResponse, CredentialRevokedResponse,
     DisableRequestRequest, DisableRequestResponse, EmergencyStopRequest, EmergencyStopResponse,
@@ -70,6 +71,7 @@ pub fn principal_response(row: &repo::PrincipalFull) -> PrincipalResponse {
         permission_version: row.permission_version,
         version: row.version,
         created_at: row.created_at,
+        avatar_updated_at: row.avatar_updated_at,
     }
 }
 
@@ -283,8 +285,18 @@ pub async fn patch_principal(
     req: &PatchPrincipalRequest,
 ) -> Result<PrincipalResponse, AppError> {
     require_admin_audited(db, ctx, "principal.update", "principal", Some(id)).await?;
-    if req.role.is_none() && req.status.is_none() {
+    if req.role.is_none() && req.status.is_none() && req.name.is_none() {
         return Err(AppError::validation("nothing to update", vec![]));
+    }
+    let new_name = req.name.as_deref().map(str::trim);
+    if new_name.is_some_and(|n| n.is_empty() || n.chars().count() > 100) {
+        return Err(AppError::validation(
+            "name must be 1..=100 characters",
+            vec![Violation {
+                field: "name".into(),
+                code: "invalid".into(),
+            }],
+        ));
     }
     let new_role = req.role.map(domain::org::role_to_str);
     let new_status = req.status.clone();
@@ -366,7 +378,9 @@ pub async fn patch_principal(
         ));
     }
 
-    let Some(row) = repo::update_principal(&mut tx, id, expected_version, &role, &status).await?
+    let name = new_name.map(String::from).unwrap_or_else(|| cur.name.clone());
+    let Some(row) =
+        repo::update_principal(&mut tx, id, expected_version, &role, &status, &name).await?
     else {
         let _ = tx.rollback().await;
         return Err(AppError::new(
@@ -1010,4 +1024,124 @@ pub async fn enqueue_revoke_credential_jobs(
         Some(&dedupe),
     )
     .await
+}
+
+// --------------------------------------------------------------------------
+// profile photos
+// --------------------------------------------------------------------------
+
+/// Largest accepted photo; the web client downsizes to 256px before upload.
+pub const AVATAR_MAX_BYTES: usize = 512 * 1024;
+
+/// The image type the bytes actually are — the declared Content-Type is not
+/// trusted, so a mislabelled or non-image upload is rejected.
+pub fn sniff_avatar_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+/// Admins manage anyone's photo; everyone else only their own.
+fn require_avatar_editor(ctx: &Ctx, principal_id: Uuid) -> Result<(), AppError> {
+    if ctx.principal_id == principal_id
+        || matches!(ctx.role, Role::Admin)
+        || crate::authz::agent_admin(ctx)
+    {
+        Ok(())
+    } else {
+        Err(AppError::forbidden("only admins can change another member's photo"))
+    }
+}
+
+pub async fn set_avatar(
+    db: &Db,
+    ctx: &Ctx,
+    principal_id: Uuid,
+    bytes: &[u8],
+) -> Result<AvatarResponse, AppError> {
+    require_avatar_editor(ctx, principal_id)?;
+    if bytes.is_empty() || bytes.len() > AVATAR_MAX_BYTES {
+        return Err(AppError::validation(
+            "photo must be at most 512 KB",
+            vec![Violation {
+                field: "avatar".into(),
+                code: "too_large".into(),
+            }],
+        ));
+    }
+    let content_type = sniff_avatar_type(bytes).ok_or_else(|| {
+        AppError::validation(
+            "photo must be a PNG, JPEG or WebP image",
+            vec![Violation {
+                field: "avatar".into(),
+                code: "unsupported_type".into(),
+            }],
+        )
+    })?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let Some(target) = repo::get_principal_full(&mut tx, principal_id).await? else {
+        let _ = tx.rollback().await;
+        return Err(AppError::not_found("principal not found"));
+    };
+    if target.kind == "system" {
+        let _ = tx.rollback().await;
+        return Err(AppError::conflict("system principals cannot have a photo"));
+    }
+    let updated_at =
+        repo::put_avatar(&mut tx, principal_id, content_type, bytes, ctx.principal_id).await?;
+    audit::record(
+        &mut tx,
+        AuditEntry::new(
+            ctx.principal_id,
+            "principal.avatar_update",
+            "principal",
+            ctx.request_id.clone(),
+        )
+        .with_target(principal_id),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(AvatarResponse {
+        principal_id,
+        content_type: content_type.to_string(),
+        avatar_updated_at: updated_at,
+    })
+}
+
+pub async fn delete_avatar(db: &Db, ctx: &Ctx, principal_id: Uuid) -> Result<(), AppError> {
+    require_avatar_editor(ctx, principal_id)?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    if repo::delete_avatar(&mut tx, principal_id).await? {
+        audit::record(
+            &mut tx,
+            AuditEntry::new(
+                ctx.principal_id,
+                "principal.avatar_delete",
+                "principal",
+                ctx.request_id.clone(),
+            )
+            .with_target(principal_id),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Photo bytes for any workspace member to display.
+pub async fn get_avatar(
+    db: &Db,
+    ctx: &Ctx,
+    principal_id: Uuid,
+) -> Result<repo::Avatar, AppError> {
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    let avatar = repo::get_avatar(&mut tx, principal_id).await?;
+    tx.rollback().await?;
+    avatar.ok_or_else(|| AppError::not_found("photo not found"))
 }

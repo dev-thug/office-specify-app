@@ -881,6 +881,9 @@ pub async fn public_link_details(
         invitee,
         location_kind: resolved.link.location_kind,
         location_detail: resolved.link.location_detail,
+        host_avatar_url: resolved.link.host_avatar_updated_at.map(|at| {
+            avatar_url(&format!("/public/v1/booking-links/{raw_token}/host-avatar"), at)
+        }),
     })
 }
 
@@ -1190,7 +1193,8 @@ pub async fn list_meeting_slots(
                 m.location_kind, m.location_detail, m.status AS meeting_status,
                 c.id AS calendar_connection_id, c.provider_calendar_id, c.status AS calendar_status,
                 i.status AS integration_status,
-                p.name AS host_name
+                p.name AS host_name,
+                NULL::timestamptz AS host_avatar_updated_at
            FROM meeting_types m
            JOIN calendar_connections c ON c.workspace_id = m.workspace_id AND c.id = m.calendar_connection_id
            JOIN integration_connections i ON i.workspace_id = c.workspace_id AND i.id = c.connection_id
@@ -1571,6 +1575,54 @@ fn validate_guest(request: &CreatePublicBookingRequest) -> Result<(), AppError> 
 /// Candidate times for rescheduling: the same availability the original
 /// invitation offered, computed for the booking's own link (even when the
 /// link itself is used up).
+/// Cache-busting public photo URL (`?v=` changes whenever the photo does).
+fn avatar_url(path: &str, updated_at: DateTime<Utc>) -> String {
+    format!("{path}?v={}", updated_at.timestamp_millis())
+}
+
+/// Host photo behind a booking-link capability (used-up links included, so
+/// the manage redirect can still show it; revoked links never).
+pub async fn link_host_avatar(
+    db: &Db,
+    raw_token: &str,
+) -> Result<infrastructure::repo::org::Avatar, AppError> {
+    let location = public_tokens::booking_link_token(db, raw_token).await?;
+    let mut tx = db.begin(location.workspace_id).await?;
+    let link = repo::get_booking_link_by_id_from_token(&mut tx, location.token_id)
+        .await?
+        .filter(|link| link.revoked_at.is_none());
+    let avatar = match link {
+        Some(link) => infrastructure::repo::org::get_avatar(&mut tx, link.host_principal_id).await?,
+        None => None,
+    };
+    tx.rollback().await?;
+    avatar.ok_or_else(|| AppError::not_found("photo not found"))
+}
+
+/// Host photo behind a booking manage capability.
+pub async fn manage_host_avatar(
+    db: &Db,
+    raw_token: &str,
+) -> Result<infrastructure::repo::org::Avatar, AppError> {
+    let location = public_tokens::booking_manage_token(db, raw_token).await?;
+    let mut tx = db.begin(location.workspace_id).await?;
+    let token = repo::get_manage_token(&mut tx, location.token_id)
+        .await?
+        .filter(|token| token.revoked_at.is_none() && token.expires_at > Utc::now());
+    let booking = match token {
+        Some(token) => repo::get_booking(&mut tx, token.booking_id).await?,
+        None => None,
+    };
+    let avatar = match booking {
+        Some(booking) => {
+            infrastructure::repo::org::get_avatar(&mut tx, booking.host_principal_id).await?
+        }
+        None => None,
+    };
+    tx.rollback().await?;
+    avatar.ok_or_else(|| AppError::not_found("photo not found"))
+}
+
 pub async fn manage_slots(
     db: &Db,
     calendar: &dyn CalendarProvider,
@@ -1626,9 +1678,12 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         i32,
         String,
         Option<String>,
+        Option<DateTime<Utc>>,
     )> = sqlx::query_as(
         "SELECT m.name, p.name, m.description, m.duration_minutes, m.booking_horizon_days,
-                m.location_kind, m.location_detail
+                m.location_kind, m.location_detail,
+                (SELECT a.updated_at FROM principal_avatars a
+                  WHERE a.workspace_id = b.workspace_id AND a.principal_id = b.host_principal_id)
            FROM bookings b
            JOIN booking_links l
              ON l.workspace_id = b.workspace_id AND l.id = b.booking_link_id
@@ -1652,6 +1707,7 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         booking_horizon_days,
         location_kind,
         location_detail,
+        host_avatar_updated_at,
     )) = public_details
     else {
         tx.rollback().await?;
@@ -1667,6 +1723,9 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         booking_horizon_days,
         location_kind,
         location_detail,
+        host_avatar_url: host_avatar_updated_at.map(|at| {
+            avatar_url(&format!("/public/v1/bookings/{raw_token}/host-avatar"), at)
+        }),
         host_display_name,
         guest_memo: booking.guest_memo,
         starts_at: booking.starts_at,

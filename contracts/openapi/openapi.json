@@ -1055,6 +1055,28 @@
         ],
         "type": "object"
       },
+      "AvatarResponse": {
+        "description": "`PUT /principals/{id}/avatar` result.",
+        "properties": {
+          "avatar_updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "principal_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "principal_id",
+          "content_type",
+          "avatar_updated_at"
+        ],
+        "type": "object"
+      },
       "BacklogAlert": {
         "properties": {
           "count": {
@@ -5854,6 +5876,12 @@
           "guest_timezone": {
             "type": "string"
           },
+          "host_avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "host_display_name": {
             "type": "string"
           },
@@ -7123,6 +7151,13 @@
         "additionalProperties": false,
         "description": "`PATCH /principals/{id}` — role and/or status, If-Match required.",
         "properties": {
+          "name": {
+            "description": "Display name (1..=100 characters), shown in the app and to guests on\npublic booking pages when the principal hosts meetings.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "role": {
             "oneOf": [
               {
@@ -7336,6 +7371,14 @@
       "PrincipalResponse": {
         "description": "Principal row as exposed over the API. `version` drives the ETag.",
         "properties": {
+          "avatar_updated_at": {
+            "description": "Set when a profile photo exists; GET `/principals/{id}/avatar`\n(append `?v=<this>` to bust caches after a change).",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "created_at": {
             "format": "date-time",
             "type": "string"
@@ -7472,6 +7515,13 @@
           "duration_minutes": {
             "format": "int32",
             "type": "integer"
+          },
+          "host_avatar_url": {
+            "description": "Host profile photo, served through this same link capability.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "host_name": {
             "type": "string"
@@ -23211,6 +23261,182 @@
         }
       }
     },
+    "/api/v1/principals/{id}/avatar": {
+      "delete": {
+        "operationId": "delete_principal_avatar",
+        "parameters": [
+          {
+            "description": "Principal id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Photo removed (idempotent)"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Only admins may change another member's photo"
+          }
+        }
+      },
+      "get": {
+        "operationId": "get_principal_avatar",
+        "parameters": [
+          {
+            "description": "Principal id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/*": {}
+            },
+            "description": "Photo bytes"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "No photo"
+          }
+        }
+      },
+      "put": {
+        "operationId": "put_principal_avatar",
+        "parameters": [
+          {
+            "description": "Principal id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "image/png": {
+              "schema": {
+                "items": {
+                  "format": "int32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              }
+            }
+          },
+          "description": "PNG, JPEG or WebP, at most 512 KB. The type is sniffed from the bytes.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AvatarResponse"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Photo stored"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not an image or too large"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Only admins may change another member's photo"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/principals/{id}/disable-requests": {
       "post": {
         "operationId": "request_disable_principal",
@@ -26705,6 +26931,39 @@
         }
       }
     },
+    "/public/v1/booking-links/{token}/host-avatar": {
+      "get": {
+        "operationId": "get_public_link_host_avatar",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/*": {}
+            },
+            "description": "Host photo"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/public/v1/booking-links/{token}/slots": {
       "get": {
         "operationId": "list_public_slots",
@@ -26952,6 +27211,39 @@
             "description": ""
           },
           "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/public/v1/bookings/{manage_token}/host-avatar": {
+      "get": {
+        "operationId": "get_manage_host_avatar",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "manage_token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/*": {}
+            },
+            "description": "Host photo"
+          },
+          "404": {
             "content": {
               "application/problem+json": {
                 "schema": {

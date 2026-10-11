@@ -1796,6 +1796,22 @@ export interface paths {
         patch: operations["patch_principal"];
         trace?: never;
     };
+    "/api/v1/principals/{id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_principal_avatar"];
+        put: operations["put_principal_avatar"];
+        post?: never;
+        delete: operations["delete_principal_avatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/principals/{id}/disable-requests": {
         parameters: {
             query?: never;
@@ -2228,6 +2244,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/v1/booking-links/{token}/host-avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_public_link_host_avatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/v1/booking-links/{token}/slots": {
         parameters: {
             query?: never;
@@ -2270,6 +2302,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["cancel_public_booking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/v1/bookings/{manage_token}/host-avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_manage_host_avatar"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2789,6 +2837,14 @@ export interface components {
             valid_until?: string | null;
             /** Format: int32 */
             weekday: number;
+        };
+        /** @description `PUT /principals/{id}/avatar` result. */
+        AvatarResponse: {
+            /** Format: date-time */
+            avatar_updated_at: string;
+            content_type: string;
+            /** Format: uuid */
+            principal_id: string;
         };
         BacklogAlert: {
             /** Format: int64 */
@@ -4536,6 +4592,7 @@ export interface components {
             guest_memo?: string | null;
             guest_name: string;
             guest_timezone: string;
+            host_avatar_url?: string | null;
             host_display_name: string;
             /** Format: uuid */
             id: string;
@@ -5003,6 +5060,11 @@ export interface components {
         };
         /** @description `PATCH /principals/{id}` — role and/or status, If-Match required. */
         PatchPrincipalRequest: {
+            /**
+             * @description Display name (1..=100 characters), shown in the app and to guests on
+             *     public booking pages when the principal hosts meetings.
+             */
+            name?: string | null;
             role?: null | components["schemas"]["Role"];
             /** @description `active` | `disabled` only — `invited` is never settable. */
             status?: string | null;
@@ -5074,6 +5136,12 @@ export interface components {
         };
         /** @description Principal row as exposed over the API. `version` drives the ETag. */
         PrincipalResponse: {
+            /**
+             * Format: date-time
+             * @description Set when a profile photo exists; GET `/principals/{id}/avatar`
+             *     (append `?v=<this>` to bust caches after a change).
+             */
+            avatar_updated_at?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
@@ -5118,6 +5186,8 @@ export interface components {
             description?: string | null;
             /** Format: int32 */
             duration_minutes: number;
+            /** @description Host profile photo, served through this same link capability. */
+            host_avatar_url?: string | null;
             host_name: string;
             invitee?: null | components["schemas"]["PublicBookingInvitee"];
             location_detail?: string | null;
@@ -13473,6 +13543,132 @@ export interface operations {
             };
         };
     };
+    get_principal_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Photo bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": unknown;
+                };
+            };
+            /** @description No photo */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_principal_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description PNG, JPEG or WebP, at most 512 KB. The type is sniffed from the bytes. */
+        requestBody: {
+            content: {
+                "image/png": number[];
+            };
+        };
+        responses: {
+            /** @description Photo stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["AvatarResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Not an image or too large */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Only admins may change another member's photo */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    delete_principal_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Photo removed (idempotent) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Only admins may change another member's photo */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     request_disable_principal: {
         parameters: {
             query?: never;
@@ -15425,6 +15621,36 @@ export interface operations {
             };
         };
     };
+    get_public_link_host_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Host photo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": unknown;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     list_public_slots: {
         parameters: {
             query: {
@@ -15538,6 +15764,36 @@ export interface operations {
                 };
             };
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_manage_host_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                manage_token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Host photo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": unknown;
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

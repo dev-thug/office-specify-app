@@ -124,7 +124,7 @@ function BookingFlow({ token, data, t, locale }: { token: string; data: PublicBo
 
   return <BookingCard ref={topRef}>
     <MeetingSummary
-      meeting={{ name: data.name ?? data.title, description: data.description, host: data.host_display_name ?? data.host_name, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail }}
+      meeting={{ name: data.name ?? data.title, description: data.description, host: data.host_display_name ?? data.host_name, hostAvatarUrl: data.host_avatar_url, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail }}
       slot={selectedSlot}
       timezone={timezone}
       t={t}
@@ -309,6 +309,7 @@ export interface MeetingInfo {
   name?: string | null;
   description?: string | null;
   host?: string | null;
+  hostAvatarUrl?: string | null;
   durationMinutes?: number | null;
   locationKind?: "online" | "offline" | null;
   locationDetail?: string | null;
@@ -349,7 +350,12 @@ export function MeetingSummary({ meeting, slot, slotLabel, timezone, t, locale, 
   return <aside className="flex flex-col gap-5 border-b border-border pb-6 lg:border-r lg:border-b-0 lg:p-8">
     {host ? (
       <div className="flex items-center gap-3">
-        <span aria-hidden className="flex size-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">{host.trim().charAt(0).toUpperCase()}</span>
+        <span aria-hidden className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary text-base font-semibold text-primary-foreground">
+          {meeting.hostAvatarUrl
+            // eslint-disable-next-line @next/next/no-img-element -- capability-scoped API image
+            ? <img src={meeting.hostAvatarUrl} alt="" className="size-full object-cover" />
+            : host.trim().charAt(0).toUpperCase()}
+        </span>
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">{t("host")}</p>
           <p className="truncate text-sm font-medium">{host}</p>

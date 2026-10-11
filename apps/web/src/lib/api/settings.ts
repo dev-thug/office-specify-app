@@ -54,8 +54,30 @@ export interface Principal {
   permission_version: number;
   version: number;
   created_at: string;
+  /** 프로필 사진이 있으면 그 갱신 시각 — principalAvatarUrl 의 캐시 키. */
+  avatar_updated_at?: string | null;
   allowed_actions?: string[];
   [key: string]: unknown;
+}
+
+/** 프로필 사진 URL (없으면 null) — 갱신 시각을 붙여 바뀐 사진이 바로 보이게 한다. */
+export function principalAvatarUrl(principal: Pick<Principal, "id" | "avatar_updated_at">): string | null {
+  if (!principal.avatar_updated_at) return null;
+  return `/api/v1/principals/${encodeURIComponent(principal.id)}/avatar?v=${encodeURIComponent(principal.avatar_updated_at)}`;
+}
+
+/** PUT /principals/{id}/avatar — 원시 이미지 바이트 (PNG·JPEG·WebP, 512KB 이하). */
+export function uploadPrincipalAvatar(id: string, image: Blob) {
+  return mutate<{ avatar_updated_at: string }>(
+    `/api/v1/principals/${encodeURIComponent(id)}/avatar`,
+    { method: "PUT", body: image },
+    { headers: { "Content-Type": image.type || "application/octet-stream" } }
+  );
+}
+
+/** DELETE /principals/{id}/avatar — 없는 사진을 지워도 성공. */
+export function deletePrincipalAvatar(id: string) {
+  return mutate<void>(`/api/v1/principals/${encodeURIComponent(id)}/avatar`, { method: "DELETE" });
 }
 
 export interface PrincipalFilters {
@@ -80,6 +102,8 @@ export function usePrincipals(filters?: PrincipalFilters) {
 export interface UpdatePrincipalInput {
   role?: WorkspaceRole;
   status?: PrincipalStatus;
+  /** 표시 이름 1..=100자 — 공개 예약 페이지의 호스트 이름으로도 쓰인다. */
+  name?: string;
 }
 
 /** PATCH /principals/{id} — If-Match 필수 (412 → 최신 값과 비교). */

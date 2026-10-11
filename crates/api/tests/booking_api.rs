@@ -171,6 +171,35 @@ async fn used_up_invitation_resolves_to_its_booking_manage_page() {
         assert_eq!(slots.status(), StatusCode::OK);
         let slots: serde_json::Value = slots.json().await.unwrap();
         assert!(!slots["data"]["slots"].as_array().unwrap().is_empty());
+
+        // The host photo travels with the same capabilities.
+        assert!(status["data"]["host_avatar_url"].is_null());
+        let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+        sqlx::query(
+            "INSERT INTO principal_avatars (workspace_id, principal_id, content_type, bytes, updated_by)
+             VALUES ($1,$2,'image/png',$3,$2)",
+        )
+        .bind(world.workspace_id)
+        .bind(world.admin.principal_id)
+        .bind(b"\x89PNG\r\n\x1a\nfake".to_vec())
+        .execute(tx.conn())
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let status: serde_json::Value = app
+            .get(&format!("/public/v1/bookings/{manage_token}"))
+            .await
+            .json()
+            .await
+            .unwrap();
+        let avatar_url = status["data"]["host_avatar_url"].as_str().unwrap().to_string();
+        let image = app.get(&avatar_url).await;
+        assert_eq!(image.status(), StatusCode::OK);
+        assert_eq!(image.headers()["content-type"], "image/png");
+        let link_avatar = app
+            .get(&format!("/public/v1/booking-links/{}/host-avatar", fixture.token))
+            .await;
+        assert_eq!(link_avatar.status(), StatusCode::OK);
     }
 }
 
