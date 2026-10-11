@@ -113,7 +113,7 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
     const current: PublicSlot = { starts_at: data.starts_at, ends_at: data.ends_at };
     return <BookingCard>
       <MeetingSummary
-        meeting={{ name: data.meeting_name, description: data.meeting_description, host: data.host_display_name, hostAvatarUrl: data.host_avatar_url, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }}
+        meeting={{ name: data.meeting_name, description: data.meeting_description, host: data.host_display_name, hostAvatarUrl: data.host_avatar_url, hostTitle: data.host_title, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }}
         slot={newSlot ?? current}
         slotLabel={newSlot ? t("newTime") : t("currentTime")}
         timezone={timezone}
@@ -167,6 +167,9 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
     {error && !cancelOpen ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
     <div className="rounded-2xl border border-border bg-card p-5">
       {data.meeting_name ? <p className="text-sm font-medium">{data.meeting_name}</p> : null}
+      {data.host_display_name ? (
+        <p className="mt-0.5 text-xs text-muted-foreground">{data.host_title ? `${data.host_display_name} · ${data.host_title}` : data.host_display_name}</p>
+      ) : null}
       {data.starts_at ? (
         <div className="mt-3 flex items-start gap-3">
           <CalendarCheckIcon className="mt-1 size-5 shrink-0 text-muted-foreground" aria-hidden />
@@ -182,8 +185,7 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
           <MeetingLocation meeting={{ locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }} t={tb} pendingNote={t("onlineDetailPending")} />
         </div>
       ) : null}
-      <dl className="mt-5 grid grid-cols-2 gap-4 border-t border-border pt-4 text-sm">
-        <Field label={t("host")} value={data.host_display_name} />
+      <dl className="mt-5 grid gap-4 border-t border-border pt-4 text-sm">
         <Field label={t("guest")} value={data.guest_name} />
       </dl>
     </div>

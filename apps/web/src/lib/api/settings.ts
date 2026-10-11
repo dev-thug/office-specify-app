@@ -56,6 +56,8 @@ export interface Principal {
   created_at: string;
   /** 프로필 사진이 있으면 그 갱신 시각 — principalAvatarUrl 의 캐시 키. */
   avatar_updated_at?: string | null;
+  /** 직급 — 미팅 예약 페이지의 주최자 이름 아래에 보인다. */
+  title?: string | null;
   allowed_actions?: string[];
   [key: string]: unknown;
 }
@@ -104,6 +106,8 @@ export interface UpdatePrincipalInput {
   status?: PrincipalStatus;
   /** 표시 이름 1..=100자 — 공개 예약 페이지의 호스트 이름으로도 쓰인다. */
   name?: string;
+  /** 직급 (100자 이하) — 빈 문자열이면 지운다. */
+  title?: string;
 }
 
 /** PATCH /principals/{id} — If-Match 필수 (412 → 최신 값과 비교). */

@@ -208,6 +208,9 @@ pub struct PublicBookingLinkResponse {
     /// Host profile photo, served through this same link capability.
     #[serde(default)]
     pub host_avatar_url: Option<String>,
+    /// Host job title shown under the name.
+    #[serde(default)]
+    pub host_title: Option<String>,
     /// Invited recipient for a link bound to one address (outreach links),
     /// so the guest form can be prefilled. Absent for open links.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -316,6 +319,8 @@ pub struct ManageBookingResponse {
     pub location_detail: Option<String>,
     #[serde(default)]
     pub host_avatar_url: Option<String>,
+    #[serde(default)]
+    pub host_title: Option<String>,
     pub host_display_name: String,
     pub guest_memo: Option<String>,
     pub starts_at: DateTime<Utc>,

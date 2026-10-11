@@ -250,7 +250,10 @@
       "nameSaved": "Name updated.",
       "save": "Save",
       "saving": "Saving…",
-      "close": "Close"
+      "close": "Close",
+      "jobTitle": "Job title",
+      "jobTitlePlaceholder": "e.g. CEO, Sales Manager",
+      "jobTitleHint": "Shown under the name on booking pages."
     }
   },
   "mailAccounts": {

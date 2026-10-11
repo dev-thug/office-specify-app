@@ -104,7 +104,10 @@ export function MembersScreen() {
         return (
           <div className="flex items-center gap-2.5">
             <PrincipalAvatar principal={row} />
-            <span className="font-medium">{row.name}</span>
+            <span className="flex min-w-0 flex-col">
+              <span className="font-medium">{row.name}</span>
+              {row.title ? <span className="text-2xs text-muted-foreground">{row.title}</span> : null}
+            </span>
             {editable ? (
               <Button type="button" size="icon-xs" variant="ghost" aria-label={t("profile.edit", { name: row.name })} onClick={() => setProfileFor(row)}>
                 <PencilIcon aria-hidden />

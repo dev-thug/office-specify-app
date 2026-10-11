@@ -124,7 +124,7 @@ function BookingFlow({ token, data, t, locale }: { token: string; data: PublicBo
 
   return <BookingCard ref={topRef}>
     <MeetingSummary
-      meeting={{ name: data.name ?? data.title, description: data.description, host: data.host_display_name ?? data.host_name, hostAvatarUrl: data.host_avatar_url, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail }}
+      meeting={{ name: data.name ?? data.title, description: data.description, host: data.host_display_name ?? data.host_name, hostAvatarUrl: data.host_avatar_url, hostTitle: data.host_title, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail }}
       slot={selectedSlot}
       timezone={timezone}
       t={t}
@@ -310,6 +310,7 @@ export interface MeetingInfo {
   description?: string | null;
   host?: string | null;
   hostAvatarUrl?: string | null;
+  hostTitle?: string | null;
   durationMinutes?: number | null;
   locationKind?: "online" | "offline" | null;
   locationDetail?: string | null;
@@ -357,8 +358,8 @@ export function MeetingSummary({ meeting, slot, slotLabel, timezone, t, locale, 
             : host.trim().charAt(0).toUpperCase()}
         </span>
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{t("host")}</p>
-          <p className="truncate text-sm font-medium">{host}</p>
+          <p className="truncate text-sm font-semibold">{host}</p>
+          {meeting.hostTitle ? <p className="truncate text-xs text-muted-foreground">{meeting.hostTitle}</p> : null}
         </div>
       </div>
     ) : null}

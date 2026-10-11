@@ -1,7 +1,6 @@
 {
   "book": {
     "title": "Book a meeting",
-    "host": "Host",
     "durationMinutes": "{count} min",
     "pickDate": "Pick a date and time",
     "prevMonth": "Previous month",
@@ -54,7 +53,6 @@
     "time": "When",
     "timezone": "Time zone",
     "meeting": "Meeting",
-    "host": "Host",
     "heldNote": "We're holding this time for you. We'll get in touch once it's confirmed.",
     "confirmingNote": "Adding it to the calendar now. We'll get in touch once it's confirmed.",
     "cancelingNote": "Cancellation was requested. Wait for the calendar operation to finish.",

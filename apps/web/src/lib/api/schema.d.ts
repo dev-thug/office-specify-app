@@ -4594,6 +4594,7 @@ export interface components {
             guest_timezone: string;
             host_avatar_url?: string | null;
             host_display_name: string;
+            host_title?: string | null;
             /** Format: uuid */
             id: string;
             location_detail?: string | null;
@@ -5068,6 +5069,11 @@ export interface components {
             role?: null | components["schemas"]["Role"];
             /** @description `active` | `disabled` only — `invited` is never settable. */
             status?: string | null;
+            /**
+             * @description Job title (at most 100 characters), shown under the host name on
+             *     public booking pages. An empty string clears it.
+             */
+            title?: string | null;
         };
         PatchTaskRequest: {
             /**
@@ -5153,6 +5159,8 @@ export interface components {
             role: components["schemas"]["Role"];
             /** @description DDL CHECK: `invited` | `active` | `disabled`. */
             status: string;
+            /** @description Job title, e.g. "대표" or "Sales Manager". */
+            title?: string | null;
             /** Format: uuid */
             user_id?: string | null;
             /** Format: int64 */
@@ -5189,6 +5197,8 @@ export interface components {
             /** @description Host profile photo, served through this same link capability. */
             host_avatar_url?: string | null;
             host_name: string;
+            /** @description Host job title shown under the name. */
+            host_title?: string | null;
             invitee?: null | components["schemas"]["PublicBookingInvitee"];
             location_detail?: string | null;
             /** @description `online` or `offline`, plus the guest-facing link note or address. */

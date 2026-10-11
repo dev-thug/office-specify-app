@@ -881,6 +881,7 @@ pub async fn public_link_details(
         invitee,
         location_kind: resolved.link.location_kind,
         location_detail: resolved.link.location_detail,
+        host_title: resolved.link.host_title.clone(),
         host_avatar_url: resolved.link.host_avatar_updated_at.map(|at| {
             avatar_url(&format!("/public/v1/booking-links/{raw_token}/host-avatar"), at)
         }),
@@ -1193,7 +1194,7 @@ pub async fn list_meeting_slots(
                 m.location_kind, m.location_detail, m.status AS meeting_status,
                 c.id AS calendar_connection_id, c.provider_calendar_id, c.status AS calendar_status,
                 i.status AS integration_status,
-                p.name AS host_name,
+                p.name AS host_name, p.title AS host_title,
                 NULL::timestamptz AS host_avatar_updated_at
            FROM meeting_types m
            JOIN calendar_connections c ON c.workspace_id = m.workspace_id AND c.id = m.calendar_connection_id
@@ -1679,11 +1680,13 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         String,
         Option<String>,
         Option<DateTime<Utc>>,
+        Option<String>,
     )> = sqlx::query_as(
         "SELECT m.name, p.name, m.description, m.duration_minutes, m.booking_horizon_days,
                 m.location_kind, m.location_detail,
                 (SELECT a.updated_at FROM principal_avatars a
-                  WHERE a.workspace_id = b.workspace_id AND a.principal_id = b.host_principal_id)
+                  WHERE a.workspace_id = b.workspace_id AND a.principal_id = b.host_principal_id),
+                p.title
            FROM bookings b
            JOIN booking_links l
              ON l.workspace_id = b.workspace_id AND l.id = b.booking_link_id
@@ -1708,6 +1711,7 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         location_kind,
         location_detail,
         host_avatar_updated_at,
+        host_title,
     )) = public_details
     else {
         tx.rollback().await?;
@@ -1726,6 +1730,7 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         host_avatar_url: host_avatar_updated_at.map(|at| {
             avatar_url(&format!("/public/v1/bookings/{raw_token}/host-avatar"), at)
         }),
+        host_title,
         host_display_name,
         guest_memo: booking.guest_memo,
         starts_at: booking.starts_at,

@@ -1,7 +1,6 @@
 {
   "book": {
     "title": "미팅 예약",
-    "host": "주최",
     "durationMinutes": "{count}분",
     "pickDate": "날짜와 시간을 골라 주세요",
     "prevMonth": "이전 달",
@@ -54,7 +53,6 @@
     "time": "일정",
     "timezone": "시간대",
     "meeting": "미팅",
-    "host": "주최",
     "heldNote": "이 시간을 잠시 잡아 두었어요. 확정되면 연락드릴게요.",
     "confirmingNote": "캘린더에 일정을 등록하고 있어요. 확정되면 연락드릴게요.",
     "cancelingNote": "취소 요청을 받았어요. 캘린더에서 일정을 지우는 중이에요.",

@@ -69,6 +69,7 @@ export function MemberProfileDialog({
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(principal?.name ?? "");
+  const [title, setTitle] = useState(principal?.title ?? "");
   const [photoPending, setPhotoPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
   const [preview, setPreview] = useState<Pick<Principal, "id" | "name" | "avatar_updated_at"> | null>(null);
@@ -116,13 +117,18 @@ export function MemberProfileDialog({
     event.preventDefault();
     if (!principal) return;
     const next = name.trim();
-    if (!canRename || !next || next === principal.name) {
+    const nextTitle = title.trim();
+    const changes = {
+      ...(next && next !== principal.name ? { name: next } : {}),
+      ...(nextTitle !== (principal.title ?? "") ? { title: nextTitle } : {}),
+    };
+    if (!canRename || !next || Object.keys(changes).length === 0) {
       onOpenChange(false);
       return;
     }
     setSavePending(true);
     try {
-      await updatePrincipal(principal.id, { name: next }, { etag: principal.version, idempotencyKey: idempotencyKey() });
+      await updatePrincipal(principal.id, changes, { etag: principal.version, idempotencyKey: idempotencyKey() });
       toast.success(t("nameSaved"));
       await refresh();
       onOpenChange(false);
@@ -174,6 +180,11 @@ export function MemberProfileDialog({
             <Label htmlFor="member-profile-name">{t("name")}</Label>
             <Input id="member-profile-name" value={name} maxLength={100} disabled={!canRename} onChange={(event) => setName(event.target.value)} />
             <p className="text-2xs text-muted-foreground">{canRename ? t("nameHint") : t("nameAdminOnly")}</p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="member-profile-title">{t("jobTitle")}</Label>
+            <Input id="member-profile-title" value={title} maxLength={100} disabled={!canRename} placeholder={t("jobTitlePlaceholder")} onChange={(event) => setTitle(event.target.value)} />
+            <p className="text-2xs text-muted-foreground">{t("jobTitleHint")}</p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("close")}</Button>

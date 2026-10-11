@@ -1633,6 +1633,17 @@ async fn admins_rename_members_and_members_manage_their_own_photo() {
     assert_eq!(renamed["name"], "Jamie Park");
     assert_eq!(renamed["permission_version"], before["permission_version"]);
 
+    // Title: set, then cleared with an empty string.
+    let etag = format!("\"{}\"", renamed["version"].as_i64().unwrap());
+    let res = patch(&app, &path, json!({"title": " 대표 "}), &csrf, Some(&etag)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let titled = TestApp::data(res).await;
+    assert_eq!(titled["title"], "대표");
+    assert_eq!(titled["name"], "Jamie Park");
+    let etag = format!("\"{}\"", titled["version"].as_i64().unwrap());
+    let res = patch(&app, &path, json!({"title": ""}), &csrf, Some(&etag)).await;
+    assert!(TestApp::data(res).await["title"].is_null());
+
     // Only real images are stored; the type comes from the bytes.
     let avatar_path = format!("{path}/avatar");
     let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[0u8; 32]].concat();

@@ -72,6 +72,7 @@ pub fn principal_response(row: &repo::PrincipalFull) -> PrincipalResponse {
         version: row.version,
         created_at: row.created_at,
         avatar_updated_at: row.avatar_updated_at,
+        title: row.title.clone(),
     }
 }
 
@@ -285,10 +286,20 @@ pub async fn patch_principal(
     req: &PatchPrincipalRequest,
 ) -> Result<PrincipalResponse, AppError> {
     require_admin_audited(db, ctx, "principal.update", "principal", Some(id)).await?;
-    if req.role.is_none() && req.status.is_none() && req.name.is_none() {
+    if req.role.is_none() && req.status.is_none() && req.name.is_none() && req.title.is_none() {
         return Err(AppError::validation("nothing to update", vec![]));
     }
     let new_name = req.name.as_deref().map(str::trim);
+    let new_title = req.title.as_deref().map(str::trim);
+    if new_title.is_some_and(|t| t.chars().count() > 100) {
+        return Err(AppError::validation(
+            "title must be at most 100 characters",
+            vec![Violation {
+                field: "title".into(),
+                code: "invalid".into(),
+            }],
+        ));
+    }
     if new_name.is_some_and(|n| n.is_empty() || n.chars().count() > 100) {
         return Err(AppError::validation(
             "name must be 1..=100 characters",
@@ -379,8 +390,21 @@ pub async fn patch_principal(
     }
 
     let name = new_name.map(String::from).unwrap_or_else(|| cur.name.clone());
-    let Some(row) =
-        repo::update_principal(&mut tx, id, expected_version, &role, &status, &name).await?
+    // Some("") clears the title; None keeps the current one.
+    let title = match new_title {
+        Some(t) => (!t.is_empty()).then(|| t.to_string()),
+        None => cur.title.clone(),
+    };
+    let Some(row) = repo::update_principal(
+        &mut tx,
+        id,
+        expected_version,
+        &role,
+        &status,
+        &name,
+        title.as_deref(),
+    )
+    .await?
     else {
         let _ = tx.rollback().await;
         return Err(AppError::new(

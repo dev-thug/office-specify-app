@@ -172,9 +172,15 @@ async fn used_up_invitation_resolves_to_its_booking_manage_page() {
         let slots: serde_json::Value = slots.json().await.unwrap();
         assert!(!slots["data"]["slots"].as_array().unwrap().is_empty());
 
-        // The host photo travels with the same capabilities.
+        // The host photo and title travel with the same capabilities.
         assert!(status["data"]["host_avatar_url"].is_null());
         let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+        sqlx::query("UPDATE principals SET title = 'Head of Sales' WHERE workspace_id = $1 AND id = $2")
+            .bind(world.workspace_id)
+            .bind(world.admin.principal_id)
+            .execute(tx.conn())
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO principal_avatars (workspace_id, principal_id, content_type, bytes, updated_by)
              VALUES ($1,$2,'image/png',$3,$2)",
@@ -192,6 +198,7 @@ async fn used_up_invitation_resolves_to_its_booking_manage_page() {
             .json()
             .await
             .unwrap();
+        assert_eq!(status["data"]["host_title"], "Head of Sales");
         let avatar_url = status["data"]["host_avatar_url"].as_str().unwrap().to_string();
         let image = app.get(&avatar_url).await;
         assert_eq!(image.status(), StatusCode::OK);

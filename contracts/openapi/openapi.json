@@ -5885,6 +5885,12 @@
           "host_display_name": {
             "type": "string"
           },
+          "host_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "format": "uuid",
             "type": "string"
@@ -7175,6 +7181,13 @@
               "string",
               "null"
             ]
+          },
+          "title": {
+            "description": "Job title (at most 100 characters), shown under the host name on\npublic booking pages. An empty string clears it.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -7404,6 +7417,13 @@
             "description": "DDL CHECK: `invited` | `active` | `disabled`.",
             "type": "string"
           },
+          "title": {
+            "description": "Job title, e.g. \"대표\" or \"Sales Manager\".",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "user_id": {
             "format": "uuid",
             "type": [
@@ -7525,6 +7545,13 @@
           },
           "host_name": {
             "type": "string"
+          },
+          "host_title": {
+            "description": "Host job title shown under the name.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "invitee": {
             "oneOf": [

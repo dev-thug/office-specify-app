@@ -250,7 +250,10 @@
       "nameSaved": "이름을 바꿨어요.",
       "save": "저장",
       "saving": "저장 중…",
-      "close": "닫기"
+      "close": "닫기",
+      "jobTitle": "직급",
+      "jobTitlePlaceholder": "예: 대표, 영업 매니저",
+      "jobTitleHint": "미팅 예약 페이지에서 이름 아래에 보여요."
     }
   },
   "mailAccounts": {

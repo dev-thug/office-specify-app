@@ -40,6 +40,7 @@ export interface PublicBookingLink {
   location_detail?: string | null;
   /** 호스트 프로필 사진 — 같은 링크 토큰으로만 받을 수 있다. */
   host_avatar_url?: string | null;
+  host_title?: string | null;
   /** 특정 수신자에게 발급된 링크(아웃리치)면 그 수신자 — 폼을 미리 채운다. */
   invitee?: PublicBookingInvitee;
   [key: string]: unknown;
@@ -165,6 +166,7 @@ export interface PublicManagedBooking {
   location_kind?: "online" | "offline";
   location_detail?: string | null;
   host_avatar_url?: string | null;
+  host_title?: string | null;
   host_display_name?: string | null;
   failure_code?: string | null;
   /** expected_version 으로 되돌려 보낼 현재 버전. */

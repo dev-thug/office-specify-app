@@ -163,13 +163,15 @@ pub struct PrincipalFull {
     pub version: i64,
     pub created_at: DateTime<Utc>,
     pub avatar_updated_at: Option<DateTime<Utc>>,
+    pub title: Option<String>,
 }
 
 const PRINCIPAL_COLS: &str =
     "id, kind, user_id, name, role, status, permission_version, version, created_at,
      (SELECT a.updated_at FROM principal_avatars a
        WHERE a.workspace_id = principals.workspace_id AND a.principal_id = principals.id)
-       AS avatar_updated_at";
+       AS avatar_updated_at,
+     title";
 
 /// Keyset page of principals, `(created_at DESC, id DESC)` (B.1.5).
 /// `after` = (created_at, id) of the last row of the previous page.
@@ -351,6 +353,7 @@ pub async fn update_principal(
     role: &str,
     status: &str,
     name: &str,
+    title: Option<&str>,
 ) -> Result<Option<PrincipalFull>, AppError> {
     // A rename alone does not change authority, so it leaves
     // permission_version (and every cached permission) untouched.
@@ -358,7 +361,7 @@ pub async fn update_principal(
         "UPDATE principals
                 SET permission_version = permission_version
                         + CASE WHEN role <> $3 OR status <> $4 THEN 1 ELSE 0 END,
-                    role = $3, status = $4, name = $6,
+                    role = $3, status = $4, name = $6, title = $7,
                     version = version + 1
               WHERE workspace_id = $1 AND id = $2 AND version = $5
               RETURNING {PRINCIPAL_COLS}"
@@ -369,6 +372,7 @@ pub async fn update_principal(
     .bind(status)
     .bind(expected_version)
     .bind(name)
+    .bind(title)
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)

@@ -101,6 +101,8 @@ pub struct PrincipalResponse {
     /// Set when a profile photo exists; GET `/principals/{id}/avatar`
     /// (append `?v=<this>` to bust caches after a change).
     pub avatar_updated_at: Option<DateTime<Utc>>,
+    /// Job title, e.g. "대표" or "Sales Manager".
+    pub title: Option<String>,
 }
 
 /// `PUT /principals/{id}/avatar` result.
@@ -146,6 +148,10 @@ pub struct PatchPrincipalRequest {
     /// public booking pages when the principal hosts meetings.
     #[serde(default)]
     pub name: Option<String>,
+    /// Job title (at most 100 characters), shown under the host name on
+    /// public booking pages. An empty string clears it.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// `POST /principals/{id}/disable-requests` — reassignment + pending-work
