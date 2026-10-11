@@ -157,7 +157,7 @@ export function CampaignTargetDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-[min(96vw,84rem)]">
         <DialogHeader>
           <DialogTitle>{company || target.contact_name || target.email_address}</DialogTitle>
           <DialogDescription>
