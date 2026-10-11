@@ -142,6 +142,7 @@ export function useAuditLogs(filters?: AuditLogFilters) {
 
 export interface EmergencyStopState {
   enabled: boolean;
+  /** 서버의 `policy_version` — If-Match 선행값. */
   version: number;
   reason: string | null;
   updated_at: string | null;
@@ -149,9 +150,19 @@ export interface EmergencyStopState {
   [key: string]: unknown;
 }
 
+/** 서버 응답은 `policy_version` 이름으로 내려오므로 `version` 으로 맞춘다. */
+function normalizeEmergencyStop(raw: EmergencyStopState): EmergencyStopState {
+  const policyVersion = (raw as { policy_version?: unknown }).policy_version;
+  return {
+    ...raw,
+    version: typeof policyVersion === "number" ? policyVersion : raw.version,
+  };
+}
+
 /** `GET /api/v1/operations/emergency-stop` — 부록 B 미명시 가정 (If-Match 선행값). */
-export function getEmergencyStop(): Promise<ApiResult<EmergencyStopState>> {
-  return apiFetch<EmergencyStopState>("/api/v1/operations/emergency-stop");
+export async function getEmergencyStop(): Promise<ApiResult<EmergencyStopState>> {
+  const res = await apiFetch<EmergencyStopState>("/api/v1/operations/emergency-stop");
+  return { ...res, data: normalizeEmergencyStop(res.data) };
 }
 
 export interface EmergencyStopInput {
