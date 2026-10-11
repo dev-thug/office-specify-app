@@ -184,6 +184,8 @@
       "emptyDescription": "Invitation status appears here once a link is created."
     },
     "agents": {
+      "selectAll": "Select all",
+      "clearAll": "Clear",
       "presets": "Quick select",
       "preset": {"research": "Company research", "sales": "Sales campaigns"},
       "new": "Add agent",
@@ -200,6 +202,7 @@
       "createSuccess": "Agent created"
     },
     "credentials": {
+      "neverExpires": "Never expires (until revoked)",
       "expiresInDays": "Expires in {days} days",
       "secretLabel": "Bearer token (secret)",
       "mcpUrlLabel": "MCP URL",

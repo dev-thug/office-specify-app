@@ -94,7 +94,8 @@ export const SCOPE_PRESETS: { id: "research" | "sales"; scopes: readonly string[
   },
 ];
 
-const CREDENTIAL_EXPIRY_DAYS = [30, 90, 180, 365, 730] as const;
+/** 0 = 만료 없음. */
+const CREDENTIAL_EXPIRY_DAYS = [30, 90, 180, 365, 730, 0] as const;
 
 /** 에이전트가 접속할 MCP 주소. 배포 환경은 NEXT_PUBLIC_MCP_URL 로 지정한다. */
 export function mcpEndpoint(): string {
@@ -362,6 +363,22 @@ function ScopeChecklist({
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-2xs text-muted-foreground">{t("agents.presets")}</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={() => setScopes([...AGENT_SCOPES])}
+        >
+          {t("agents.selectAll")}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          onClick={() => setScopes([])}
+        >
+          {t("agents.clearAll")}
+        </Button>
         {SCOPE_PRESETS.map((preset) => (
           <Button
             key={preset.id}
@@ -536,7 +553,9 @@ function NewCredentialDialog({
           // 서버는 이름이 필수라서 비워 두면 에이전트 이름으로 채운다.
           name: name.trim() || `${agent.name} MCP`,
           scopes,
-          expires_in_days: expiresInDays,
+          ...(expiresInDays === 0
+            ? { never_expires: true }
+            : { expires_in_days: expiresInDays }),
         },
         { idempotencyKey: idemRef.current }
       ),
@@ -650,7 +669,9 @@ function NewCredentialDialog({
                 >
                   {CREDENTIAL_EXPIRY_DAYS.map((days) => (
                     <option key={days} value={days}>
-                      {t("credentials.expiresInDays", { days })}
+                      {days === 0
+                        ? t("credentials.neverExpires")
+                        : t("credentials.expiresInDays", { days })}
                     </option>
                   ))}
                 </select>

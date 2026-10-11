@@ -33,6 +33,9 @@ pub const EVENT_PRINCIPAL_DISABLED: &str = "principal.disabled";
 /// Credential TTL bounds.
 const CREDENTIAL_MAX_DAYS: i64 = 730;
 const CREDENTIAL_DEFAULT_DAYS: i64 = 365;
+/// "Never expires" credentials are stored with an expiry this far away (the
+/// column is NOT NULL); clients treat anything beyond ~50 years as no expiry.
+const CREDENTIAL_NEVER_EXPIRES_DAYS: i64 = 36_500;
 
 // --------------------------------------------------------------------------
 // helpers
@@ -619,11 +622,14 @@ pub async fn create_credential_tx(
     }
     let scopes = domain::org::validate_agent_scopes(&req.scopes)
         .map_err(|v| AppError::validation("invalid credential scopes", v))?;
-    let days = req
-        .expires_in_days
-        .map(i64::from)
-        .unwrap_or(CREDENTIAL_DEFAULT_DAYS)
-        .clamp(1, CREDENTIAL_MAX_DAYS);
+    let days = if req.never_expires {
+        CREDENTIAL_NEVER_EXPIRES_DAYS
+    } else {
+        req.expires_in_days
+            .map(i64::from)
+            .unwrap_or(CREDENTIAL_DEFAULT_DAYS)
+            .clamp(1, CREDENTIAL_MAX_DAYS)
+    };
     let agent = repo::get_principal_full(tx, agent_id)
         .await?
         .ok_or_else(|| AppError::not_found("agent not found"))?;

@@ -178,6 +178,10 @@ pub struct CreateCredentialRequest {
     /// Days until expiry; default 365, max 730.
     #[serde(default)]
     pub expires_in_days: Option<u32>,
+    /// Issue a credential without a practical expiry (stored as a far-future
+    /// instant; revoke it to end access). Overrides `expires_in_days`.
+    #[serde(default)]
+    pub never_expires: bool,
 }
 
 /// `201` response for credential creation — `secret` appears exactly once

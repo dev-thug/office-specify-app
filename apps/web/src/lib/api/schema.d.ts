@@ -3231,6 +3231,11 @@ export interface components {
              */
             expires_in_days?: number | null;
             name: string;
+            /**
+             * @description Issue a credential without a practical expiry (stored as a far-future
+             *     instant; revoke it to end access). Overrides `expires_in_days`.
+             */
+            never_expires?: boolean;
             scopes: string[];
         };
         /**

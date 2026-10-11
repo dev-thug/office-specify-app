@@ -79,4 +79,44 @@ describe("MCP credential issuance", () => {
     expect(await screen.findByDisplayValue(/Bearer ok_live_SECRETVALUE/)).toBeInTheDocument();
     expect(screen.getByDisplayValue(/:8081\/mcp$/)).toBeInTheDocument();
   });
+
+  it("selects every scope and can issue a never-expiring credential", async () => {
+    const posts: Record<string, unknown>[] = [];
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (init?.method === "POST" && url.endsWith("/credentials")) {
+          posts.push(JSON.parse(String(init.body)));
+          return json({ id: "c", principal_id: "agent-1", name: "x", key_prefix: "p", scopes: [], secret: "tok", expires_at: "2126-10-11T00:00:00Z" }, { status: 201 });
+        }
+        if (url.includes("/principals")) {
+          return json(
+            [{ id: "agent-1", kind: "agent", name: "Research agent", status: "active", role: "agent" }],
+            { page: { next_cursor: null, has_more: false } }
+          );
+        }
+        return json([], { page: { next_cursor: null, has_more: false } });
+      })
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NextIntlClientProvider locale="en" messages={{ settings, common }}>
+          <AgentsSection />
+        </NextIntlClientProvider>
+      </QueryClientProvider>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Issue credential" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select all" }));
+    fireEvent.change(screen.getByLabelText("Expires at"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "Issue" }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ never_expires: true });
+    expect(posts[0]).not.toHaveProperty("expires_in_days");
+    expect((posts[0]!.scopes as string[]).length).toBeGreaterThanOrEqual(20);
+  });
 });

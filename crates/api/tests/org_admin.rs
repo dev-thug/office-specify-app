@@ -1031,6 +1031,33 @@ async fn agent_and_credential_lifecycle() {
     assert!(secret.starts_with("osk_"), "bad prefix: {secret}");
     let cred_id = data["id"].as_str().unwrap().to_string();
 
+    // A never-expiring credential is issued with a far-future expiry and works.
+    let res = post_idem(
+        &app,
+        &format!("/api/v1/agents/{agent_id}/credentials"),
+        json!({"name": "forever-key", "scopes": ["mail.read"], "never_expires": true}),
+        &csrf,
+        Some(&format!("cred-forever-{}", Uuid::new_v4())),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::CREATED);
+    let forever = res.json::<Value>().await.unwrap()["data"].take();
+    let expires = chrono::DateTime::parse_from_rfc3339(forever["expires_at"].as_str().unwrap())
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(expires > chrono::Utc::now() + chrono::Duration::days(365 * 50));
+    let forever_secret = forever["secret"].as_str().unwrap().to_string();
+    let res = bearer(
+        &app,
+        reqwest::Method::GET,
+        "/api/v1/me",
+        None,
+        &forever_secret,
+        &[],
+    )
+    .await;
+    assert_eq!(TestApp::data(res).await["principal_id"], agent_id);
+
     // Replay: same id, no secret.
     let res = post_idem(
         &app,

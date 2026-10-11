@@ -184,6 +184,8 @@
       "emptyDescription": "초대 링크를 만들면 여기에 상태가 표시됩니다."
     },
     "agents": {
+      "selectAll": "모두 선택",
+      "clearAll": "선택 해제",
       "presets": "빠른 선택",
       "preset": {"research": "회사 조사", "sales": "영업 캠페인"},
       "new": "에이전트 추가",
@@ -200,6 +202,7 @@
       "createSuccess": "에이전트를 생성했습니다"
     },
     "credentials": {
+      "neverExpires": "만료 없음 (해지 전까지 유효)",
       "expiresInDays": "{days}일 후 만료",
       "secretLabel": "Bearer 토큰 (secret)",
       "mcpUrlLabel": "MCP 주소",

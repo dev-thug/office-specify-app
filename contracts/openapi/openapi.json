@@ -2526,6 +2526,10 @@
           "name": {
             "type": "string"
           },
+          "never_expires": {
+            "description": "Issue a credential without a practical expiry (stored as a far-future\ninstant; revoke it to end access). Overrides `expires_in_days`.",
+            "type": "boolean"
+          },
           "scopes": {
             "items": {
               "type": "string"

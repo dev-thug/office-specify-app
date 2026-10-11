@@ -231,6 +231,8 @@ export interface CreateCredentialInput {
   scopes: string[];
   /** 만료까지 일 수 (서버 기본 365, 최대 730). */
   expires_in_days?: number;
+  /** true 면 만료 없는 credential — 해지로만 접근을 끝낸다. */
+  never_expires?: boolean;
 }
 
 export function createAgentCredential(
