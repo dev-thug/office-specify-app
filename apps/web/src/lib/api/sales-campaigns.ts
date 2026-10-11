@@ -171,11 +171,12 @@ export function getSalesCampaign(id: string): Promise<ApiResult<SalesCampaignRes
   );
 }
 
+/** `POST /sales-campaigns` 는 카드 목록 없이 캠페인 요약(SalesCampaignSummary)만 돌려준다. */
 export function createSalesCampaign(
   input: CreateSalesCampaignInput,
   options?: Idempotent
-): Promise<ApiResult<SalesCampaignResponse>> {
-  return mutate<SalesCampaignResponse>(
+): Promise<ApiResult<SalesCampaignSummary>> {
+  return mutate<SalesCampaignSummary>(
     SALES_CAMPAIGNS_PATH,
     { method: "POST", json: input },
     options

@@ -343,6 +343,8 @@
       "objective": "Objective",
       "objectivePlaceholder": "What should this outreach help the team learn or schedule?",
       "meetingType": "Meeting type",
+      "meetingTypeEmpty": "There are no active meeting types yet. It is optional, so you can create the campaign without one.",
+      "createMeetingType": "Create a meeting type",
       "noMeetingType": "No meeting type",
       "sender": "Sender",
       "senderMissing": "No ready default marketing sender is configured.",

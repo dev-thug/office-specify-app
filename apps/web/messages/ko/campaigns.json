@@ -343,6 +343,8 @@
       "objective": "목표",
       "objectivePlaceholder": "이 연락으로 무엇을 확인하거나 일정을 잡고 싶나요?",
       "meetingType": "미팅 유형",
+      "meetingTypeEmpty": "선택할 수 있는 활성 미팅 유형이 아직 없습니다. 선택 사항이라 지금은 비워 두고 만들어도 됩니다.",
+      "createMeetingType": "미팅 유형 만들기",
       "noMeetingType": "미팅 유형 없음",
       "sender": "발신자",
       "senderMissing": "사용 가능한 기본 마케팅 발신자가 없습니다.",

@@ -24,6 +24,7 @@ import {
   MEETING_TYPES_PATH,
   type MeetingType,
 } from "@/lib/api/meetings";
+import { ApiError } from "@/lib/api/problem";
 import { useCursorList } from "@/lib/api/use-cursor-list";
 
 export function PersonalizedCampaignCreate() {
@@ -63,12 +64,13 @@ export function PersonalizedCampaignCreate() {
       ),
     onSuccess: (result) => {
       operation.settle();
-      const campaignId = result.data.campaign.id;
+      const campaignId = result.data.id;
       router.push(`/app/campaigns/${encodeURIComponent(campaignId)}`);
     },
     onError: (cause) => {
       operation.settle(cause);
-      setError(t("error"));
+      const detail = cause instanceof ApiError ? cause.problem.detail : null;
+      setError(detail ? `${t("error")} (${detail})` : t("error"));
     },
   });
 
@@ -151,6 +153,17 @@ export function PersonalizedCampaignCreate() {
               ))}
             </SelectContent>
           </Select>
+          {meetingTypesQuery.isSuccess && activeMeetingTypes.length === 0 ? (
+            <p className="text-2xs text-muted-foreground">
+              {t("meetingTypeEmpty")}{" "}
+              <Link
+                href="/app/meeting-types"
+                className="font-medium text-foreground underline underline-offset-2"
+              >
+                {t("createMeetingType")}
+              </Link>
+            </p>
+          ) : null}
           {meetingTypesQuery.isError ? (
             <p role="alert" className="text-2xs text-destructive">
               {meetingTypesQuery.error.message}
