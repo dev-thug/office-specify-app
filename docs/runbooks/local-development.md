@@ -232,7 +232,12 @@ the callback is:
 
 - Zoho Mail: `https://office.specify.app/api/v1/integrations/zoho/callback`
 
-Configure `ZOHO_MAIL_REDIRECT_URI` alongside the Zoho Mail client credentials.
+Enter the Zoho Mail client ID, client secret, and callback URI in
+**Settings → Mail accounts → Connect mailbox** (Admin). The client secret is
+encrypted in the SecretStore (`OUTREACH_SECRET_KEY`) and never shown again.
+Values saved there take precedence over `ZOHO_MAIL_CLIENT_ID`,
+`ZOHO_MAIL_CLIENT_SECRET` and `ZOHO_MAIL_REDIRECT_URI`, which remain supported
+as a server-level fallback. The callback must be HTTPS outside development.
 The SMTP mailbox provisioning flow uses the Zoho Mail callback; the relay uses
 separate SMTP credentials. The local internal calendar does not use OAuth.
 
@@ -296,8 +301,9 @@ requirement-level evidence and remaining release gates.
 ## Zoho Mail and SMTP integration notes
 
 Register a Zoho server-based application only if you intend to connect Zoho
-Mail. Configure the client ID, client secret, and exact callback on the server
-before starting OAuth from Settings. OAuth state is workspace/session bound,
+Mail. Enter the client ID, client secret, and exact callback in Settings
+(Connect mailbox) or, as a fallback, set the `ZOHO_MAIL_*` variables on the
+server before starting OAuth. OAuth state is workspace/session bound,
 and refresh tokens are stored encrypted. Office campaign delivery uses the
 separately configured SMTP relay. See the [SMTP runbook](smtp.md) and
 [integration status](../design/zoho-integration-status.md) for current

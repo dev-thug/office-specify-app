@@ -23,3 +23,4 @@ pub mod sending;
 pub mod smtp;
 pub mod smtp_replies;
 pub mod templates;
+pub mod zoho_oauth_settings;

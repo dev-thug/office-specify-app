@@ -271,3 +271,52 @@ pub struct CalendarConnectionResponse {
     pub version: i64,
     pub created_at: DateTime<Utc>,
 }
+
+// --------------------------------------------------------------------------
+// Zoho Mail OAuth client settings (`/mail-accounts/oauth-settings`)
+// --------------------------------------------------------------------------
+
+/// `PUT /mail-accounts/oauth-settings` (Admin). The client secret is
+/// write-only: omit it to keep the stored secret.
+#[derive(Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ZohoOAuthSettingsRequest {
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// Exact callback URI registered in the Zoho API Console. Omit to use the
+    /// generated `<public origin>/api/v1/integrations/zoho/callback`.
+    #[serde(default)]
+    pub redirect_uri: Option<String>,
+}
+
+impl std::fmt::Debug for ZohoOAuthSettingsRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZohoOAuthSettingsRequest")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
+}
+
+/// Effective Zoho Mail OAuth client configuration. The secret is never returned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ZohoOAuthSettingsResponse {
+    /// True when client ID, secret and a valid callback URI are all present.
+    pub configured: bool,
+    /// `workspace` (saved in Settings), `environment` (server env) or `none`.
+    pub source: String,
+    pub client_id: Option<String>,
+    pub has_secret: bool,
+    /// Callback URI currently in effect (stored, env, or generated).
+    pub redirect_uri: Option<String>,
+    /// Generated default callback URI to register in the Zoho API Console.
+    pub default_redirect_uri: String,
+    /// Fields still missing/invalid: `client_id`, `client_secret`, `redirect_uri`.
+    pub missing: Vec<String>,
+    pub updated_at: Option<DateTime<Utc>>,
+}

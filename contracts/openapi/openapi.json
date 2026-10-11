@@ -9398,6 +9398,87 @@
           "code"
         ],
         "type": "object"
+      },
+      "ZohoOAuthSettingsRequest": {
+        "additionalProperties": false,
+        "description": "`PUT /mail-accounts/oauth-settings` (Admin). The client secret is\nwrite-only: omit it to keep the stored secret.",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "client_secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "redirect_uri": {
+            "description": "Exact callback URI registered in the Zoho API Console. Omit to use the\ngenerated `<public origin>/api/v1/integrations/zoho/callback`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "client_id"
+        ],
+        "type": "object"
+      },
+      "ZohoOAuthSettingsResponse": {
+        "description": "Effective Zoho Mail OAuth client configuration. The secret is never returned.",
+        "properties": {
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "configured": {
+            "description": "True when client ID, secret and a valid callback URI are all present.",
+            "type": "boolean"
+          },
+          "default_redirect_uri": {
+            "description": "Generated default callback URI to register in the Zoho API Console.",
+            "type": "string"
+          },
+          "has_secret": {
+            "type": "boolean"
+          },
+          "missing": {
+            "description": "Fields still missing/invalid: `client_id`, `client_secret`, `redirect_uri`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "redirect_uri": {
+            "description": "Callback URI currently in effect (stored, env, or generated).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "description": "`workspace` (saved in Settings), `environment` (server env) or `none`.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "source",
+          "has_secret",
+          "default_redirect_uri",
+          "missing"
+        ],
+        "type": "object"
       }
     }
   },
@@ -19339,6 +19420,174 @@
               }
             },
             "description": "Validation failed (bad region)"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not admin / agent attempt"
+          }
+        }
+      }
+    },
+    "/api/v1/mail-accounts/oauth-settings": {
+      "get": {
+        "operationId": "get_oauth_settings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ZohoOAuthSettingsResponse"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Effective Zoho Mail OAuth client settings; the secret is never returned"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not admin / agent attempt"
+          }
+        }
+      },
+      "put": {
+        "operationId": "put_oauth_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZohoOAuthSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ZohoOAuthSettingsResponse"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Saved; the client secret is stored encrypted and never returned"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Invalid client ID, secret or callback URI"
           },
           "401": {
             "content": {

@@ -28,6 +28,7 @@
  * - `GET /me/sessions` + `POST /me/sessions/{id}/revoke` — 본인 세션 관리
  * - `PUT /me/password`                   — 본인 비밀번호 변경
  */
+import { apiFetch } from "./client";
 import { mutate, type MutateOptions } from "./mutate";
 import { useCursorList, type ListParams } from "./use-cursor-list";
 
@@ -301,6 +302,49 @@ export function createMailConnectionRequest(
   return mutate<ConnectionRequestResult>(
     "/api/v1/mail-accounts/connection-requests",
     { method: "POST", json: input },
+    options
+  );
+}
+
+// ── Zoho Mail OAuth 클라이언트 설정 (워크스페이스 저장, secret 쓰기 전용) ──
+
+export interface ZohoOAuthSettings {
+  /** client ID·secret·콜백 URI가 모두 유효하면 true. */
+  configured: boolean;
+  /** `workspace`(설정 화면 저장) | `environment`(서버 env) | `none`. */
+  source: "workspace" | "environment" | "none" | string;
+  client_id: string | null;
+  has_secret: boolean;
+  /** 현재 적용 중인 콜백 URI. */
+  redirect_uri: string | null;
+  /** Zoho API Console에 등록할 기본 콜백 URI. */
+  default_redirect_uri: string;
+  /** 비어 있거나 잘못된 필드: client_id | client_secret | redirect_uri. */
+  missing: string[];
+  updated_at: string | null;
+}
+
+export interface ZohoOAuthSettingsInput {
+  client_id: string;
+  /** 생략하면 저장된 secret을 유지한다. */
+  client_secret?: string;
+  /** 생략하면 기본 콜백 URI를 사용한다. */
+  redirect_uri?: string;
+}
+
+export const ZOHO_OAUTH_SETTINGS_KEY = ["settings", "zoho-oauth-settings"] as const;
+
+export function getZohoOAuthSettings() {
+  return apiFetch<ZohoOAuthSettings>("/api/v1/mail-accounts/oauth-settings");
+}
+
+export function putZohoOAuthSettings(
+  input: ZohoOAuthSettingsInput,
+  options?: MutateOptions
+) {
+  return mutate<ZohoOAuthSettings>(
+    "/api/v1/mail-accounts/oauth-settings",
+    { method: "PUT", json: input },
     options
   );
 }

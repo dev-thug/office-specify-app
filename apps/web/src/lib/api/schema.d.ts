@@ -1311,6 +1311,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mail-accounts/oauth-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_oauth_settings"];
+        put: operations["put_oauth_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mail-accounts/{id}": {
         parameters: {
             query?: never;
@@ -5734,6 +5750,36 @@ export interface components {
         Violation: {
             code: string;
             field: string;
+        };
+        /**
+         * @description `PUT /mail-accounts/oauth-settings` (Admin). The client secret is
+         *     write-only: omit it to keep the stored secret.
+         */
+        ZohoOAuthSettingsRequest: {
+            client_id: string;
+            client_secret?: string | null;
+            /**
+             * @description Exact callback URI registered in the Zoho API Console. Omit to use the
+             *     generated `<public origin>/api/v1/integrations/zoho/callback`.
+             */
+            redirect_uri?: string | null;
+        };
+        /** @description Effective Zoho Mail OAuth client configuration. The secret is never returned. */
+        ZohoOAuthSettingsResponse: {
+            client_id?: string | null;
+            /** @description True when client ID, secret and a valid callback URI are all present. */
+            configured: boolean;
+            /** @description Generated default callback URI to register in the Zoho API Console. */
+            default_redirect_uri: string;
+            has_secret: boolean;
+            /** @description Fields still missing/invalid: `client_id`, `client_secret`, `redirect_uri`. */
+            missing: string[];
+            /** @description Callback URI currently in effect (stored, env, or generated). */
+            redirect_uri?: string | null;
+            /** @description `workspace` (saved in Settings), `environment` (server env) or `none`. */
+            source: string;
+            /** Format: date-time */
+            updated_at?: string | null;
         };
     };
     responses: never;
@@ -11199,6 +11245,113 @@ export interface operations {
                 };
             };
             /** @description Validation failed (bad region) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not admin / agent attempt */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_oauth_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective Zoho Mail OAuth client settings; the secret is never returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ZohoOAuthSettingsResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Unauthenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not admin / agent attempt */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    put_oauth_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZohoOAuthSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved; the client secret is stored encrypted and never returned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["ZohoOAuthSettingsResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            /** @description Invalid client ID, secret or callback URI */
             400: {
                 headers: {
                     [name: string]: unknown;

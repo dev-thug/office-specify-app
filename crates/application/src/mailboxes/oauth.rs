@@ -75,6 +75,8 @@ fn redirect_uri(config: &Config) -> String {
 }
 
 /// Resolve and validate the Zoho Mail credentials used by this connection flow.
+/// Missing or invalid fields surface as a 422 with per-field violations so the
+/// Settings UI can ask for exactly what is missing.
 pub fn mail_oauth_config(
     config: &Config,
 ) -> Result<infrastructure::providers::zoho::MailOAuthConfig, AppError> {
@@ -84,11 +86,7 @@ pub fn mail_oauth_config(
         redirect_uri: config.zoho.mail_redirect_uri.clone(),
         allow_local_redirect: config.zoho.allow_local_redirect,
     };
-    mail.validate().map_err(|_| {
-        AppError::dependency_unavailable(
-            "Zoho Mail OAuth is not configured; set the Mail client ID, secret, and HTTPS callback URI",
-        )
-    })?;
+    mail.validate()?;
     Ok(mail)
 }
 
@@ -263,6 +261,7 @@ pub async fn request_mail_connection(
 ) -> Result<OAuthStartResponse, AppError> {
     super::require_admin_audited(db, ctx, "mailbox.connect", "integration_connection", None)
         .await?;
+    let config = &super::oauth_settings::effective_config(db, ctx.workspace_id, config).await?;
     let session_id = if config.zoho.fake_for_tests {
         None
     } else {
@@ -299,6 +298,7 @@ pub async fn reconnect_mail_account(
         Some(mail_account_id),
     )
     .await?;
+    let config = &super::oauth_settings::effective_config(db, ctx.workspace_id, config).await?;
     if !config.zoho.fake_for_tests {
         let mail_config = mail_oauth_config(config)?;
         let session_id =
@@ -663,6 +663,7 @@ pub async fn zoho_callback(
     if state.flow != "mail" || state.workspace_id != ctx.workspace_id {
         return Err(AppError::validation("invalid oauth state", vec![]));
     }
+    let config = &super::oauth_settings::effective_config(db, ctx.workspace_id, config).await?;
     zoho_mail_callback_real(
         db,
         config,

@@ -344,24 +344,29 @@ impl MailProviderRouter {
         workspace_id: Uuid,
         mail_account_id: Uuid,
     ) -> Result<Arc<dyn MailProvider>, ProviderError> {
-        if !self.configured() {
+        // Saved Settings values win over the process environment.
+        let config = super::oauth_settings::effective_config(&self.db, workspace_id, &self.config)
+            .await
+            .map_err(|_| {
+                ProviderError::unavailable("mailbox OAuth settings could not be loaded")
+            })?;
+        if config.zoho.fake_for_tests
+            || config.secret_store_key.is_none()
+            || !super::oauth::live_mail_oauth_configured(&config)
+        {
             return Err(ProviderError::NotConfigured);
         }
         #[cfg(test)]
         let oauth = match &self.test_oauth {
             Some(oauth) => oauth.clone(),
-            None => {
-                MailTokenExchange::new(&self.config).map_err(|_| ProviderError::NotConfigured)?
-            }
+            None => MailTokenExchange::new(&config).map_err(|_| ProviderError::NotConfigured)?,
         };
         #[cfg(not(test))]
-        let oauth =
-            MailTokenExchange::new(&self.config).map_err(|_| ProviderError::NotConfigured)?;
-        let key = self
-            .config
+        let oauth = MailTokenExchange::new(&config).map_err(|_| ProviderError::NotConfigured)?;
+        let key = config
             .secret_store_key
             .ok_or(ProviderError::NotConfigured)?;
-        let store = FileSecretStore::new(&self.config.secrets_file, key);
+        let store = FileSecretStore::new(&config.secrets_file, key);
         let mut tx = self
             .db
             .begin(workspace_id)
@@ -1073,6 +1078,68 @@ fn valid_mail_address(value: &str) -> bool {
         && value.len() <= 320
         && value.contains('@')
         && !value.chars().any(char::is_control)
+}
+
+/// Development-only facade: demo mailboxes keep using the in-process fake
+/// provider, while a mailbox with a real Zoho connection (created after the
+/// admin saved OAuth client settings in Settings) binds the live adapter
+/// without restarting the API or worker. Any other live-binding failure
+/// (reauthorization, unavailable provider) is surfaced unchanged.
+#[derive(Clone)]
+pub struct DevFallbackMailProvider {
+    fake: Arc<dyn MailProvider>,
+    live: MailProviderRouter,
+}
+
+impl DevFallbackMailProvider {
+    pub fn new(fake: Arc<dyn MailProvider>, live: MailProviderRouter) -> Self {
+        Self { fake, live }
+    }
+}
+
+#[async_trait]
+impl MailProvider for DevFallbackMailProvider {
+    async fn for_mailbox(
+        &self,
+        workspace_id: Uuid,
+        mail_account_id: Uuid,
+    ) -> Result<Option<Arc<dyn MailProvider>>, ProviderError> {
+        match self.live.for_mailbox(workspace_id, mail_account_id).await {
+            Err(ProviderError::NotConfigured) => Ok(None),
+            other => other,
+        }
+    }
+
+    fn sync_page_budget(&self) -> usize {
+        self.fake.sync_page_budget()
+    }
+
+    fn capabilities(&self) -> MailCapabilities {
+        self.fake.capabilities()
+    }
+
+    async fn list_messages(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<(Vec<ProviderMessage>, Option<String>), ProviderError> {
+        self.fake.list_messages(cursor, limit).await
+    }
+
+    async fn get_message(
+        &self,
+        provider_message_id: &str,
+    ) -> Result<ProviderMessage, ProviderError> {
+        self.fake.get_message(provider_message_id).await
+    }
+
+    async fn send(&self, request: SendRequest) -> Result<SendOutcome, ProviderError> {
+        self.fake.send(request).await
+    }
+
+    async fn lookup_sent(&self, correlation_id: &str) -> Result<Option<SentLookup>, ProviderError> {
+        self.fake.lookup_sent(correlation_id).await
+    }
 }
 
 #[cfg(test)]

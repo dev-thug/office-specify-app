@@ -63,15 +63,26 @@ impl WorkerContext {
                 None => FakeDeliveryProvider::new(),
             })
         });
-        let mail: Arc<dyn MailProvider> = mail_fake
-            .as_ref()
-            .map(|provider| provider.clone() as Arc<dyn MailProvider>)
-            .unwrap_or_else(|| {
-                Arc::new(application::mailboxes::MailProviderRouter::new(
-                    db.clone(),
-                    Arc::new(config.clone()),
+        let mail: Arc<dyn MailProvider> = match mail_fake.as_ref() {
+            // Dev with no server-side Zoho settings: demo mailboxes stay fake,
+            // but OAuth client settings saved in Settings enable live binding.
+            Some(provider)
+                if !config.zoho.fake_for_tests && config.fake_provider_script.is_none() =>
+            {
+                Arc::new(application::mailboxes::DevFallbackMailProvider::new(
+                    provider.clone() as Arc<dyn MailProvider>,
+                    application::mailboxes::MailProviderRouter::new(
+                        db.clone(),
+                        Arc::new(config.clone()),
+                    ),
                 ))
-            });
+            }
+            Some(provider) => provider.clone() as Arc<dyn MailProvider>,
+            None => Arc::new(application::mailboxes::MailProviderRouter::new(
+                db.clone(),
+                Arc::new(config.clone()),
+            )),
+        };
         let calendar_fallback: Arc<dyn CalendarProvider> = mail_fake
             .as_ref()
             .map(|provider| provider.clone() as Arc<dyn CalendarProvider>)

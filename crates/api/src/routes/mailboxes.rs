@@ -13,6 +13,7 @@ use contracts::mailboxes::{
     ConnectionRequestRequest, CreateChannelReviewRequest, CreateDeliveryChannelRequest,
     DeliveryChannelResponse, GrantListItem, GrantResponse, LocalCalendarConnectionRequest,
     MailAccountResponse, OAuthStartResponse, PatchDeliveryChannelRequest, PutGrantRequest,
+    ZohoOAuthSettingsRequest, ZohoOAuthSettingsResponse,
 };
 use contracts::{AppError, Ctx, Envelope, ErrorCode, Page, Problem};
 use infrastructure::cursor::Cursor;
@@ -30,6 +31,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_mail_accounts))
         .routes(routes!(get_mail_account))
         .routes(routes!(request_connection))
+        .routes(routes!(get_oauth_settings))
+        .routes(routes!(put_oauth_settings))
         .routes(routes!(zoho_callback))
         .routes(routes!(reconnect_mail_account))
         .routes(routes!(list_grants))
@@ -176,6 +179,48 @@ struct ZohoCallbackQuery {
 }
 
 #[utoipa::path(
+    get, path = "/mail-accounts/oauth-settings",
+    responses(
+        (status = 200, description = "Effective Zoho Mail OAuth client settings; the secret is never returned", body = ZohoOAuthSettingsResponse),
+        (status = 401, description = "Unauthenticated", body = Problem),
+        (status = 403, description = "Not admin / agent attempt", body = Problem),
+    )
+)]
+async fn get_oauth_settings(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthCtx,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let request_id = ctx.request_id.clone();
+    let res = application::mailboxes::oauth_settings::get_settings(&state.db, &ctx, &state.config)
+        .await?;
+    Ok(axum::Json(Envelope::new(res, request_id)))
+}
+
+#[utoipa::path(
+    put, path = "/mail-accounts/oauth-settings",
+    request_body = ZohoOAuthSettingsRequest,
+    responses(
+        (status = 200, description = "Saved; the client secret is stored encrypted and never returned", body = ZohoOAuthSettingsResponse),
+        (status = 401, description = "Unauthenticated", body = Problem),
+        (status = 403, description = "Not admin / agent attempt", body = Problem),
+        (status = 400, description = "Invalid client ID, secret or callback URI", body = Problem),
+    )
+)]
+async fn put_oauth_settings(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth: AuthCtx,
+    Json(req): Json<ZohoOAuthSettingsRequest>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let request_id = ctx.request_id.clone();
+    let res =
+        application::mailboxes::oauth_settings::put_settings(&state.db, &ctx, &state.config, &req)
+            .await?;
+    Ok(axum::Json(Envelope::new(res, request_id)))
+}
+
+#[utoipa::path(
     post, path = "/mail-accounts/connection-requests",
     request_body = ConnectionRequestRequest,
     responses(
@@ -274,7 +319,17 @@ async fn zoho_callback(
         }
     };
     if !state.config.zoho.fake_for_tests {
-        let mail = application::mailboxes::oauth::mail_oauth_config(&state.config)?;
+        let workspace_id = auth
+            .as_ref()
+            .map(|auth| auth.ctx().workspace_id)
+            .ok_or_else(|| AppError::dependency_unavailable("Mail callback session is missing"))?;
+        let effective = application::mailboxes::oauth_settings::effective_config(
+            &state.db,
+            workspace_id,
+            &state.config,
+        )
+        .await?;
+        let mail = application::mailboxes::oauth::mail_oauth_config(&effective)?;
         let mut target = reqwest::Url::parse(
             mail.redirect_uri
                 .as_deref()
