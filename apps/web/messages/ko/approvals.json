@@ -14,7 +14,7 @@
     "colExpires": "만료",
     "colStatus": "상태",
     "emptyTitle": "승인 대기 요청이 없습니다",
-    "emptyDescription": "본인이 요청한 승인은 승인할 수 없습니다. 만료·취소·버전 불일치는 별도로 표시됩니다."
+    "emptyDescription": "승인 권한이 있으면 본인 요청도 승인할 수 있습니다. 만료·취소·버전 불일치는 별도로 표시됩니다."
   },
   "kind": {
     "campaign_launch": "캠페인 실행",

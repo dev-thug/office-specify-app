@@ -2059,6 +2059,12 @@
               "null"
             ]
           },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/ContactStatus"
           },
@@ -2459,6 +2465,13 @@
               "null"
             ]
           },
+          "email": {
+            "description": "Optional primary email linked atomically with creation.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "job_title": {
             "type": [
               "string",
@@ -2470,6 +2483,12 @@
           },
           "owner_principal_id": {
             "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
             "type": [
               "string",
               "null"
@@ -6930,6 +6949,12 @@
             ]
           },
           "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
             "type": [
               "string",
               "null"

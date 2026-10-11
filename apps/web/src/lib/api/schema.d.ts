@@ -3052,6 +3052,7 @@ export interface components {
             name: string;
             /** Format: uuid */
             owner_principal_id?: string | null;
+            phone?: string | null;
             status: components["schemas"]["ContactStatus"];
             /** Format: date-time */
             updated_at: string;
@@ -3181,10 +3182,13 @@ export interface components {
             /** Format: uuid */
             company_id?: string | null;
             department?: string | null;
+            /** @description Optional primary email linked atomically with creation. */
+            email?: string | null;
             job_title?: string | null;
             name: string;
             /** Format: uuid */
             owner_principal_id?: string | null;
+            phone?: string | null;
             status?: null | components["schemas"]["ContactStatus"];
         };
         /** @description `POST /agents/{id}/credentials` — issue a service credential. */
@@ -4867,6 +4871,7 @@ export interface components {
             /** @description Absent = keep, null = clear. */
             job_title?: string | null;
             name?: string | null;
+            phone?: string | null;
             status?: null | components["schemas"]["ContactStatus"];
         };
         /**

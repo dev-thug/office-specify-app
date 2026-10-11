@@ -14,6 +14,29 @@ beforeEach(() => vi.stubGlobal("ResizeObserver", class { observe() {} unobserve(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("version authoring", () => {
+  it("edits a saved version inline, preserves schema and saves a new version", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({data:{template_version_id:"v2",version_no:2}}), {status:201,headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch", fetcher);
+    const onCreated = vi.fn();
+    const variableSchema = {type:"object" as const, properties:{custom:{type:"string",maxLength:60,default:"Guest"}, unused:{type:"string",format:"uri"}},required:[],additionalProperties:false as const};
+    render(<NextIntlClientProvider locale="en" messages={{common, templates}}>
+      <VersionEditor templateId="template-1" open inline onOpenChange={vi.fn()} onCreated={onCreated}
+        initialSeed={{subject:"Saved subject",bodyText:"Hello {{custom}}",bodyHtml:"<p>Hello {{custom}}</p>",variableSchema}} />
+    </NextIntlClientProvider>);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const canvas = screen.getByRole("textbox", {name:"Email message"});
+    canvas.innerHTML = "<p>Updated {{custom}}</p>";
+    fireEvent.input(canvas);
+    fireEvent.click(screen.getByRole("button", {name:"Edit HTML"}));
+    expect(screen.getByRole("textbox", {name:"HTML code"})).toHaveValue("<p>Updated {{custom}}</p>");
+    fireEvent.click(screen.getByRole("button", {name:"Save version"}));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("v2"));
+    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(request.variable_schema).toEqual(variableSchema);
+    expect(request.body_text).toBe("Updated {{custom}}");
+    expect(screen.getByLabelText("Subject", {exact:true})).toHaveValue("Saved subject");
+  });
+
   it("deduplicates preset definitions and saves HTML plus derived text without sample defaults", async () => {
     const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({data:{template_version_id:"version-1",version_no:1,content_hash:"hash"}}), {status:201,headers:{"content-type":"application/json"}}));
     vi.stubGlobal("fetch", fetcher);

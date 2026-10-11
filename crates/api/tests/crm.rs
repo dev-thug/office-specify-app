@@ -15,6 +15,89 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[tokio::test]
+async fn contact_create_with_contact_details_is_atomic_and_replayable() {
+    let Some((db, world)) = setup().await else {
+        return;
+    };
+    let app = app_for(&db, &world).await;
+    let csrf = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let body =
+        json!({"name":"Quick contact","phone":"+82 10-1234-5678","email":"quick@example.test"});
+    let response = post(
+        &app,
+        "/api/v1/contacts",
+        body.clone(),
+        &csrf,
+        Some("contact-details-create-001"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let saved = TestApp::data(response).await;
+    assert_eq!(saved["phone"], "+82 10-1234-5678");
+    assert_eq!(saved["emails"][0]["address"], "quick@example.test");
+    assert_eq!(saved["emails"][0]["is_primary"], true);
+    let replay = TestApp::data(
+        post(
+            &app,
+            "/api/v1/contacts",
+            body,
+            &csrf,
+            Some("contact-details-create-001"),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(replay["id"], saved["id"]);
+    let path = format!("/api/v1/contacts/{}", saved["id"].as_str().unwrap());
+    let kept = app
+        .client
+        .patch(app.url(&path))
+        .header("x-csrf-token", &csrf)
+        .header(
+            "if-match",
+            format!("\"{}\"", saved["version"].as_i64().unwrap()),
+        )
+        .json(&json!({"job_title":"Director"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(kept.status(), StatusCode::OK);
+    let kept = TestApp::data(kept).await;
+    assert_eq!(kept["phone"], saved["phone"]);
+    let cleared = app
+        .client
+        .patch(app.url(&path))
+        .header("x-csrf-token", &csrf)
+        .header(
+            "if-match",
+            format!("\"{}\"", kept["version"].as_i64().unwrap()),
+        )
+        .json(&json!({"phone":null}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cleared.status(), StatusCode::OK);
+    assert!(TestApp::data(cleared).await["phone"].is_null());
+    let invalid = post(
+        &app,
+        "/api/v1/contacts",
+        json!({"name":"Atomic invalid contact","email":"invalid-address","phone":"010-1234-5678"}),
+        &csrf,
+        None,
+    )
+    .await;
+    assert!(invalid.status().is_client_error());
+    let mut tx = db.begin(world.workspace_id).await.unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM contacts WHERE name='Atomic invalid contact'")
+            .fetch_one(tx.conn())
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    tx.commit().await.unwrap();
+}
+
 async fn setup() -> Option<(Db, TestWorld)> {
     let url = match std::env::var("DATABASE_URL") {
         Ok(u) if !u.is_empty() => u,

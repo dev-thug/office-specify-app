@@ -545,6 +545,8 @@ async fn t31_shared_address_single_row() {
             &ctx,
             &contracts::crm::CreateContactRequest {
                 name: name.into(),
+                phone: None,
+                email: None,
                 company_id: None,
                 job_title: None,
                 department: None,

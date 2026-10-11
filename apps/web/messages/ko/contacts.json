@@ -34,6 +34,10 @@
     }
   },
   "form": {
+    "email": "이메일",
+    "phone": "전화번호",
+    "phonePlaceholder": "예: 010-1234-5678",
+    "contactInfoHint": "연락처는 선택 사항입니다. 이메일은 대표 주소로 함께 등록됩니다.",
     "createTitle": "새 담당자 등록",
     "editTitle": "담당자 정보 수정",
     "name": "이름",

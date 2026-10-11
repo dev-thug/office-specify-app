@@ -435,11 +435,9 @@ async fn t08_frozen_rows_and_request_snapshot_are_immutable() {
     tx.rollback().await.unwrap();
 }
 
-/// T09 — the requester can never record a decision on their own request;
-/// the `reject_self_approval` trigger is the DB anchor (the API returns
-/// SELF_APPROVAL_FORBIDDEN earlier — covered in the api test).
+/// A permitted human requester can approve their own current snapshot.
 #[tokio::test]
-async fn t09_self_approval_decision_rejected_by_trigger() {
+async fn requester_approval_allowed_by_trigger() {
     let Some(db) = common::test_db().await else {
         return;
     };
@@ -457,7 +455,7 @@ async fn t09_self_approval_decision_rejected_by_trigger() {
     )
     .await
     .unwrap();
-    let err = sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO approval_decisions
             (workspace_id, approval_request_id, decision, decided_by,
              snapshot_hash, version_at_decision)
@@ -469,11 +467,8 @@ async fn t09_self_approval_decision_rejected_by_trigger() {
     .bind(&hash[..])
     .execute(tx.conn())
     .await
-    .expect_err("self-approval must be rejected by the trigger");
-    assert!(
-        err.to_string().contains("self approval"),
-        "expected self-approval trigger error, got: {err}"
-    );
+    .unwrap();
+    assert_eq!(result.rows_affected(), 1);
     tx.rollback().await.unwrap();
 }
 

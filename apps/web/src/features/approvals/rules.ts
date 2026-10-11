@@ -69,7 +69,7 @@ function allows(req: ApprovalLike, name: string): boolean {
 
 /**
  * 승인 요청 행별 가능 행동.
- * - decide(approve/reject): pending 이고 만료 전이며 본인 요청이 아닐 때만.
+ * - decide(approve/reject): pending 이고 만료 전이며 서버 승인 권한이 있을 때만.
  *   서버가 can_decide 를 내려주면 그 값을 우선한다 (메일함 can_approve 등).
  * - revoke: approved 상태에서만(아직 미실행 허가 철회). 서버 권한 힌트가 있으면 따른다.
  */
@@ -79,12 +79,11 @@ export function approvalActions(
 ): ApprovalActionSet {
   if (!req) return { approve: HIDDEN, reject: HIDDEN, revoke: HIDDEN };
 
-  const self = isSelfRequest(req, opts?.mePrincipalId);
   const expired = approvalExpired(req, opts?.now);
   const pending = req.status === "pending" && !expired;
 
   // 서버 힌트가 명시적으로 false면 무조건 숨긴다(권한 부족·게이트).
-  const canDecide = req.can_decide === false ? false : pending && !self;
+  const canDecide = req.can_decide === false ? false : pending;
   const decide: ApprovalAction =
     canDecide && allows(req, "decide") ? VISIBLE(false) : HIDDEN;
 

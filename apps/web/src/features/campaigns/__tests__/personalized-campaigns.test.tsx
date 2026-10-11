@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NextIntlClientProvider } from "next-intl";
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import enCommon from "../../../../messages/en/common.json";
 import enCompanies from "../../../../messages/en/companies.json";
@@ -202,6 +202,91 @@ afterEach(() => {
 });
 
 describe("personalized campaign routes", () => {
+  it("shows a floating card and landing placeholder, and Escape cancels without a request", async () => {
+    const data = salesCampaign([campaignTarget({})]);
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({data}), {headers:{"content-type":"application/json"}}));
+    vi.stubGlobal("fetch", fetcher);
+    mount(await CampaignDetailPage({params:Promise.resolve({id:"campaign-1"})}));
+    const card = await screen.findByRole("article", {name:"Northstar"});
+    const lane = screen.getByRole("region", {name:"Draft"});
+    mockElementFromPoint(() => lane);
+    const pointer = beginBoardPointer(card);
+    moveBoardPointer(pointer, 30, 30);
+    expect(screen.getByTestId("board-drag-preview")).toHaveTextContent("Northstar");
+    expect(within(lane).getByTestId("board-drop-placeholder")).toBeInTheDocument();
+    fireEvent.keyDown(window, {key:"Escape"});
+    expect(screen.queryByTestId("board-drag-preview")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("board-drop-placeholder")).not.toBeInTheDocument();
+    endBoardPointer(pointer, 30, 30);
+    expect(fetcher.mock.calls).toHaveLength(1);
+  });
+
+  it("scrolls at the board edge and stops the animation when canceled", async () => {
+    const data = salesCampaign([campaignTarget({})]);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({data}), {headers:{"content-type":"application/json"}})));
+    mount(await CampaignDetailPage({params:Promise.resolve({id:"campaign-1"})}));
+    const card = await screen.findByRole("article", {name:"Northstar"});
+    const board = screen.getByRole("region", {name:"Sales campaign kanban"});
+    vi.spyOn(board, "getBoundingClientRect").mockReturnValue({left:0,right:300,top:0,bottom:300,width:300,height:300,x:0,y:0,toJSON:()=>({})});
+    let frame!: FrameRequestCallback;
+    const cancel = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frame = callback; return 123; });
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    mockElementFromPoint(() => screen.getByRole("region", {name:"Draft"}));
+    const pointer = beginBoardPointer(card);
+    moveBoardPointer(pointer, 290, 150);
+    act(() => frame(16.67));
+    expect(board.scrollLeft).toBeGreaterThan(0);
+    expect(screen.getByTestId("board-drag-preview").style.transform).toContain("280px");
+    expect(document.body.style.cursor).toBe("grabbing");
+    fireEvent.keyDown(window, {key:"Escape"});
+    expect(cancel).toHaveBeenCalledWith(123);
+    expect(document.body.style.cursor).not.toBe("grabbing");
+  });
+
+  it("accepts rapid round trips during a slow save and serializes the latest destination", async () => {
+    const data = salesCampaign([campaignTarget({})]);
+    const saves: {body: Record<string, unknown>; resolve: (r:Response)=>void}[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input:RequestInfo | URL, init?:RequestInit) => {
+      if (init?.method === "PATCH") return new Promise<Response>(resolve => saves.push({body:JSON.parse(String(init.body)),resolve}));
+      return new Response(JSON.stringify({data}), {headers:{"content-type":"application/json"}});
+    }));
+    mount(await CampaignDetailPage({params:Promise.resolve({id:"campaign-1"})}));
+    let card = await screen.findByRole("article", {name:"Northstar"});
+    finishBoardPointerOn(beginBoardPointer(card), screen.getByRole("region", {name:"Draft"}));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    card = within(screen.getByRole("region", {name:"Draft"})).getByRole("article", {name:"Northstar"});
+    finishBoardPointerOn(beginBoardPointer(card, 12), screen.getByRole("region", {name:"Review"}));
+    card = within(screen.getByRole("region", {name:"Review"})).getByRole("article", {name:"Northstar"});
+    finishBoardPointerOn(beginBoardPointer(card, 13), screen.getByRole("region", {name:"Researched"}));
+    expect(within(screen.getByRole("region", {name:"Researched"})).getByRole("article", {name:"Northstar"})).toBeInTheDocument();
+    expect(saves).toHaveLength(1);
+    await act(async () => saves[0]!.resolve(new Response(JSON.stringify({data:campaignTarget({stage:"draft",workflow_stage:"draft",version:2})}), {headers:{"content-type":"application/json"}})));
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(saves[1]!.body).toMatchObject({stage:"research",expected_target_version:2});
+    await act(async () => saves[1]!.resolve(new Response(JSON.stringify({data:campaignTarget({stage:"research",workflow_stage:"research",version:3})}), {headers:{"content-type":"application/json"}})));
+    await waitFor(() => expect(within(screen.getByRole("region", {name:"Researched"})).getByRole("article", {name:"Northstar"})).toHaveAttribute("aria-busy","false"));
+    expect(saves).toHaveLength(2);
+  });
+
+  it("moves immediately while saving and restores the original lane on failure", async () => {
+    const data = salesCampaign([campaignTarget({})]);
+    let rejectMove!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PATCH") return new Promise<Response>(resolve => { rejectMove = resolve; });
+      return new Response(JSON.stringify({data}), {headers:{"content-type":"application/json"}});
+    }));
+    mount(await CampaignDetailPage({params:Promise.resolve({id:"campaign-1"})}));
+    const card = await screen.findByRole("article", {name:"Northstar"});
+    const pointer = beginBoardPointer(card);
+    const lane = screen.getByRole("region", {name:"Draft"});
+    finishBoardPointerOn(pointer, lane);
+    expect(within(lane).getByRole("article", {name:"Northstar"})).toHaveAttribute("aria-busy", "true");
+    await waitFor(() => expect(rejectMove).toBeTypeOf("function"));
+    rejectMove(new Response(JSON.stringify({type:"about:blank",title:"Conflict",status:409,code:"VERSION_MISMATCH"}), {status:409,headers:{"content-type":"application/json"}}));
+    await waitFor(() => expect(within(screen.getByRole("region", {name:"Researched"})).getByRole("article", {name:"Northstar"})).toHaveAttribute("aria-busy", "false"));
+  });
+
   it("uses Contacts context in the top bar while the sidebar stays on Companies", () => {
     mount(<TopBar />);
 
@@ -629,9 +714,9 @@ describe("personalized campaign routes", () => {
       await screen.findByRole("heading", { name: "Q4 account planning" })
     ).toBeInTheDocument();
     const kanban = screen.getByRole("region", { name: "Sales campaign kanban" });
-    expect(kanban).toHaveClass("overflow-x-auto");
+    expect(kanban).toHaveClass("overflow-auto");
     expect(kanban).toHaveAttribute("tabindex", "0");
-    expect(kanban.firstElementChild).toHaveClass("min-w-[1380px]");
+    expect(kanban.firstElementChild).toHaveClass("min-w-[1680px]");
     expect(screen.getByRole("region", { name: "Researched" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Draft" })).toHaveTextContent(
       "Toronto expansion planning"
@@ -873,7 +958,7 @@ describe("personalized campaign routes", () => {
     expect(await screen.findByText("Sample data only · not saved as recipient values")).toBeInTheDocument();
   });
 
-  it("adds a target by selecting CRM company, contact, and verified email IDs", async () => {
+  it.each([{contactStatus:"active", verification:"verified", eligible:true}, {contactStatus:"new", verification:"unknown", eligible:false}])("adds a target with $contactStatus contacts and $verification email", async ({contactStatus, verification, eligible}) => {
     const data = salesCampaign([]);
     const calls: { url: string; init: RequestInit }[] = [];
     vi.stubGlobal(
@@ -905,13 +990,14 @@ describe("personalized campaign routes", () => {
             },
           ];
         } else if (url.pathname === "/api/v1/contacts") {
+          expect(url.searchParams.get("status")).toBeNull();
           responseData = [
             {
               id: "contact-1",
               company_id: "company-1",
               name: "Mina Park",
               job_title: "VP of Operations",
-              status: "active",
+              status: contactStatus,
               version: 1,
               updated_at: "2026-10-10T00:00:00Z",
               created_at: "2026-10-10T00:00:00Z",
@@ -923,7 +1009,7 @@ describe("personalized campaign routes", () => {
             company_id: "company-1",
             name: "Mina Park",
             job_title: "VP of Operations",
-            status: "active",
+            status: contactStatus,
             version: 1,
             updated_at: "2026-10-10T00:00:00Z",
             created_at: "2026-10-10T00:00:00Z",
@@ -932,8 +1018,8 @@ describe("personalized campaign routes", () => {
                 email_address_id: "email-1",
                 address: "mina@northstar.example",
                 is_primary: true,
-                verification_status: "verified",
-                marketing_eligibility: { eligible: true, reason_codes: [] },
+                verification_status: verification,
+                marketing_eligibility: { eligible, reason_codes: eligible ? [] : ["SEND_BASIS_UNVERIFIED"] },
                 suppressions: [],
               },
             ],
@@ -1919,7 +2005,7 @@ describe("personalized campaign routes", () => {
     finishBoardPointerOn(pointer, screen.getByRole("region", { name: "Queued" }));
 
     expect(
-      await screen.findByText(/independent human approval/i)
+      await screen.findByText(/Approve the frozen message before scheduling/i)
     ).toBeInTheDocument();
     expect(
       calls.some(

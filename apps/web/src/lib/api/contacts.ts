@@ -60,6 +60,7 @@ export interface ContactEmail {
 
 export interface Contact {
   id: string;
+  phone?: string | null;
   company_id: string | null;
   /** 목록·상세에서 서버가 조인해 줄 수 있는 회사명. */
   company_name?: string | null;
@@ -81,6 +82,8 @@ export interface Contact {
 
 export interface CreateContactInput {
   name: string;
+  email?: string;
+  phone?: string;
   company_id?: string;
   job_title?: string;
   department?: string;
@@ -89,6 +92,7 @@ export interface CreateContactInput {
 
 /** PATCH /contacts/{id} — allowlist 필드만 (B.1.1). */
 export interface PatchContactInput {
+  phone?: string | null;
   name?: string;
   company_id?: string | null;
   job_title?: string | null;

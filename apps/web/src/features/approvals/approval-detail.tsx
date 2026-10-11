@@ -100,21 +100,13 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
   );
   const actions = useMemo(() => {
     const result = approvalActions(req, { mePrincipalId: me.data?.principal_id });
-    // On direct navigation, hide decisions until the requester identity is known.
-    // The server remains the authority, but the UI must not briefly offer self-approval.
+    // Keep retired provider actions unavailable.
     if (legacyProviderApproval) {
       return {
         ...result,
         approve: { visible: false, disabled: true },
         reject: { visible: false, disabled: true },
         revoke: { visible: false, disabled: true },
-      };
-    }
-    if (!me.isSuccess && typeof req?.self_request !== "boolean") {
-      return {
-        ...result,
-        approve: { visible: false, disabled: true },
-        reject: { visible: false, disabled: true },
       };
     }
     if (requiresMailPreview && !reviewableMailContent) {
@@ -125,7 +117,7 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
       };
     }
     return result;
-  }, [req, me.data, me.isSuccess, requiresMailPreview, reviewableMailContent, legacyProviderApproval]);
+  }, [req, me.data, requiresMailPreview, reviewableMailContent, legacyProviderApproval]);
 
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -302,12 +294,6 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
           <AlertDescription>{t("stateExpired")}</AlertDescription>
         </Alert>
       ) : null}
-      {self && req.status === "pending" ? (
-        <Alert variant="info">
-          <ShieldAlertIcon />
-          <AlertDescription>{t("selfApproval")}</AlertDescription>
-        </Alert>
-      ) : null}
       {requiresMailPreview && !reviewableMailContent && req.status === "pending" ? (
         <Alert variant="warning">
           <ShieldAlertIcon />
@@ -321,7 +307,7 @@ export function ApprovalDetail({ approvalId }: { approvalId: string }) {
           <AlertDescription>{t("retiredProviderDescription")}</AlertDescription>
         </Alert>
       ) : null}
-      {!self && req.can_decide === false && req.status === "pending" ? (
+      {req.can_decide === false && req.status === "pending" ? (
         <Alert variant="warning">
           <ShieldAlertIcon />
           <AlertDescription>{t("noDecidePermission")}</AlertDescription>

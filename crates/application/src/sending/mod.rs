@@ -1595,14 +1595,10 @@ async fn outbound_approval_summary(
     };
     let decision = repo::approval_decision(tx, approval.id).await?;
     let snapshot_matches = approval.snapshot_hash == outbound.payload_hash;
-    let decision_ok = matches!(decision.as_ref(), Some((kind, approver_id))
-        if kind == "approved"
-            && *approver_id != approval.requested_by
-            && *approver_id != outbound.requested_by);
+    let decision_ok = matches!(decision.as_ref(), Some((kind, _))
+        if kind == "approved");
     let approver_ok = if let Some((kind, approver_id)) = decision.as_ref()
         && kind == "approved"
-        && *approver_id != approval.requested_by
-        && *approver_id != outbound.requested_by
     {
         match repo::principal_state(tx, *approver_id).await? {
             Some((status, kind, role))
@@ -1675,7 +1671,7 @@ async fn require_current_outbound_approval(
     if !approval.valid {
         return Err(AppError::new(
             ErrorCode::MailboxAccessDenied,
-            "the independent human approver no longer has active approval authority",
+            "the approver no longer has active approval authority",
         ));
     }
     Ok(())

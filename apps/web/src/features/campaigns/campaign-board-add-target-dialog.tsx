@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useMemo, useRef, useState, type FormEvent } from "react";
@@ -55,12 +56,11 @@ export function CampaignBoardAddTargetDialog({
     path: contactsPath(),
     params: contactListParams({
       company_id: company?.id,
-      status: company ? "active" : undefined,
     }),
     limit: 100,
     enabled: open && Boolean(company),
   });
-  const contacts = contactsQuery.data?.pages.flatMap((page) => page.data) ?? [];
+  const contacts = (contactsQuery.data?.pages.flatMap((page) => page.data) ?? []).filter(contact => !contact.archived_at && ["new", "active"].includes(contact.status));
   const contactQuery = useQuery({
     queryKey: ["contacts", "sales-campaign-target-detail", contactId],
     enabled: open && Boolean(contactId),
@@ -69,13 +69,15 @@ export function CampaignBoardAddTargetDialog({
   });
   const eligibleEmails = useMemo(() => {
     const emails = contactQuery.data?.emails ?? [];
-    return emails.filter(
-      (email) =>
-        email.verification_status === "verified" &&
-        email.marketing_eligibility?.eligible !== false &&
-        !isSuppressed(email)
-    );
+    return emails;
   }, [contactQuery.data]);
+
+  const selectedEmail = eligibleEmails.find(email => email.email_address_id === emailAddressId);
+  const needsSendReview = selectedEmail && (
+    selectedEmail.verification_status !== "verified" ||
+    selectedEmail.marketing_eligibility?.eligible !== true ||
+    isSuppressed(selectedEmail)
+  );
 
   function reset() {
     setCompany(null);
@@ -174,6 +176,7 @@ export function CampaignBoardAddTargetDialog({
                   <SelectItem key={contact.id} value={contact.id}>
                     {contact.name}
                     {contact.job_title ? ` · ${contact.job_title}` : ""}
+                    {contact.emails?.length ? ` · ${(contact.emails.find(email => email.is_primary) ?? contact.emails[0])?.address}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -189,6 +192,8 @@ export function CampaignBoardAddTargetDialog({
             {!contactsQuery.isPending && !contactsQuery.isError && company && contacts.length === 0 ? (
               <p className="text-2xs text-muted-foreground">{t("noContacts")}</p>
             ) : null}
+            {contactsQuery.hasNextPage ? <Button type="button" size="sm" variant="ghost" disabled={contactsQuery.isFetchingNextPage} onClick={() => void contactsQuery.fetchNextPage()}>{common("table.loadMore")}</Button> : null}
+            {company ? <Link href={`/app/companies/${company.id}`} className="text-xs text-primary underline">{t("manageContacts")}</Link> : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="sales-target-email">{t("email")}</Label>
@@ -221,6 +226,8 @@ export function CampaignBoardAddTargetDialog({
               <p className="text-2xs text-muted-foreground">{t("noEmails")}</p>
             ) : null}
           </div>
+          {contactId ? <Link href={`/app/contacts/${contactId}`} className="text-xs text-primary underline">{t("manageEmails")}</Link> : null}
+          {needsSendReview ? <Alert variant="warning"><AlertDescription>{t("sendReviewRequired")} <Link href="/app/compliance/reviews" className="underline">{t("manageBasis")}</Link></AlertDescription></Alert> : null}
           {error ? (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>

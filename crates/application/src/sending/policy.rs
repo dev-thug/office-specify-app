@@ -84,7 +84,7 @@ async fn campaign_approval_checks(
     });
 
     let manifest_matches = campaign_manifest_matches(&state);
-    let decision_matches = campaign_decision_matches(&state, outbound.requested_by);
+    let decision_matches = campaign_decision_matches(&state);
     let thread_id = outbound.thread_id.map(|id| id.to_string());
     let expected_payload_hash =
         infrastructure::crypto::sha256_bytes(&domain::campaigns::payload_bytes_with_context(
@@ -230,20 +230,13 @@ fn campaign_manifest_matches(state: &sending::CampaignLaunchApprovalState) -> bo
         .is_some_and(|manifest| state.request_snapshot_hash.as_ref() == Some(manifest))
 }
 
-fn campaign_decision_matches(
-    state: &sending::CampaignLaunchApprovalState,
-    outbound_requested_by: Uuid,
-) -> bool {
+fn campaign_decision_matches(state: &sending::CampaignLaunchApprovalState) -> bool {
     state.decision.as_deref() == Some("approved")
+        && state.request_requested_by.is_some()
         && state.decision_snapshot_hash == state.request_snapshot_hash
         && state
             .request_version
             .is_some_and(|version| version.checked_sub(1) == state.decision_version_at_decision)
-        && state
-            .request_requested_by
-            .is_some_and(|requester| Some(requester) != state.decided_by)
-        && Some(state.launch_requested_by) != state.decided_by
-        && Some(outbound_requested_by) != state.decided_by
 }
 
 /// Terminal failures → the outbound is canceled with this failure_code.
@@ -804,17 +797,11 @@ mod campaign_approval_tests {
     }
 
     #[test]
-    fn campaign_approval_cannot_be_laundered_through_a_different_requester() {
+    fn campaign_approval_allows_requester_but_still_pins_snapshot() {
         let mut state = approved_state(Utc::now());
-        assert!(campaign_decision_matches(&state, Uuid::from_u128(4)));
-
-        // Composer B opens the request, but launch owner A cannot approve it.
-        state.request_requested_by = Some(Uuid::from_u128(6));
-        state.decided_by = Some(Uuid::from_u128(4));
-        assert!(!campaign_decision_matches(&state, Uuid::from_u128(4)));
-
-        // The frozen outbound requester is also independently excluded.
-        state.decided_by = Some(Uuid::from_u128(7));
-        assert!(!campaign_decision_matches(&state, Uuid::from_u128(7)));
+        state.decided_by = state.request_requested_by;
+        assert!(campaign_decision_matches(&state));
+        state.decision_snapshot_hash = Some(vec![99; 32]);
+        assert!(!campaign_decision_matches(&state));
     }
 }

@@ -783,6 +783,8 @@ mod tests {
             &admin,
             &contracts::crm::CreateContactRequest {
                 name: "MCP Contact".into(),
+                phone: None,
+                email: None,
                 company_id: Some(company.id),
                 job_title: Some("Director".into()),
                 department: None,

@@ -238,7 +238,7 @@ pub async fn list_requests(
 }
 
 /// Insert the decision row. The `approval_decision_guard` trigger
-/// re-validates pending/not-expired/version/snapshot/self-approval and the
+/// re-validates pending/not-expired/version/snapshot/approver-role and the
 /// active-human admin/manager rule inside this tx (T09 backstop — the
 /// application performs the same checks first for precise error codes).
 pub async fn insert_decision(

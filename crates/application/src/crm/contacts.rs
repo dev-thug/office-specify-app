@@ -124,6 +124,19 @@ pub async fn get(db: &Db, ctx: &Ctx, id: Uuid) -> Result<ContactResponse, AppErr
 
 // ----------------------------------------------------------------- writers
 
+fn normalize_phone(value: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if value.chars().count() > 80 || value.chars().any(char::is_control) {
+        return Err(util::bad_request(
+            "invalid phone number",
+            vec![util::violation("phone", "FORMAT")],
+        ));
+    }
+    Ok(Some(value.to_string()))
+}
+
 fn validate_contact_insert(
     req: &CreateContactRequest,
     owner: Option<Uuid>,
@@ -131,6 +144,7 @@ fn validate_contact_insert(
     util::require_name(&req.name, "name")?;
     Ok(ContactInsert {
         name: req.name.trim().to_string(),
+        phone: normalize_phone(req.phone.as_deref())?,
         company_id: req.company_id,
         job_title: req.job_title.clone(),
         department: req.department.clone(),
@@ -186,7 +200,31 @@ pub async fn create(
         &body,
         201,
         move |mut tx| async move {
-            let r = create_in_tx(&mut tx, &ctx_owned, insert).await?;
+            let mut r = create_in_tx(&mut tx, &ctx_owned, insert).await?;
+            if let Some(address) = req
+                .email
+                .as_deref()
+                .map(str::trim)
+                .filter(|address| !address.is_empty())
+            {
+                add_email_in_tx(
+                    &mut tx,
+                    &ctx_owned,
+                    r.id,
+                    &AddContactEmailRequest {
+                        address: address.to_string(),
+                        label: None,
+                        is_primary: Some(true),
+                        kind: None,
+                    },
+                )
+                .await?;
+                let row = crm::get_contact(&mut tx, r.id)
+                    .await?
+                    .ok_or_else(|| AppError::not_found("contact not found"))?;
+                let links = crm::contact_emails(&mut tx, r.id).await?;
+                r = util::contact_dto(&row, util::contact_email_items(&mut tx, &links).await?);
+            }
             Ok((tx, r))
         },
     )
@@ -238,6 +276,10 @@ fn apply_contact_patch(
         util::require_name(name, "name")?;
     }
     Ok(ContactInsert {
+        phone: match &req.phone {
+            Some(value) => normalize_phone(value.as_deref())?,
+            None => row.phone.clone(),
+        },
         name: req
             .name
             .clone()

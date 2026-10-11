@@ -64,6 +64,8 @@ function ContactFormBody({
   onSaved?: (contact: Contact, mode: "created" | "updated") => void;
 }) {
   const [name, setName] = useState(contact?.name ?? "");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState(contact?.phone ?? "");
   const [jobTitle, setJobTitle] = useState(contact?.job_title ?? "");
   const [department, setDepartment] = useState(contact?.department ?? "");
   const [company, setCompany] = useState<Company | null>(
@@ -88,6 +90,7 @@ function ContactFormBody({
           company_id: company?.id ?? null,
           job_title: jobTitle.trim() || null,
           department: department.trim() || null,
+          phone: phone.trim() || null,
         };
         saved = (await patchContact(contact.id, patch, {
           etag: etag ?? contact.version,
@@ -100,6 +103,8 @@ function ContactFormBody({
           job_title: jobTitle.trim() || undefined,
           department: department.trim() || undefined,
           owner_principal_id: ownerId ?? undefined,
+          email: email.trim() || undefined,
+          phone: phone.trim() || undefined,
         };
         saved = (await createContact(input, { idempotencyKey: idem.current })).data;
       }
@@ -115,7 +120,7 @@ function ContactFormBody({
   }
 
   return (
-    <DialogContent>
+    <DialogContent className="max-h-[90dvh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle>{editing ? t("editTitle") : t("createTitle")}</DialogTitle>
         <DialogDescription>{t("namePlaceholder")}</DialogDescription>
@@ -125,6 +130,17 @@ function ContactFormBody({
           <Label htmlFor="contact-name">{t("name")}</Label>
           <Input id="contact-name" autoFocus required value={name} onChange={(event) => setName(event.target.value)} maxLength={300} />
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {!editing ? <div className="grid gap-1.5">
+            <Label htmlFor="contact-email">{t("email")}</Label>
+            <Input id="contact-email" type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="name@company.com" maxLength={320} />
+          </div> : null}
+          <div className="grid gap-1.5">
+            <Label htmlFor="contact-phone">{t("phone")}</Label>
+            <Input id="contact-phone" type="tel" autoComplete="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder={t("phonePlaceholder")} maxLength={80} />
+          </div>
+        </div>
+        {!editing ? <p className="text-xs text-muted-foreground">{t("contactInfoHint")}</p> : null}
         <div className="grid gap-1.5">
           <Label>{t("company")}</Label>
           <CompanyPicker value={company} onChange={setCompany} placeholder={t("companyPlaceholder")} noneLabel={t("companyNone")} emptyLabel={t("companySearchEmpty")} />

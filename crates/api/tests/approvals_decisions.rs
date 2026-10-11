@@ -346,9 +346,9 @@ async fn reject_message_submit_cancels_outbound() {
     assert_eq!(status, "canceled");
 }
 
-/// T09 — the requester can never decide their own request.
+/// Owners with approval permission may review their own requests.
 #[tokio::test]
-async fn t09_self_approval_forbidden() {
+async fn requester_with_approval_permission_can_approve_without_sending() {
     let Some((app, world)) = test_app().await else {
         return;
     };
@@ -358,36 +358,34 @@ async fn t09_self_approval_forbidden() {
     let request = message_request(
         db,
         &world,
-        world.admin.principal_id, // requester == the deciding admin below
+        world.admin.principal_id,
         outbound,
         &hash,
         chrono::Duration::days(1),
     )
     .await;
-
     let res = post(
         &app,
         &admin,
         &csrf,
         &format!("/api/v1/approvals/{request}/decisions"),
-        json!({"decision": "approved", "expected_snapshot_hash": hex(&hash)}),
+        json!({"decision":"approved","expected_snapshot_hash":hex(&hash)}),
         Some("self-1"),
         Some(1),
     )
     .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "SELF_APPROVAL_FORBIDDEN");
-
-    // The denied attempt is audited (separate tx since the business tx
-    // rolled back).
-    let denied: i64 = scalar(
-        db,
-        world.workspace_id,
-        "SELECT count(*) FROM audit_logs WHERE workspace_id=$1 AND action='approval.decide' AND details->>'outcome'='denied:SELF_APPROVAL_FORBIDDEN' AND target_id=$2",
-        request,
-    )
-    .await;
-    assert_eq!(denied, 1, "denied decision must be audited");
+    assert_eq!(res.status(), StatusCode::OK);
+    let result: Value = res.json().await.unwrap();
+    assert_eq!(result["data"]["approval_status"], "approved");
+    assert!(result["data"]["job_id"].is_null());
+    let outbound_response = admin
+        .get(app.url(&format!("/api/v1/outbound-messages/{outbound}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(outbound_response.status(), StatusCode::OK);
+    let outbound_data = TestApp::data(outbound_response).await;
+    assert_eq!(outbound_data["approval_valid"], true);
 }
 
 /// T08 — a decision pinning a hash that does not match the request's

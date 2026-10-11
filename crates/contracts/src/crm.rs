@@ -310,6 +310,11 @@ pub struct CompanyResponse {
 pub struct CreateContactRequest {
     pub name: String,
     #[serde(default)]
+    pub phone: Option<String>,
+    /// Optional primary email linked atomically with creation.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
     pub company_id: Option<Uuid>,
     #[serde(default)]
     pub job_title: Option<String>,
@@ -324,6 +329,12 @@ pub struct CreateContactRequest {
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PatchContactRequest {
+    #[serde(
+        default,
+        deserialize_with = "de_nullable",
+        serialize_with = "ser_nullable"
+    )]
+    pub phone: Option<Option<String>>,
     #[serde(default)]
     pub name: Option<String>,
     /// Absent = keep, null = unlink from the company.
@@ -367,6 +378,7 @@ pub struct ContactEmailItem {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ContactResponse {
     pub id: Uuid,
+    pub phone: Option<String>,
     pub company_id: Option<Uuid>,
     pub name: String,
     pub job_title: Option<String>,

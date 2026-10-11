@@ -14,7 +14,7 @@
     "colExpires": "Expires",
     "colStatus": "Status",
     "emptyTitle": "No pending approval requests",
-    "emptyDescription": "You cannot approve your own request. Expired, canceled, and version-mismatched items are marked separately."
+    "emptyDescription": "Authorized approvers can approve their own requests. Expiry, cancellation, and version conflicts are shown separately."
   },
   "kind": {
     "campaign_launch": "Campaign launch",

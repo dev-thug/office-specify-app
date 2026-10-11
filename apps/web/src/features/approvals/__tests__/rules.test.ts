@@ -55,10 +55,10 @@ describe("approvalActions", () => {
     expect(a.revoke.visible).toBe(false);
   });
 
-  it("본인 요청에는 승인·거절 버튼을 렌더하지 않는다", () => {
-    const a = approvalActions(base, { mePrincipalId: "user-a" });
-    expect(a.approve.visible).toBe(false);
-    expect(a.reject.visible).toBe(false);
+  it("본인 요청도 서버 승인 권한이 있으면 승인·거절할 수 있다", () => {
+    const a = approvalActions({...base, can_decide:true}, { mePrincipalId: "user-a" });
+    expect(a.approve.visible).toBe(true);
+    expect(a.reject.visible).toBe(true);
   });
 
   it("만료된 pending은 결정 불가", () => {

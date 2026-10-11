@@ -34,6 +34,10 @@
     }
   },
   "form": {
+    "email": "Email",
+    "phone": "Phone",
+    "phonePlaceholder": "e.g. +82 10-1234-5678",
+    "contactInfoHint": "Contact details are optional. The email will be saved as the primary address.",
     "createTitle": "Add contact",
     "editTitle": "Edit contact",
     "name": "Name",

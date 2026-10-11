@@ -1,11 +1,12 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, GripVertical, Plus } from "lucide-react";
+import { ArrowLeft, GripVertical, Plus, Loader2, LockKeyhole } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { EmptyState } from "@/components/patterns/empty-state";
 import { ErrorState } from "@/components/patterns/error-state";
@@ -25,6 +26,7 @@ import {
   queueSalesCampaignTarget,
   updateSalesCampaignTarget,
   type SalesCampaignTarget,
+  type SalesCampaignResponse,
   type SalesCampaignWorkflowStage,
 } from "@/lib/api/sales-campaigns";
 import { formatDateTime } from "@/features/campaigns/format";
@@ -47,6 +49,12 @@ interface ActiveBoardPointerDrag {
   startY: number;
   activated: boolean;
   captureTarget: HTMLElement;
+  clientX: number;
+  clientY: number;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
 }
 
 type BoardStage = (typeof BOARD_STAGES)[number];
@@ -90,15 +98,23 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
   const activePointerDragRef = useRef<ActiveBoardPointerDrag | null>(null);
   const [draggingTargetId, setDraggingTargetId] = useState<string | null>(null);
   const [pointerDropStage, setPointerDropStage] = useState<BoardStage | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const [dragVisual, setDragVisual] = useState<{width: number; height: number; x: number; y: number} | null>(null);
+  const suppressClickUntil = useRef(0);
+  const [optimisticStages, setOptimisticStages] = useState<Record<string, BoardStage>>({});
+  const [moveAnnouncement, setMoveAnnouncement] = useState("");
   const [batchTimes, setBatchTimes] = useState<Record<string, string>>({});
   const pendingTargetIdsRef = useRef(new Set<string>());
   const [pendingTargetIds, setPendingTargetIds] = useState<ReadonlySet<string>>(() => new Set());
   const operationKeys = useRef(new Map<string, string>());
+  const stageIntents = useRef(new Map<string, BoardStage>());
 
   const detail = useQuery({
     queryKey: ["sales-campaigns", "detail", campaignId],
     queryFn: async () => (await getSalesCampaign(campaignId)).data,
-    refetchInterval: 2_000,
+    refetchInterval: draggingTargetId || pendingTargetIds.size ? false : 2_000,
+    refetchOnWindowFocus: !draggingTargetId && pendingTargetIds.size === 0,
     retry: false,
   });
   const isLegacyNotFound =
@@ -193,27 +209,52 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
       setQueueNotice(t("frozenReviewCopyRequired"));
       return;
     }
+    // Stage edits may be superseded while saving; delivery operations remain locked.
+    if (pendingTargetIdsRef.current.has(target.id) && !stageIntents.current.has(target.id)) return;
+    stageIntents.current.set(target.id, stage);
+    setOptimisticStages(current => ({...current, [target.id]: stage}));
     if (!beginTargetAction(target.id)) return;
-    const scope = `stage:${campaignId}:${target.id}:${target.version}:${stage}`;
+    const queryKey = ["sales-campaigns", "detail", campaignId];
+    let scope: string | undefined;
     try {
-      await updateSalesCampaignTarget(
-        campaignId,
-        target.id,
-        {
-          stage: stage as SalesCampaignWorkflowStage,
-          expected_target_version: target.version,
-        },
-        { idempotencyKey: getOperationKey(scope) }
-      );
-      settleOperation(scope);
-      await queryClient.invalidateQueries({
-        queryKey: ["sales-campaigns", "detail", campaignId],
-      });
+      // An already-running poll must not overwrite the PATCH's newer target.
+      await queryClient.cancelQueries({queryKey});
+      let confirmed = queryClient.getQueryData<SalesCampaignResponse>(queryKey)?.targets.find(item => item.id === target.id) ?? target;
+      while (stageIntents.current.has(target.id)) {
+        const destination = stageIntents.current.get(target.id)!;
+        if (confirmed.stage === destination) {
+          stageIntents.current.delete(target.id);
+          break;
+        }
+        scope = `stage:${campaignId}:${target.id}:${confirmed.version}:${destination}`;
+        const response = await updateSalesCampaignTarget(
+          campaignId,
+          target.id,
+          {stage: destination as SalesCampaignWorkflowStage, expected_target_version: confirmed.version},
+          {idempotencyKey: getOperationKey(scope)}
+        );
+        settleOperation(scope);
+        scope = undefined;
+        confirmed = response.data;
+        queryClient.setQueryData<SalesCampaignResponse>(queryKey, current => current ? {
+          ...current,
+          targets: current.targets.map(item => item.id === target.id ? confirmed : item),
+        } : current);
+        if (stageIntents.current.get(target.id) === destination) stageIntents.current.delete(target.id);
+      }
+      setMoveAnnouncement(t("moved", {company: target.company_name ?? "", stage: t(`columns.${confirmed.stage}` as never)}));
     } catch (error) {
-      settleOperation(scope, error);
+      if (scope) settleOperation(scope, error);
+      stageIntents.current.delete(target.id);
       setActionError(t("moveError"));
       await refresh();
     } finally {
+      stageIntents.current.delete(target.id);
+      setOptimisticStages(current => {
+        const next = {...current};
+        delete next[target.id];
+        return next;
+      });
       endTargetAction(target.id);
     }
   }
@@ -261,7 +302,7 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
     }
   }
 
-function boardStageAtPointer(clientX: number, clientY: number): BoardStage | null {
+  const boardStageAtPointer = useCallback((clientX: number, clientY: number): BoardStage | null => {
     const element = document.elementFromPoint(clientX, clientY);
     const lane = element?.closest(
       "[data-sales-campaign-id][data-sales-campaign-stage]"
@@ -275,14 +316,16 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
       return null;
     }
     return stage;
-  }
+  }, [campaignId]);
 
-  function clearPointerDrag(pointerId?: number) {
+  const clearPointerDrag = useCallback((pointerId?: number) => {
     const active = activePointerDragRef.current;
     if (!active || (pointerId !== undefined && pointerId !== active.pointerId)) return;
 
+    if (active.activated) suppressClickUntil.current = Date.now() + 350;
     activePointerDragRef.current = null;
     setDraggingTargetId(null);
+    setDragVisual(null);
     setPointerDropStage(null);
     try {
       if (
@@ -294,7 +337,7 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
     } catch {
       // Pointer capture may already have been released by the browser.
     }
-  }
+  }, []);
 
   function handlePointerDown(
     event: React.PointerEvent<HTMLElement>,
@@ -305,13 +348,14 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
       activePointerDragRef.current ||
       event.button !== 0 ||
       !(BOARD_STAGES.slice(0, 3) as readonly string[]).includes(stage) ||
-      pendingTargetIdsRef.current.has(target.id)
+      (pendingTargetIdsRef.current.has(target.id) && !stageIntents.current.has(target.id))
     ) {
       return;
     }
 
     event.preventDefault();
     const captureTarget = event.currentTarget;
+    const bounds = captureTarget.closest("article")!.getBoundingClientRect();
     activePointerDragRef.current = {
       pointerId: event.pointerId,
       targetId: target.id,
@@ -319,6 +363,12 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
       startY: event.clientY,
       activated: false,
       captureTarget,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      offsetX: event.clientX - bounds.left,
+      offsetY: event.clientY - bounds.top,
+      width: bounds.width,
+      height: bounds.height,
     };
     try {
       if (typeof captureTarget.setPointerCapture === "function") {
@@ -334,11 +384,14 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
     if (!active || event.pointerId !== active.pointerId) return;
 
     event.preventDefault();
+    active.clientX = event.clientX;
+    active.clientY = event.clientY;
     const deltaX = event.clientX - active.startX;
     const deltaY = event.clientY - active.startY;
     if (!active.activated) {
       if (deltaX * deltaX + deltaY * deltaY < POINTER_DRAG_THRESHOLD_PX ** 2) return;
       active.activated = true;
+      setDragVisual({width: active.width, height: active.height, x: event.clientX - active.offsetX, y: event.clientY - active.offsetY});
       setDraggingTargetId(active.targetId);
     }
     setPointerDropStage(boardStageAtPointer(event.clientX, event.clientY));
@@ -355,6 +408,7 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
       deltaX * deltaX + deltaY * deltaY >= POINTER_DRAG_THRESHOLD_PX ** 2
     ) {
       active.activated = true;
+      setDragVisual({width: active.width, height: active.height, x: event.clientX - active.offsetX, y: event.clientY - active.offsetY});
       setDraggingTargetId(active.targetId);
     }
     const destination = active.activated
@@ -366,8 +420,8 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
     const dragged = targets.find((target) => target.id === active.targetId);
     if (
       !dragged ||
-      dragged.stage === destination ||
-      pendingTargetIdsRef.current.has(dragged.id)
+      (stageIntents.current.get(dragged.id) ?? dragged.stage) === destination ||
+      (pendingTargetIdsRef.current.has(dragged.id) && !stageIntents.current.has(dragged.id))
     ) {
       return;
     }
@@ -377,6 +431,73 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
   function handlePointerCancel(event: React.PointerEvent) {
     clearPointerDrag(event.pointerId);
   }
+
+  useEffect(() => {
+    const cancel = () => clearPointerDrag();
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && activePointerDragRef.current) {
+        event.preventDefault();
+        clearPointerDrag();
+      }
+    };
+    window.addEventListener("keydown", escape);
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", cancel);
+    return () => {
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", cancel);
+      const active = activePointerDragRef.current;
+      activePointerDragRef.current = null;
+      if (active?.captureTarget.hasPointerCapture?.(active.pointerId)) {
+        active.captureTarget.releasePointerCapture(active.pointerId);
+      }
+    };
+  }, [clearPointerDrag]);
+
+  useEffect(() => {
+    if (!draggingTargetId) return;
+    let frame = 0;
+    let previousTime = 0;
+    const previousCursor = document.body.style.cursor;
+    const previousSelect = document.body.style.userSelect;
+    document.body.style.cursor = "grabbing";
+    document.body.style.userSelect = "none";
+    const tick = (time: number) => {
+      const active = activePointerDragRef.current;
+      const board = boardRef.current;
+      if (!active || !board) return;
+      if (previewRef.current) {
+        previewRef.current.style.transform = `translate3d(${active.clientX - active.offsetX}px, ${active.clientY - active.offsetY}px, 0)`;
+      }
+      const bounds = board.getBoundingClientRect();
+      const step = Math.min((time - previousTime) / 16.67 || 1, 2);
+      previousTime = time;
+      const edgeSpeed = (point: number, start: number, end: number) => {
+        const edge = Math.min(64, (end - start) / 3);
+        if (edge <= 0) return 0;
+        if (point < start + edge) return -Math.min(1, (start + edge - point) / edge) * 14 * step;
+        if (point > end - edge) return Math.min(1, (point - end + edge) / edge) * 14 * step;
+        return 0;
+      };
+      if (active.clientX >= bounds.left - 24 && active.clientX <= bounds.right + 24 &&
+          active.clientY >= bounds.top - 24 && active.clientY <= bounds.bottom + 24) {
+        board.scrollLeft += edgeSpeed(active.clientX, bounds.left, bounds.right);
+        board.scrollTop += edgeSpeed(active.clientY, bounds.top, bounds.bottom);
+      }
+      setPointerDropStage(boardStageAtPointer(active.clientX, active.clientY));
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousSelect;
+    };
+  }, [draggingTargetId, boardStageAtPointer]);
+
+  const draggedTarget = targets.find(target => target.id === draggingTargetId);
+  const draggedStage = draggedTarget ? optimisticStages[draggedTarget.id] ?? draggedTarget.stage : null;
 
   if (detail.isPending || (isLegacyNotFound && legacy.isPending)) {
     return (
@@ -470,16 +591,23 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
         role="region"
         aria-label={t("boardLabel")}
         tabIndex={0}
+        ref={boardRef}
+        onClickCapture={event => {
+          if (Date.now() < suppressClickUntil.current) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
         onLostPointerCapture={handlePointerCancel}
-        className="min-w-0 max-w-full overflow-x-auto pb-2"
+        className="min-h-80 min-w-0 max-w-full max-h-[calc(100dvh-19rem)] overflow-auto overscroll-contain rounded-xl pb-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <div className="grid min-w-[1380px] grid-cols-6 gap-3">
+        <div className="grid min-w-[1680px] grid-cols-6 items-stretch gap-4">
         {BOARD_STAGES.map((stage) => {
           const laneTargets = targets.filter((target) => {
-            const effectiveStage = isBoardStage(target.stage) ? target.stage : "attention";
+            const effectiveStage = optimisticStages[target.id] ?? (isBoardStage(target.stage) ? target.stage : "attention");
             return effectiveStage === stage;
           });
           const stageLabel = t(`columns.${stage}` as never);
@@ -490,13 +618,24 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
               aria-label={stageLabel}
               data-sales-campaign-id={campaignId}
               data-sales-campaign-stage={stage}
-              className={`flex min-w-0 flex-col gap-2 rounded-2xl border border-border bg-app-panel-muted p-2 ${pointerDropStage === stage ? "ring-2 ring-primary" : ""}`}
+              className={`flex min-h-80 min-w-0 flex-col gap-3 rounded-xl border border-transparent bg-muted/30 p-2 transition-colors motion-reduce:transition-none ${pointerDropStage === stage && draggedStage !== stage ? "bg-accent/60 ring-2 ring-primary/30 ring-inset" : ""}`}
             >
-              <div className="flex items-center justify-between gap-2 px-1 py-1">
-                <h2 className="text-sm font-semibold">{stageLabel}</h2>
+              <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-lg bg-background/95 px-2 py-2">
+                <h2 className="flex items-center gap-2 text-sm font-medium">
+                  <span aria-hidden className={`size-2 rounded-full ${stage === "accepted" ? "bg-emerald-500" : stage === "attention" ? "bg-amber-500" : stage === "review" ? "bg-violet-400" : stage === "draft" ? "bg-blue-400" : "bg-muted-foreground/40"}`} />
+                  {stageLabel}
+                  {(stage === "accepted" || stage === "attention") ? <LockKeyhole aria-hidden className="size-3 text-muted-foreground" /> : null}
+                </h2>
                 <Badge variant="secondary">{laneTargets.length}</Badge>
               </div>
-              <div className="flex min-h-20 flex-col gap-2">
+              <div className="flex min-h-56 flex-1 flex-col gap-2">
+                {draggedTarget && pointerDropStage === stage && draggedStage !== stage ? (
+                  <div data-testid="board-drop-placeholder" aria-hidden
+                    style={{minHeight: dragVisual?.height ?? 120}}
+                    className="flex items-center justify-center rounded-lg border-2 border-dashed border-primary/30 bg-primary/5 px-4 text-center text-xs text-muted-foreground">
+                    {t(stage === "queued" ? "dropToQueue" : "dropHere", {stage: stageLabel})}
+                  </div>
+                ) : null}
                 {laneTargets.map((target) => (
                   <CampaignTargetCard
                     key={target.id}
@@ -513,7 +652,7 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
                     onPointerDown={(event) => handlePointerDown(event, target)}
                   />
                 ))}
-                {laneTargets.length === 0 ? (
+                {laneTargets.length === 0 && !(draggedTarget && pointerDropStage === stage) ? (
                   <p className="px-2 py-4 text-center text-2xs text-muted-foreground">
                     {t("emptyLane")}
                   </p>
@@ -524,6 +663,23 @@ function boardStageAtPointer(clientX: number, clientY: number): BoardStage | nul
         })}
         </div>
       </div>
+
+      <p role="status" aria-live="polite" className="sr-only">{moveAnnouncement}</p>
+      {draggedTarget && dragVisual && createPortal(
+        <div ref={previewRef} data-testid="board-drag-preview" aria-hidden
+          style={{
+            position: "fixed", top: 0, left: 0, width: dragVisual.width,
+            transform: `translate3d(${dragVisual.x}px, ${dragVisual.y}px, 0)`,
+            zIndex: 100, pointerEvents: "none",
+          }}>
+          <div className="rounded-xl border border-primary/20 bg-card p-4 shadow-2xl ring-1 ring-black/5">
+            <p className="line-clamp-2 text-sm font-semibold">{draggedTarget.company_name}</p>
+            <p className="mt-1 truncate text-xs text-muted-foreground">{draggedTarget.contact_name}</p>
+            <p className="mt-3 line-clamp-3 text-sm">{draggedTarget.current_draft?.subject}</p>
+            <p className="mt-4 text-xs text-muted-foreground">{pointerDropStage ? t("dropHere", {stage: t(`columns.${pointerDropStage}` as never)}) : t("dragCancel")}</p>
+          </div>
+        </div>, document.body
+      )}
 
       {targets.length === 0 ? (
         <EmptyState
@@ -601,16 +757,19 @@ function CampaignTargetCard({
       aria-label={company}
       draggable={false}
       aria-busy={busy}
-      className={`flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-card p-3 ${isDragging ? "opacity-50" : ""}`}
+      className={`group flex min-w-0 flex-col gap-3 rounded-lg border border-border/70 bg-card p-3 shadow-xs transition-[box-shadow,opacity] motion-reduce:transition-none hover:border-border hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
     >
       <div className="flex min-w-0 items-start gap-1">
       <button
         type="button"
         onClick={onOpen}
+        onPointerDown={event => {
+          if (isEditable && event.pointerType === "mouse") onPointerDown(event);
+        }}
         aria-label={t("openTarget", { company })}
-        className="min-w-0 flex-1 text-left outline-none focus-visible:rounded-lg focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="min-w-0 flex-1 cursor-grab text-left outline-none active:cursor-grabbing focus-visible:rounded-lg focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
-        <span className="block truncate text-sm font-semibold">{company}</span>
+        <span className="block line-clamp-2 text-sm font-semibold leading-5">{company}</span>
         <span className="mt-0.5 block truncate text-2xs text-muted-foreground">
           {target.contact_name ?? ""}
           {target.email_address ? ` · ${target.email_address}` : ""}
@@ -633,7 +792,10 @@ function CampaignTargetCard({
         </span>
       ) : null}
       </div>
-      {outboundStatus ? <StatusBadge status={outboundStatus} /> : null}
+      <div className="flex items-center justify-between gap-2">
+        {outboundStatus ? <StatusBadge status={outboundStatus} /> : <span />}
+        {busy ? <Loader2 aria-label={t("saving")} className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}
+      </div>
       {stage === "queued" ? (
         <p className="text-2xs text-muted-foreground">
           {batchAt ? `${t("batchAt")}: ${formatDateTime(batchAt, locale)}` : t("queuedWaiting")}

@@ -47,6 +47,7 @@ const COMPANY_COLS: &str = "id, workspace_id, name, domain, website_url, industr
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ContactRow {
     pub id: Uuid,
+    pub phone: Option<String>,
     pub workspace_id: Uuid,
     pub company_id: Option<Uuid>,
     pub name: String,
@@ -60,7 +61,7 @@ pub struct ContactRow {
     pub created_at: DateTime<Utc>,
 }
 
-const CONTACT_COLS: &str = "id, workspace_id, company_id, name, job_title, department,
+const CONTACT_COLS: &str = "id, phone, workspace_id, company_id, name, job_title, department,
     owner_principal_id, status, archived_at, version, updated_at, created_at";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -455,6 +456,7 @@ pub struct ContactFilter {
 #[derive(Debug, Default)]
 pub struct ContactInsert {
     pub name: String,
+    pub phone: Option<String>,
     pub company_id: Option<Uuid>,
     pub job_title: Option<String>,
     pub department: Option<String>,
@@ -465,8 +467,8 @@ pub struct ContactInsert {
 pub async fn insert_contact(tx: &mut Tx<'_>, c: &ContactInsert) -> Result<ContactRow, AppError> {
     sqlx::query_as::<_, ContactRow>(
         "INSERT INTO contacts
-            (workspace_id, company_id, name, job_title, department, owner_principal_id, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
+            (workspace_id, company_id, name, job_title, department, owner_principal_id, status, phone)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          RETURNING *",
     )
     .bind(tx.workspace_id())
@@ -476,6 +478,7 @@ pub async fn insert_contact(tx: &mut Tx<'_>, c: &ContactInsert) -> Result<Contac
     .bind(&c.department)
     .bind(c.owner_principal_id)
     .bind(&c.status)
+    .bind(&c.phone)
     .fetch_one(tx.conn())
     .await
     .map_err(map_sqlx)
@@ -549,7 +552,7 @@ pub async fn update_contact_versioned(
     sqlx::query_as::<_, ContactRow>(&format!(
         "UPDATE contacts SET
             name = $3, company_id = $4, job_title = $5, department = $6,
-            status = $7, version = version + 1, updated_at = now()
+            status = $7, phone = $9, version = version + 1, updated_at = now()
           WHERE workspace_id = $1 AND id = $2 AND version = $8
           RETURNING {CONTACT_COLS}"
     ))
@@ -561,6 +564,7 @@ pub async fn update_contact_versioned(
     .bind(&c.department)
     .bind(&c.status)
     .bind(expected_version)
+    .bind(&c.phone)
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)

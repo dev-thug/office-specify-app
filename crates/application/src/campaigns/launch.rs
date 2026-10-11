@@ -196,7 +196,6 @@ pub(super) async fn validate_approved_launch(
     };
     if decision.decision != "approved"
         || decision.version_at_decision.checked_add(1) != Some(request.version)
-        || decision.decided_by == launch.requested_by
     {
         return Err(AppError::conflict(
             "campaign launch decision is no longer valid",

@@ -1,6 +1,6 @@
 //! approvals module application layer (spec §5.5, A.6.3, B.3.9).
 //! A decision locks the request row, re-verifies pending/expiry/version/
-//! snapshot/requester-vs-approver/target-state, inserts the append-only
+//! snapshot/approver-permissions/target-state, inserts the append-only
 //! decision row, flips the request status and performs the integration
 //! side effects — all inside the caller's single transaction.
 
@@ -477,7 +477,6 @@ async fn policy_results_and_decision_hint(
     let expected_hash = hex_of(&req.snapshot_hash);
     let snapshot_matches = target.current_hash.as_deref() == Some(expected_hash.as_str());
     let request_live = req.status == d::request_status::PENDING && req.expires_at > Utc::now();
-    let self_request = req.requested_by == ctx.principal_id;
     let approver_active = repo::principal_kind_role_status(tx, ctx.principal_id)
         .await?
         .is_some_and(|(kind, role, status)| {
@@ -498,10 +497,6 @@ async fn policy_results_and_decision_hint(
             "outcome": if request_live { "pass" } else { "fail" },
         }),
         serde_json::json!({
-            "code": "SELF_APPROVAL",
-            "outcome": if self_request { "fail" } else { "pass" },
-        }),
-        serde_json::json!({
             "code": "APPROVER_ELIGIBLE",
             "outcome": if approver_active { "pass" } else { "fail" },
         }),
@@ -515,8 +510,7 @@ async fn policy_results_and_decision_hint(
         }),
     ];
 
-    let mut can_decide =
-        request_live && !self_request && approver_active && snapshot_matches && target_state_ready;
+    let mut can_decide = request_live && approver_active && snapshot_matches && target_state_ready;
     if let Some(mail_account_id) = mail_account_id {
         let can_read = mailbox_has_permission(tx, ctx, mail_account_id, MailboxPerm::Read).await?;
         let can_approve =
@@ -605,7 +599,7 @@ async fn policy_results_and_decision_hint(
 /// POST /approvals/{id}/decisions (B.3.9) — runs inside the route's
 /// `idempotency::run` tx; If-Match supplies `expected_version`.
 ///
-/// Denial audits for self-approval / role / mailbox failures must be
+/// Denial audits for role / mailbox failures must be
 /// recorded by the route in a *fresh* transaction (this tx rolls back with
 /// the error) — the error code carries which audit to write.
 pub async fn decide(
@@ -651,12 +645,6 @@ pub async fn decide(
         return Err(AppError::new(
             ErrorCode::ApprovalExpired,
             "approval request has expired",
-        ));
-    }
-    if row.requested_by == ctx.principal_id {
-        return Err(AppError::new(
-            ErrorCode::SelfApprovalForbidden,
-            "the requester cannot approve their own request",
         ));
     }
     let expected = decode_hex(&req.expected_snapshot_hash)

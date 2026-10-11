@@ -12,7 +12,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -49,12 +48,14 @@ export interface VariableRow {
   type: "string" | "uri";
   required: boolean;
   maxLength: string;
+  defaultValue?: TemplateVariableSchema["properties"][string]["default"];
 }
 
 export interface VersionEditorSeed {
   subject: string;
   bodyText: string;
   bodyHtml: string | null;
+  variableSchema?: TemplateVariableSchema;
 }
 
 interface VersionEditorProps {
@@ -63,6 +64,7 @@ interface VersionEditorProps {
   onOpenChange: (open: boolean) => void;
   onCreated: (id: string) => void;
   initialSeed?: VersionEditorSeed | null;
+  inline?: boolean;
 }
 
 function emailTextToHtml(value: string): string {
@@ -136,6 +138,7 @@ export function buildVariableSchema(
     }
     const max = Number.parseInt(row.maxLength, 10);
     if (Number.isFinite(max) && max > 0) prop.maxLength = max;
+    if (row.defaultValue !== undefined) prop.default = row.defaultValue;
     properties[name] = prop;
     if (row.required) required.push(name);
   }
@@ -148,6 +151,14 @@ export function buildVariableSchema(
 }
 
 function rowsForSeed(seed: VersionEditorSeed): VariableRow[] {
+  if (seed.variableSchema) {
+    const required = new Set(seed.variableSchema.required ?? []);
+    return Object.entries(seed.variableSchema.properties).map(([name, prop]) => ({
+      ...newRow(), name, type: prop.format === "uri" ? "uri" : "string",
+      maxLength: prop.maxLength == null ? "" : String(prop.maxLength),
+      required: required.has(name), defaultValue: prop.default,
+    }));
+  }
   const names = new Set<string>();
   for (const text of [seed.subject, seed.bodyText, seed.bodyHtml ?? ""]) {
     for (const match of text.matchAll(PLACEHOLDER)) {
@@ -172,6 +183,7 @@ function VersionEditorForm({
   onOpenChange,
   onCreated,
   initialSeed,
+  inline = false,
 }: VersionEditorProps) {
   const t = useTranslations("templates.editor");
   const tCommon = useTranslations("common");
@@ -291,12 +303,14 @@ function VersionEditorForm({
         no != null ? t("createdToast", { no }) : t("createdToast", { no: "?" })
       );
       // 다음 버전 작성은 새 논리 작업 — 폼을 초기화한다.
-      setSubject("");
-      setBodyText("");
-      setBodyHtml("");
-      setLegacyTextDismissed(false);
-      setRows([]);
-      onOpenChange(false);
+      if (!inline) {
+        setSubject("");
+        setBodyText("");
+        setBodyHtml("");
+        setLegacyTextDismissed(false);
+        setRows([]);
+        onOpenChange(false);
+      }
       onCreated(res.data.template_version_id);
     } catch (err) {
       idem.settle(err);
@@ -314,13 +328,7 @@ function VersionEditorForm({
     }
   }
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
-        <DialogHeader className="shrink-0 border-b px-6 py-4">
-          <DialogTitle>{t("title")}</DialogTitle>
-          <DialogDescription>{t("description")}</DialogDescription>
-        </DialogHeader>
+  const form = (
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <div data-slot="email-editor-scroll" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 py-5">
           <div className="grid gap-1.5">
@@ -540,7 +548,8 @@ function VersionEditorForm({
           ) : null}
 
           </div>
-          <DialogFooter className="shrink-0 border-t bg-background px-6 py-4">
+          <div className="flex shrink-0 justify-end gap-2 border-t bg-background px-6 py-4">
+            {!inline ? (
             <Button
               type="button"
               variant="outline"
@@ -548,11 +557,22 @@ function VersionEditorForm({
             >
               {tCommon("cancel")}
             </Button>
+            ) : null}
             <Button type="submit" disabled={pending}>
               {pending ? t("submitting") : t("submit")}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
+  );
+  if (inline) return <section className="min-w-0 overflow-hidden rounded-2xl border bg-card">{form}</section>;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
+        <DialogHeader className="shrink-0 border-b px-6 py-4">
+          <DialogTitle>{t("title")}</DialogTitle>
+          <DialogDescription>{t("description")}</DialogDescription>
+        </DialogHeader>
+        {form}
       </DialogContent>
     </Dialog>
   );

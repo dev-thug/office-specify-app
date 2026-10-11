@@ -120,7 +120,7 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
         </Alert>
       ) : null}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="grid gap-5 lg:grid-cols-[12rem_minmax(0,1fr)]">
         {/* 버전 목록 — 불변이며 행 선택으로 상세를 바꾼다. */}
         <section
           aria-label={t("versionsTitle")}
@@ -192,11 +192,26 @@ export function TemplateDetail({ templateId }: { templateId: string }) {
           ) : selectedId && content.isPending ? (
             <Skeleton className="h-48 rounded-2xl" />
           ) : selected ? (
-            <VersionDetail version={selected} />
+            archived ? <VersionDetail version={selected} /> : (
+              <VersionEditor
+                key={selected.template_version_id}
+                templateId={templateId}
+                open
+                inline
+                onOpenChange={() => {}}
+                initialSeed={{
+                  subject: selected.subject,
+                  bodyText: selected.body_text,
+                  bodyHtml: selected.body_html ?? null,
+                  variableSchema: selected.variable_schema,
+                }}
+                onCreated={(id) => { setSelectedVersionId(id); void versions.refetch(); }}
+              />
+            )
           ) : (
             <EmptyState compact title={t("emptyVersionsTitle")} />
           )}
-          <RenderPreview version={selected} />
+          {archived ? <RenderPreview version={selected} /> : null}
         </div>
       </div>
 

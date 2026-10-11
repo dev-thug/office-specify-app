@@ -689,20 +689,7 @@ async fn campaign_create_preflight_launch_freeze_approve_activate() {
             .is_some_and(|items| !items.is_empty())
     );
 
-    // 5. requester (admin) cannot self-approve — SELF_APPROVAL_FORBIDDEN.
-    let res = post(
-        &app,
-        &admin,
-        &acsrf,
-        &format!("/api/v1/approvals/{request_id}/decisions"),
-        json!({"decision": "approved", "expected_snapshot_hash": manifest_hex}),
-        Some("self-1"),
-        Some(1),
-    )
-    .await;
-    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-    assert_eq!(p["code"], "SELF_APPROVAL_FORBIDDEN");
-
+    // The manager can still approve a request from another principal.
     // 6. manager approves — launch becomes approved, without queuing activation.
     let res = post(
         &app,

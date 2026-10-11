@@ -495,7 +495,6 @@ pub async fn actionable_pending_approvals_queue(
               JOIN workspaces w ON w.id = ar.workspace_id
              WHERE ar.workspace_id = $1 AND ar.action_type = 'campaign_launch'
                AND ar.status = 'pending' AND ar.expires_at > now()
-               AND ar.requested_by <> $2
                AND l.status IN ('frozen','awaiting_approval')
                AND l.manifest_hash = ar.snapshot_hash
                AND dc.enabled AND dc.policy_status = 'allowed'
@@ -514,7 +513,7 @@ pub async fn actionable_pending_approvals_queue(
               JOIN workspaces w ON w.id = ar.workspace_id
              WHERE ar.workspace_id = $1 AND ar.action_type = 'message_submit'
                AND ar.status = 'pending' AND ar.expires_at > now()
-               AND ar.requested_by <> $2 AND om.status = 'draft'
+                AND om.status = 'draft'
                AND om.payload_hash = ar.snapshot_hash
                AND dc.enabled AND dc.policy_status = 'allowed'
                AND NOT w.emergency_stop AND $3::boolean
@@ -525,7 +524,7 @@ pub async fn actionable_pending_approvals_queue(
                 ON bc.workspace_id = ar.workspace_id AND bc.id = ar.booking_change_id
              WHERE ar.workspace_id = $1 AND ar.action_type = 'booking_change'
                AND ar.status = 'pending' AND ar.expires_at > now()
-               AND ar.requested_by <> $2 AND bc.status = 'proposed'
+                AND bc.status = 'proposed'
             UNION ALL
             SELECT ar.id, ar.created_at
               FROM approval_requests ar
@@ -533,7 +532,7 @@ pub async fn actionable_pending_approvals_queue(
                 ON s.workspace_id = ar.workspace_id AND s.id = ar.suppression_id
              WHERE ar.workspace_id = $1 AND ar.action_type = 'suppression_release'
                AND ar.status = 'pending' AND ar.expires_at > now()
-               AND ar.requested_by <> $2 AND s.released_at IS NULL
+                AND s.released_at IS NULL
         )
         SELECT count(*) AS count, min(created_at) AS oldest_at FROM actionable",
     )

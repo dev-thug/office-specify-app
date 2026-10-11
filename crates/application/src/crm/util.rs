@@ -238,6 +238,7 @@ pub(crate) fn verification_status(s: &str) -> VerificationStatus {
 pub(crate) fn contact_dto(r: &ContactRow, emails: Vec<ContactEmailItem>) -> ContactResponse {
     ContactResponse {
         id: r.id,
+        phone: r.phone.clone(),
         company_id: r.company_id,
         name: r.name.clone(),
         job_title: r.job_title.clone(),

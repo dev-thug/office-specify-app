@@ -45,7 +45,7 @@ the same icon. Escape closes the instructions and returns focus to the button.
 | --- | --- |
 | CRM | Contact and company records, search, notes, activity, and CSV imports. |
 | Email content | One rendered email canvas with a toggle to HTML source, variable presets and schema, recipient preview, and reusable immutable template versions. |
-| Office campaigns | Company-specific draft kanban with a Settings-managed default sender, recipient preview, independent human review, and explicit ten-minute batch queueing. Existing common-template bulk campaigns remain separately available. Consent, suppression and SMTP delivery checks apply to both workflows. |
+| Office campaigns | Company-specific draft kanban with a Settings-managed default sender, recipient preview, explicit human review, and explicit ten-minute batch queueing. Existing common-template bulk campaigns remain separately available. Consent, suppression and SMTP delivery checks apply to both workflows. |
 | Inbox | Received mail imported by Zoho Mail OAuth or all received `INBOX` mail through an explicitly enabled SMTP-profile IMAP monitor; local thread status and read state remain separate from provider flags. |
 | Meetings | Internal meeting types, host availability, booking links, and persisted booking, reschedule, and cancellation records. The local calendar does not use OAuth. |
 | Access and operations | Admin, Manager, Member, Agent, and System principals; mailbox grants; approvals; emergency stop; job and delivery status; audit records; and recovery runbooks. |
@@ -82,7 +82,7 @@ The primary campaign workflow groups company-specific drafts on a kanban board:
 research, draft, human review, queued, SMTP accepted, and attention. Configure a
 default marketing SMTP sender in Mail accounts, then reuse one campaign for many
 companies. Each target keeps its own subject/body and template version; sender
-and recipient bindings remain checked by the server. Only an independently
+and recipient bindings remain checked by the server. Only an explicitly
 approved frozen message can enter the next ten-minute sending batch. The board
 refreshes every two seconds and derives sending columns from actual outbound
 records. Existing common-template bulk campaigns remain separately accessible.
