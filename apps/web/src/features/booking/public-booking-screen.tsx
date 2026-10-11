@@ -16,6 +16,8 @@ import {
   GlobeIcon,
   LinkIcon,
   LockIcon,
+  MapPinIcon,
+  VideoIcon,
 } from "lucide-react";
 
 import { ErrorState } from "@/components/patterns/error-state";
@@ -122,7 +124,7 @@ function BookingFlow({ token, data, t, locale }: { token: string; data: PublicBo
 
   return <BookingCard ref={topRef}>
     <MeetingSummary
-      meeting={{ name: data.name ?? data.title, description: data.description, host: data.host_display_name ?? data.host_name, durationMinutes: data.duration_minutes }}
+      meeting={{ name: data.name ?? data.title, description: data.description, host: data.host_display_name ?? data.host_name, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail }}
       slot={selectedSlot}
       timezone={timezone}
       t={t}
@@ -308,6 +310,29 @@ export interface MeetingInfo {
   description?: string | null;
   host?: string | null;
   durationMinutes?: number | null;
+  locationKind?: "online" | "offline" | null;
+  locationDetail?: string | null;
+  /** 예약 전에는 온라인 접속 링크를 숨기고 "확정 후 안내"만 보여 준다. */
+  revealOnlineDetail?: boolean;
+}
+
+/** 미팅 방식 한 줄 — 온라인/오프라인 + 장소·접속 안내. */
+export function MeetingLocation({ meeting, t, pendingNote }: { meeting: MeetingInfo; t: Translator; pendingNote?: string }) {
+  if (!meeting.locationKind) return null;
+  const offline = meeting.locationKind === "offline";
+  const detail = offline || meeting.revealOnlineDetail ? meeting.locationDetail?.trim() : null;
+  const isLink = detail ? /^https?:\/\//i.test(detail) : false;
+  return <div className="flex items-start gap-1.5 text-sm text-muted-foreground">
+    {offline ? <MapPinIcon className="mt-0.5 size-4 shrink-0" aria-hidden /> : <VideoIcon className="mt-0.5 size-4 shrink-0" aria-hidden />}
+    <div className="min-w-0">
+      <p>{offline ? t("locationOffline") : t("locationOnline")}</p>
+      {detail ? (
+        isLink
+          ? <a href={detail} target="_blank" rel="noopener noreferrer" className="break-all text-foreground underline underline-offset-4">{detail}</a>
+          : <p className="whitespace-pre-line break-keep text-foreground">{detail}</p>
+      ) : !offline ? <p className="text-xs">{pendingNote ?? t("locationOnlinePending")}</p> : null}
+    </div>
+  </div>;
 }
 
 /** 왼쪽 요약 — 호스트·미팅·소요 시간, 그리고 고른(또는 현재) 일정. */
@@ -336,6 +361,7 @@ export function MeetingSummary({ meeting, slot, slotLabel, timezone, t, locale, 
       {meeting.durationMinutes ? (
         <p className="flex items-center gap-1.5 text-sm text-muted-foreground"><ClockIcon className="size-4" aria-hidden />{t("durationMinutes", { count: meeting.durationMinutes })}</p>
       ) : null}
+      <MeetingLocation meeting={meeting} t={t} />
     </div>
     {meeting.description ? <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-line break-keep">{meeting.description}</p> : null}
     {slot ? (

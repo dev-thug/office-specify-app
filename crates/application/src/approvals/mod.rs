@@ -664,12 +664,12 @@ pub async fn decide(
     }
 
     // 2. Approver re-verification inside the tx (A.6.3): still an active
-    //    human admin/manager — the DB trigger re-checks too.
+    //    human admin/manager or active agent — the DB trigger re-checks too.
     match repo::principal_kind_role_status(tx, ctx.principal_id).await? {
         Some((kind, role, status))
-            if kind == "human"
-                && status == "active"
-                && matches!(role.as_str(), "admin" | "manager") => {}
+            if status == "active"
+                && ((kind == "human" && matches!(role.as_str(), "admin" | "manager"))
+                    || kind == "agent") => {}
         Some((_, _, status)) if status != "active" => {
             return Err(AppError::new(
                 ErrorCode::PrincipalDisabled,
@@ -678,7 +678,7 @@ pub async fn decide(
         }
         _ => {
             return Err(AppError::forbidden(
-                "approver must be an active human admin or manager",
+                "approver must be an active admin, manager or agent",
             ));
         }
     }

@@ -1787,6 +1787,22 @@
             "minLength": 16,
             "type": "string"
           },
+          "location_detail": {
+            "default": null,
+            "description": "Guest-facing video link/tool note (online) or address (offline).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_kind": {
+            "default": null,
+            "description": "How the meeting is held: `online` (default) or `offline`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "minimum_notice_minutes": {
             "default": null,
             "description": "Minimum notice before a bookable slot, in minutes; defaults to 1440.",
@@ -1867,7 +1883,7 @@
       }
     },
     {
-      "description": "Update a meeting type with optimistic concurrency (expected_version). Requires booking.propose. `changes` may contain name, description (null clears), duration_minutes, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_horizon_days, status.",
+      "description": "Update a meeting type with optimistic concurrency (expected_version). Requires booking.propose. `changes` may contain name, description (null clears), duration_minutes, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_horizon_days, location_kind (online|offline), location_detail (null clears), status.",
       "externalEffect": false,
       "inputSchema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1875,7 +1891,7 @@
         "properties": {
           "changes": {
             "additionalProperties": true,
-            "description": "Fields to change: name, description (null clears), duration_minutes, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_horizon_days, status.",
+            "description": "Fields to change: name, description (null clears), duration_minutes, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_horizon_days, location_kind (online|offline), location_detail (null clears), status.",
             "type": "object"
           },
           "expected_version": {

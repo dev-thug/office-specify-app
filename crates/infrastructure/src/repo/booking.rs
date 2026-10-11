@@ -19,6 +19,8 @@ pub struct MeetingTypeRow {
     pub buffer_after_minutes: i32,
     pub minimum_notice_minutes: i32,
     pub booking_horizon_days: i32,
+    pub location_kind: String,
+    pub location_detail: Option<String>,
     pub status: String,
     pub version: i64,
 }
@@ -41,6 +43,8 @@ pub struct BookingLinkRow {
     pub buffer_after_minutes: i32,
     pub minimum_notice_minutes: i32,
     pub booking_horizon_days: i32,
+    pub location_kind: String,
+    pub location_detail: Option<String>,
     pub meeting_status: String,
     pub calendar_connection_id: Uuid,
     pub provider_calendar_id: String,
@@ -172,7 +176,7 @@ pub struct RescheduleCompletion<'a> {
 
 const MT_COLS: &str = "id, host_principal_id, calendar_connection_id, name, description,
     duration_minutes, buffer_before_minutes, buffer_after_minutes,
-    minimum_notice_minutes, booking_horizon_days, status, version";
+    minimum_notice_minutes, booking_horizon_days, location_kind, location_detail, status, version";
 
 pub async fn get_meeting_type(
     tx: &mut Tx<'_>,
@@ -289,8 +293,8 @@ pub async fn insert_meeting_type(
         "INSERT INTO meeting_types
             (workspace_id, host_principal_id, calendar_connection_id, name, description,
              duration_minutes, buffer_before_minutes, buffer_after_minutes,
-             minimum_notice_minutes, booking_horizon_days)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
+             minimum_notice_minutes, booking_horizon_days, location_kind, location_detail)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id",
     )
     .bind(tx.workspace_id())
     .bind(host_id)
@@ -302,6 +306,14 @@ pub async fn insert_meeting_type(
     .bind(request.buffer_after_minutes)
     .bind(request.minimum_notice_minutes)
     .bind(request.booking_horizon_days)
+    .bind(&request.location_kind)
+    .bind(
+        request
+            .location_detail
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+    )
     .fetch_one(tx.conn())
     .await
     .map_err(map_sqlx)
@@ -322,7 +334,10 @@ pub async fn update_meeting_type(
              buffer_after_minutes = COALESCE($9, buffer_after_minutes),
              minimum_notice_minutes = COALESCE($10, minimum_notice_minutes),
              booking_horizon_days = COALESCE($11, booking_horizon_days),
-             status = COALESCE($12, status), version = version + 1
+             status = COALESCE($12, status),
+             location_kind = COALESCE($13, location_kind),
+             location_detail = CASE WHEN $14::boolean THEN $15 ELSE location_detail END,
+             version = version + 1
          WHERE workspace_id = $1 AND id = $2 AND version = $3
          RETURNING id",
     )
@@ -344,6 +359,16 @@ pub async fn update_meeting_type(
     .bind(request.minimum_notice_minutes)
     .bind(request.booking_horizon_days)
     .bind(&request.status)
+    .bind(&request.location_kind)
+    .bind(request.location_detail.is_some())
+    .bind(
+        request
+            .location_detail
+            .as_ref()
+            .and_then(|v| v.as_deref())
+            .map(str::trim)
+            .filter(|v| !v.is_empty()),
+    )
     .fetch_optional(tx.conn())
     .await
     .map_err(map_sqlx)?;
@@ -592,7 +617,7 @@ const LINK_COLS: &str = "l.id, l.meeting_type_id, l.host_principal_id,
        AND b.status NOT IN ('canceled','failed','expired')) AS used_count,
     m.name AS meeting_name, m.description AS meeting_description, m.duration_minutes,
     m.buffer_before_minutes, m.buffer_after_minutes, m.minimum_notice_minutes,
-    m.booking_horizon_days, m.status AS meeting_status,
+    m.booking_horizon_days, m.location_kind, m.location_detail, m.status AS meeting_status,
     c.id AS calendar_connection_id, c.provider_calendar_id, c.status AS calendar_status,
     i.status AS integration_status,
     p.name AS host_name";

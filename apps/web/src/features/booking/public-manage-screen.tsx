@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api/problem";
 import { cancelManagedBooking, getManagedBooking, getManagedSlots, rescheduleManagedBooking, type PublicSlot } from "@/lib/api/booking";
-import { BookingCard, MeetingSummary, SlotPicker, guestTimezone } from "./public-booking-screen";
+import { BookingCard, MeetingLocation, MeetingSummary, SlotPicker, guestTimezone } from "./public-booking-screen";
 import { idempotencyKey } from "@/lib/api/client";
 import { ArrowLeftIcon, CalendarCheckIcon, LinkIcon, RefreshCwIcon } from "lucide-react";
 import { detectTimezone, formatDayLabel, formatTime, localDateOf, parseInstant } from "@/features/meetings/datetime";
@@ -113,7 +113,7 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
     const current: PublicSlot = { starts_at: data.starts_at, ends_at: data.ends_at };
     return <BookingCard>
       <MeetingSummary
-        meeting={{ name: data.meeting_name, description: data.meeting_description, host: data.host_display_name, durationMinutes: data.duration_minutes }}
+        meeting={{ name: data.meeting_name, description: data.meeting_description, host: data.host_display_name, durationMinutes: data.duration_minutes, locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }}
         slot={newSlot ?? current}
         slotLabel={newSlot ? t("newTime") : t("currentTime")}
         timezone={timezone}
@@ -175,6 +175,11 @@ export function PublicManageScreen({ manageToken }: { manageToken: string }) {
             <p className="tabular-nums">{formatTime(data.starts_at, { tz: zone, locale })}{data.ends_at ? ` – ${formatTime(data.ends_at, { tz: zone, locale })}` : ""}</p>
             <p className="mt-1 text-xs text-muted-foreground">{zone}</p>
           </div>
+        </div>
+      ) : null}
+      {data.location_kind ? (
+        <div className="mt-4">
+          <MeetingLocation meeting={{ locationKind: data.location_kind, locationDetail: data.location_detail, revealOnlineDetail: true }} t={tb} pendingNote={t("onlineDetailPending")} />
         </div>
       ) : null}
       <dl className="mt-5 grid grid-cols-2 gap-4 border-t border-border pt-4 text-sm">

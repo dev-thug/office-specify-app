@@ -310,7 +310,7 @@ pub fn tools() -> Vec<ToolDef> {
                 let input: ListPrincipalsInput = arguments(args)?;
                 let limit = page_limit(input.limit)?;
                 application::org::admin::check_principal_picker_read(&services.db, &ctx).await?;
-                let admin = ctx.role == Role::Admin;
+                let admin = ctx.role == Role::Admin || application::authz::agent_admin(&ctx);
                 let filter = if admin {
                     application::org::admin::PrincipalFilter {
                         kind: input.kind,

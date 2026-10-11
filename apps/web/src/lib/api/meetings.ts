@@ -37,6 +37,8 @@ export interface MeetingType {
   buffer_after_minutes: number;
   minimum_notice_minutes: number;
   booking_horizon_days: number;
+  location_kind?: MeetingLocationKind;
+  location_detail?: string | null;
   status: MeetingTypeStatus | string;
   version?: number;
   created_at?: string;
@@ -54,6 +56,8 @@ export interface MeetingTypeCreateInput {
   buffer_after_minutes: number;
   minimum_notice_minutes: number;
   booking_horizon_days: number;
+  location_kind: MeetingLocationKind;
+  location_detail?: string;
 }
 
 /** PATCH 허용 필드 — host 교체는 불가(B.2 "host 교체는 신규 생성"). */
@@ -65,8 +69,13 @@ export interface MeetingTypePatchInput {
   buffer_after_minutes?: number;
   minimum_notice_minutes?: number;
   booking_horizon_days?: number;
+  location_kind?: MeetingLocationKind;
+  location_detail?: string | null;
   status?: MeetingTypeStatus;
 }
+
+/** 미팅 방식 — 온라인(화상) / 오프라인(대면). */
+export type MeetingLocationKind = "online" | "offline";
 
 export const MEETING_TYPES_PATH = "/api/v1/meeting-types";
 export const MEETING_TYPES_QUERY_KEY = ["meetings", "types"] as const;

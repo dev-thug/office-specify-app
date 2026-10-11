@@ -605,7 +605,7 @@ async fn create_public_booking(
         timezone: stored.body.timezone,
         manage_url: format!("/public/booking/{manage_token}"),
         status_url: format!("/public/v1/bookings/{manage_token}"),
-        message: "예약 요청을 받았어요. 캘린더에 일정을 등록하고 있어요.".into(),
+        message: "예약 요청을 받았어요. 일정이 확정되면 연락드릴게요.".into(),
     };
     Ok((
         StatusCode::ACCEPTED,

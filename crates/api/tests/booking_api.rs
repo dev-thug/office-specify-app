@@ -393,9 +393,28 @@ async fn meeting_type_and_booking_link_posts_replay_without_cached_capability() 
         "buffer_before_minutes":5,
         "buffer_after_minutes":5,
         "minimum_notice_minutes":0,
-        "booking_horizon_days":30
+        "booking_horizon_days":30,
+        "location_kind":"offline",
+        "location_detail":"Seoul HQ, 5F"
     });
     let meeting_path = app.url("/api/v1/meeting-types");
+    let invalid = app
+        .client
+        .post(&meeting_path)
+        .header("x-csrf-token", &csrf)
+        .header("idempotency-key", "meeting-create-bad-location-1")
+        .json(&json!({
+            "calendar_connection_id":fixture.calendar_connection_id,
+            "name":"Bad location",
+            "location_kind":"hybrid"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        invalid.status().is_client_error(),
+        "unknown location_kind is rejected"
+    );
     let first = app
         .client
         .post(&meeting_path)
@@ -408,6 +427,8 @@ async fn meeting_type_and_booking_link_posts_replay_without_cached_capability() 
     assert_eq!(first.status(), StatusCode::CREATED);
     let first: serde_json::Value = first.json().await.unwrap();
     let meeting_id = first["data"]["id"].as_str().unwrap();
+    assert_eq!(first["data"]["location_kind"], "offline");
+    assert_eq!(first["data"]["location_detail"], "Seoul HQ, 5F");
     let replay = app
         .client
         .post(&meeting_path)
@@ -436,6 +457,14 @@ async fn meeting_type_and_booking_link_posts_replay_without_cached_capability() 
     let first: serde_json::Value = first.json().await.unwrap();
     let link_url = first["data"]["token_url"].as_str().unwrap().to_string();
     let raw_token = link_url.rsplit('/').next().unwrap().to_string();
+    let public: serde_json::Value = app
+        .get(&format!("/public/v1/booking-links/{raw_token}"))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(public["data"]["location_kind"], "offline");
+    assert_eq!(public["data"]["location_detail"], "Seoul HQ, 5F");
     let replay = app
         .client
         .post(&link_path)

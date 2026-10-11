@@ -352,6 +352,15 @@ async fn agent_credential_reads_principal_roster_and_detail() {
             .any(|p| p["id"] == world.member_a.principal_id.to_string()),
         "roster must include member_a: {body}"
     );
+    // org.admin is treated like Admin: the full roster, agent rows included.
+    assert!(
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == world.agent.principal_id.to_string()),
+        "org.admin roster must include agent principals: {body}"
+    );
 
     let detail_path = format!("/api/v1/principals/{}", world.member_a.principal_id);
     let res = bearer(&app, reqwest::Method::GET, &detail_path, None, &secret, &[]).await;
@@ -360,7 +369,7 @@ async fn agent_credential_reads_principal_roster_and_detail() {
 }
 
 #[tokio::test]
-async fn agent_without_org_admin_cannot_read_principal_roster_or_detail() {
+async fn agent_without_org_admin_gets_picker_only_and_cannot_read_principal_detail() {
     let Some((app, world)) = test_app().await else {
         return;
     };
@@ -376,26 +385,44 @@ async fn agent_without_org_admin_cannot_read_principal_roster_or_detail() {
     .unwrap();
     tx.commit().await.unwrap();
 
+    // Like a Member, a plain agent gets only the active-human picker view
+    // of the list (no agent rows)...
+    let res = bearer(
+        &app,
+        reqwest::Method::GET,
+        "/api/v1/principals",
+        None,
+        &secret,
+        &[],
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value = res.json().await.unwrap();
+    assert!(
+        !body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == world.agent.principal_id.to_string()),
+        "picker must not list agent principals: {body}"
+    );
+
+    // ...and the admin-only principal detail is denied and audited.
     let detail_path = format!("/api/v1/principals/{}", world.member_a.principal_id);
-    for (path, action) in [
-        ("/api/v1/principals", "principal.list"),
-        (detail_path.as_str(), "principal.read"),
-    ] {
-        let res = bearer(&app, reqwest::Method::GET, path, None, &secret, &[]).await;
-        let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
-        assert_eq!(p["code"], "FORBIDDEN");
-        assert!(
-            denied_audits(
-                &app.state.db,
-                world.workspace_id,
-                world.agent.principal_id,
-                action
-            )
-            .await
-                >= 1,
-            "missing denied audit for {action}"
-        );
-    }
+    let res = bearer(&app, reqwest::Method::GET, &detail_path, None, &secret, &[]).await;
+    let p = TestApp::problem(res, StatusCode::FORBIDDEN).await;
+    assert_eq!(p["code"], "FORBIDDEN");
+    assert!(
+        denied_audits(
+            &app.state.db,
+            world.workspace_id,
+            world.agent.principal_id,
+            "principal.read"
+        )
+        .await
+            >= 1,
+        "missing denied audit for principal.read"
+    );
 }
 
 #[tokio::test]

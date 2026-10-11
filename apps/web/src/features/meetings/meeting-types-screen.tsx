@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { MapPinIcon, VideoIcon } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -51,6 +52,8 @@ export function MeetingTypesScreen() {
     buffer_after_minutes: 10,
     minimum_notice_minutes: 1440,
     booking_horizon_days: 30,
+    location_kind: "online",
+    location_detail: "",
   });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,6 +87,7 @@ export function MeetingTypesScreen() {
   const columns: ColumnDef<MeetingType>[] = [
     { key: "name", header: t("colName"), cell: (row) => <span className="font-medium">{row.name}</span> },
     { key: "duration", header: t("colDuration"), cell: (row) => t("minutes", { count: row.duration_minutes }) },
+    { key: "location", header: t("colLocation"), cell: (row) => <span className="flex items-center gap-1.5">{row.location_kind === "offline" ? <MapPinIcon className="size-3.5 text-muted-foreground" aria-hidden /> : <VideoIcon className="size-3.5 text-muted-foreground" aria-hidden />}{row.location_kind === "offline" ? t("locationOffline") : t("locationOnline")}</span> },
     { key: "buffers", header: t("colBuffers"), cell: (row) => `${row.buffer_before_minutes} / ${row.buffer_after_minutes}` },
     { key: "notice", header: t("colNotice"), cell: (row) => t("minutes", { count: row.minimum_notice_minutes }) },
     { key: "horizon", header: t("colHorizon"), cell: (row) => t("days", { count: row.booking_horizon_days }) },
@@ -95,7 +99,7 @@ export function MeetingTypesScreen() {
   function openCreate() {
     setEditing(null);
     setCalendarId(defaultCalendarId);
-    setForm({ name: "", description: "", duration_minutes: 30, buffer_before_minutes: 10, buffer_after_minutes: 10, minimum_notice_minutes: 1440, booking_horizon_days: 30 });
+    setForm({ name: "", description: "", duration_minutes: 30, buffer_before_minutes: 10, buffer_after_minutes: 10, minimum_notice_minutes: 1440, booking_horizon_days: 30, location_kind: "online", location_detail: "" });
     setError(null);
     setDialogOpen(true);
   }
@@ -111,6 +115,8 @@ export function MeetingTypesScreen() {
       buffer_after_minutes: item.buffer_after_minutes,
       minimum_notice_minutes: item.minimum_notice_minutes,
       booking_horizon_days: item.booking_horizon_days,
+      location_kind: item.location_kind ?? "online",
+      location_detail: item.location_detail ?? "",
       status: item.status as "active" | "disabled",
     });
     setError(null);
@@ -136,6 +142,8 @@ export function MeetingTypesScreen() {
           buffer_after_minutes: form.buffer_after_minutes,
           minimum_notice_minutes: form.minimum_notice_minutes,
           booking_horizon_days: form.booking_horizon_days,
+          location_kind: form.location_kind,
+          location_detail: form.location_detail?.trim() || null,
           status: form.status as "active" | "disabled" | undefined,
         };
         await updateMeetingType(editing.id, patch, { etag: editing.version ?? 0, idempotencyKey: idem.current });
@@ -148,6 +156,7 @@ export function MeetingTypesScreen() {
           ...form,
           name: form.name.trim(),
           description: form.description?.trim() || undefined,
+          location_detail: form.location_detail?.trim() || undefined,
           calendar_connection_id: selectedCalendarId,
         };
         await createMeetingType(input, { idempotencyKey: idem.current });
@@ -194,6 +203,20 @@ export function MeetingTypesScreen() {
           <form className="grid gap-3" onSubmit={(event) => void submit(event)}>
             <div className="grid gap-1"><Label htmlFor="meeting-type-name">{t("fieldName")}</Label><Input id="meeting-type-name" required value={form.name} onChange={(event) => setForm((state) => ({ ...state, name: event.target.value }))} maxLength={300} /></div>
             <div className="grid gap-1"><Label htmlFor="meeting-type-description">{t("fieldDescription")}</Label><Input id="meeting-type-description" value={form.description ?? ""} onChange={(event) => setForm((state) => ({ ...state, description: event.target.value }))} maxLength={2000} /></div>
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium">{t("fieldLocation")}</legend>
+              <div role="radiogroup" aria-label={t("fieldLocation")} className="grid grid-cols-2 gap-2">
+                {(["online", "offline"] as const).map((kind) => (
+                  <Button key={kind} type="button" role="radio" aria-checked={form.location_kind === kind} variant={form.location_kind === kind ? "default" : "outline"} onClick={() => setForm((state) => ({ ...state, location_kind: kind }))}>
+                    {kind === "online" ? <VideoIcon aria-hidden /> : <MapPinIcon aria-hidden />}
+                    {kind === "online" ? t("locationOnline") : t("locationOffline")}
+                  </Button>
+                ))}
+              </div>
+              <Label htmlFor="meeting-type-location-detail" className="mt-1">{form.location_kind === "offline" ? t("fieldLocationAddress") : t("fieldLocationLink")}</Label>
+              <Input id="meeting-type-location-detail" value={form.location_detail ?? ""} onChange={(event) => setForm((state) => ({ ...state, location_detail: event.target.value }))} maxLength={500} placeholder={form.location_kind === "offline" ? t("fieldLocationAddressPlaceholder") : t("fieldLocationLinkPlaceholder")} />
+              <p className="text-2xs text-muted-foreground">{form.location_kind === "offline" ? t("fieldLocationAddressHint") : t("fieldLocationLinkHint")}</p>
+            </fieldset>
             {!editing ? <>
               <div className="grid gap-1"><Label htmlFor="meeting-type-host">{t("fieldHost")}</Label><Input id="meeting-type-host" readOnly value={currentHostLabel} /><p className="text-2xs text-muted-foreground">{t("fieldHostCurrent")}</p></div>
               <div className="grid gap-1"><Label htmlFor="meeting-type-calendar">{t("fieldCalendar")}</Label><Select value={selectedCalendarId} onValueChange={setCalendarId} disabled={!currentPrincipalId || calendars.isLoading || calendars.isError}><SelectTrigger id="meeting-type-calendar"><SelectValue placeholder={t("fieldCalendar")} /></SelectTrigger><SelectContent>{hostCalendars.map((calendar) => <SelectItem key={calendar.id} value={calendar.id}>{calendar.provider === "office_calendar" ? t("calendarOffice") : calendar.name ?? calendar.provider ?? common("nameUnavailable")}</SelectItem>)}</SelectContent></Select>

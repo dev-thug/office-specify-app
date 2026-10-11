@@ -3406,6 +3406,10 @@ export interface components {
             description?: string | null;
             /** Format: int32 */
             duration_minutes?: number;
+            /** @description Video link / tool note (online) or address (offline), shown to guests. */
+            location_detail?: string | null;
+            /** @description `online` or `offline`. */
+            location_kind?: string;
             /** Format: int32 */
             minimum_notice_minutes?: number;
             name: string;
@@ -4535,6 +4539,8 @@ export interface components {
             host_display_name: string;
             /** Format: uuid */
             id: string;
+            location_detail?: string | null;
+            location_kind?: string;
             meeting_description?: string | null;
             meeting_name: string;
             message: string;
@@ -4594,6 +4600,8 @@ export interface components {
             host_principal_id: string;
             /** Format: uuid */
             id: string;
+            location_detail?: string | null;
+            location_kind: string;
             /** Format: int32 */
             minimum_notice_minutes: number;
             name: string;
@@ -5112,6 +5120,9 @@ export interface components {
             duration_minutes: number;
             host_name: string;
             invitee?: null | components["schemas"]["PublicBookingInvitee"];
+            location_detail?: string | null;
+            /** @description `online` or `offline`, plus the guest-facing link note or address. */
+            location_kind?: string;
             /** Format: uuid */
             meeting_type_id: string;
             /** Format: int32 */
@@ -5765,6 +5776,8 @@ export interface components {
             description?: string | null;
             /** Format: int32 */
             duration_minutes?: number | null;
+            location_detail?: string | null;
+            location_kind?: string | null;
             /** Format: int32 */
             minimum_notice_minutes?: number | null;
             name?: string | null;

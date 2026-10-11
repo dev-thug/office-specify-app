@@ -35,6 +35,9 @@ export interface PublicBookingLink {
   booking_horizon_days?: number;
   /** 예약 요청 시 그대로 에코해야 하는 고지 버전. */
   privacy_notice_version: string;
+  /** 미팅 방식과 장소 안내 — 오프라인 주소는 예약 전에도 보인다. */
+  location_kind?: "online" | "offline";
+  location_detail?: string | null;
   /** 특정 수신자에게 발급된 링크(아웃리치)면 그 수신자 — 폼을 미리 채운다. */
   invitee?: PublicBookingInvitee;
   [key: string]: unknown;
@@ -157,6 +160,8 @@ export interface PublicManagedBooking {
   meeting_description?: string | null;
   duration_minutes?: number;
   booking_horizon_days?: number;
+  location_kind?: "online" | "offline";
+  location_detail?: string | null;
   host_display_name?: string | null;
   failure_code?: string | null;
   /** expected_version 으로 되돌려 보낼 현재 버전. */

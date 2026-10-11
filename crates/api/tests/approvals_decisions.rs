@@ -582,10 +582,11 @@ async fn member_cannot_decide() {
     assert_eq!(p["code"], "FORBIDDEN");
 }
 
-/// Agents may never approve (§5.3) — exercised at the application layer
-/// with a service-credential ctx since agents authenticate out-of-band.
+/// Agent/human parity: agents need `mail.approve` on their credential to
+/// decide approvals — exercised at the application layer with a
+/// service-credential ctx since agents authenticate out-of-band.
 #[tokio::test]
-async fn agent_cannot_decide() {
+async fn agent_without_mail_approve_cannot_decide() {
     let Some((app, world)) = test_app().await else {
         return;
     };
@@ -621,9 +622,86 @@ async fn agent_cannot_decide() {
         },
     )
     .await
-    .expect_err("agents must not decide approvals");
-    assert_eq!(err.code, contracts::ErrorCode::Forbidden);
+    .expect_err("agents without mail.approve must not decide approvals");
+    assert_eq!(err.code, contracts::ErrorCode::ScopeRequired);
     tx.rollback().await.unwrap();
+}
+
+/// Agent/human parity: an agent credential holding `mail.approve` (plus
+/// `approvals.read`) with a mailbox can_approve grant decides a pending
+/// outbound approval, and the DB trigger (migration 0046) accepts the
+/// agent as approver.
+#[tokio::test]
+async fn agent_with_mail_approve_and_grant_decides() {
+    let Some((app, world)) = test_app().await else {
+        return;
+    };
+    let db = &app.state.db;
+    let ws = world.workspace_id;
+    let (outbound, hash) = outbound_draft(db, &world).await;
+    let request = message_request(
+        db,
+        &world,
+        world.admin.principal_id,
+        outbound,
+        &hash,
+        chrono::Duration::days(1),
+    )
+    .await;
+
+    let mut tx = db.begin(ws).await.unwrap();
+    sqlx::query(
+        "INSERT INTO mail_account_grants
+            (workspace_id, mail_account_id, principal_id,
+             can_read, can_compose, can_send, can_approve, can_assign, granted_by)
+         VALUES ($1, $2, $3, true, true, true, true, false, $4)",
+    )
+    .bind(ws)
+    .bind(world.mail_account_id)
+    .bind(world.agent.principal_id)
+    .bind(world.admin.principal_id)
+    .execute(tx.conn())
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let ctx = infrastructure::testing::ctx_for_credential(
+        &world,
+        &world.agent,
+        Uuid::new_v4(),
+        contracts::ScopeSet::of([
+            contracts::Scope::ApprovalsRead,
+            contracts::Scope::MailRead,
+            contracts::Scope::MailApprove,
+        ]),
+        "req-agent-decide-ok",
+    );
+    let mut tx = db.begin(ws).await.unwrap();
+    let res = application::approvals::decide(
+        &mut tx,
+        &ctx,
+        request,
+        1,
+        &contracts::approvals::CreateDecisionRequest {
+            decision: "approved".to_string(),
+            expected_snapshot_hash: hex(&hash),
+            reason: None,
+        },
+    )
+    .await
+    .expect("agent with mail.approve and can_approve grant decides");
+    tx.commit().await.unwrap();
+    assert_eq!(res.approval_status, "approved");
+
+    let decided_by: Uuid = scalar(
+        db,
+        ws,
+        "SELECT decided_by FROM approval_decisions
+          WHERE workspace_id = $1 AND approval_request_id = $2",
+        request,
+    )
+    .await;
+    assert_eq!(decided_by, world.agent.principal_id);
 }
 
 /// Revoking a pending request settles it (revoked); a later decide fails.

@@ -27,7 +27,7 @@
     "submitting": "예약하는 중…",
     "selectSlotFirst": "이름과 이메일을 입력해 주세요.",
     "confirmingTitle": "예약 요청을 보냈어요",
-    "confirmingBody": "캘린더에 일정을 등록하고 있어요. 아래 링크에서 확정 여부를 확인하고 일정을 바꿀 수 있어요.",
+    "confirmingBody": "일정이 확정되면 연락드릴게요. 아래 링크에서 진행 상황을 확인하고 시간을 바꿀 수도 있어요.",
     "manageLink": "예약 확인 · 변경하기",
     "manageNote": "이 링크로 언제든 시간을 바꾸거나 취소할 수 있어요. 잘 보관해 주세요.",
     "linkExpiredTitle": "더 이상 사용할 수 없는 링크예요",
@@ -41,7 +41,10 @@
     "errorGeneric": "예약을 접수하지 못했어요. 잠시 후 다시 시도해 주세요.",
     "company": "회사",
     "emailLocked": "초대받은 이메일로 예약이 진행돼요.",
-    "errorRetryHint": "잠시 후 다시 시도해 주세요."
+    "errorRetryHint": "잠시 후 다시 시도해 주세요.",
+    "locationOnline": "온라인 미팅",
+    "locationOffline": "오프라인 미팅",
+    "locationOnlinePending": "접속 링크는 일정이 확정되면 보내드려요."
   },
   "manage": {
     "title": "예약 관리",
@@ -52,14 +55,14 @@
     "timezone": "시간대",
     "meeting": "미팅",
     "host": "주최",
-    "heldNote": "이 시간을 잠시 잡아 두었어요. 확정될 때까지 조금만 기다려 주세요.",
-    "confirmingNote": "캘린더에 일정을 등록하고 있어요. 새로고침해도 진행 상황은 그대로 보여요.",
+    "heldNote": "이 시간을 잠시 잡아 두었어요. 확정되면 연락드릴게요.",
+    "confirmingNote": "캘린더에 일정을 등록하고 있어요. 확정되면 연락드릴게요.",
     "cancelingNote": "취소 요청을 받았어요. 캘린더에서 일정을 지우는 중이에요.",
     "unknownNote": "캘린더 처리 결과를 아직 확인하지 못했어요. 다시 요청하지 말고 잠시 후 상태를 확인해 주세요.",
     "failedNote": "일정을 확정하지 못해 예약이 완료되지 않았어요. 다른 시간으로 다시 예약해 주세요.",
     "canceledNote": "캘린더에서 일정이 사라졌어요. 다시 만나고 싶으시면 언제든 연락 주세요.",
     "expiredNote": "잡아 둔 시간이 만료돼 예약이 완료되지 않았어요.",
-    "confirmedNote": "그때 만나요! 시간을 바꾸거나 취소해야 하면 아래 버튼을 눌러 주세요.",
+    "confirmedNote": "미팅 전에 자세한 안내를 연락드릴게요. 시간을 바꾸거나 취소해야 하면 아래 버튼을 눌러 주세요.",
     "reschedule": "시간 바꾸기",
     "cancel": "예약 취소하기",
     "rescheduleTitle": "바꿀 시간을 골라 주세요",
@@ -92,6 +95,8 @@
     "newTime": "바꿀 일정",
     "pickAgain": "다른 시간 고르기",
     "backToBooking": "예약 정보로 돌아가기",
-    "rescheduleConfirmTitle": "이 시간으로 바꿀까요?"
+    "rescheduleConfirmTitle": "이 시간으로 바꿀까요?",
+    "location": "미팅 방식",
+    "onlineDetailPending": "접속 링크는 미팅 전에 따로 보내드려요."
   }
 }

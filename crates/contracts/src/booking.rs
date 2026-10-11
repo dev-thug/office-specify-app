@@ -21,6 +21,12 @@ pub struct CreateMeetingTypeRequest {
     pub minimum_notice_minutes: i32,
     #[serde(default = "default_horizon")]
     pub booking_horizon_days: i32,
+    /// `online` or `offline`.
+    #[serde(default = "default_location_kind")]
+    pub location_kind: String,
+    /// Video link / tool note (online) or address (offline), shown to guests.
+    #[serde(default)]
+    pub location_detail: Option<String>,
 }
 
 fn default_duration() -> i32 {
@@ -34,6 +40,9 @@ fn default_notice() -> i32 {
 }
 fn default_horizon() -> i32 {
     30
+}
+fn default_location_kind() -> String {
+    "online".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -54,6 +63,10 @@ pub struct UpdateMeetingTypeRequest {
     #[serde(default)]
     pub booking_horizon_days: Option<i32>,
     #[serde(default)]
+    pub location_kind: Option<String>,
+    #[serde(default)]
+    pub location_detail: Option<Option<String>>,
+    #[serde(default)]
     pub status: Option<String>,
 }
 
@@ -69,6 +82,8 @@ pub struct MeetingTypeResponse {
     pub buffer_after_minutes: i32,
     pub minimum_notice_minutes: i32,
     pub booking_horizon_days: i32,
+    pub location_kind: String,
+    pub location_detail: Option<String>,
     pub status: String,
     pub version: i64,
 }
@@ -185,6 +200,11 @@ pub struct PublicBookingLinkResponse {
     pub booking_horizon_days: i32,
     /// The exact notice version the guest must acknowledge in a booking POST.
     pub privacy_notice_version: String,
+    /// `online` or `offline`, plus the guest-facing link note or address.
+    #[serde(default = "default_location_kind")]
+    pub location_kind: String,
+    #[serde(default)]
+    pub location_detail: Option<String>,
     /// Invited recipient for a link bound to one address (outreach links),
     /// so the guest form can be prefilled. Absent for open links.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,6 +307,10 @@ pub struct ManageBookingResponse {
     pub duration_minutes: i32,
     #[serde(default)]
     pub booking_horizon_days: i32,
+    #[serde(default = "default_location_kind")]
+    pub location_kind: String,
+    #[serde(default)]
+    pub location_detail: Option<String>,
     pub host_display_name: String,
     pub guest_memo: Option<String>,
     pub starts_at: DateTime<Utc>,

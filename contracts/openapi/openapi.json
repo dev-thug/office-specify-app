@@ -2896,6 +2896,17 @@
             "format": "int32",
             "type": "integer"
           },
+          "location_detail": {
+            "description": "Video link / tool note (online) or address (offline), shown to guests.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_kind": {
+            "description": "`online` or `offline`.",
+            "type": "string"
+          },
           "minimum_notice_minutes": {
             "format": "int32",
             "type": "integer"
@@ -5850,6 +5861,15 @@
             "format": "uuid",
             "type": "string"
           },
+          "location_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_kind": {
+            "type": "string"
+          },
           "meeting_description": {
             "type": [
               "string",
@@ -6028,6 +6048,15 @@
             "format": "uuid",
             "type": "string"
           },
+          "location_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_kind": {
+            "type": "string"
+          },
           "minimum_notice_minutes": {
             "format": "int32",
             "type": "integer"
@@ -6053,6 +6082,7 @@
           "buffer_after_minutes",
           "minimum_notice_minutes",
           "booking_horizon_days",
+          "location_kind",
           "status",
           "version"
         ],
@@ -7456,6 +7486,16 @@
                 "description": "Invited recipient for a link bound to one address (outreach links),\nso the guest form can be prefilled. Absent for open links."
               }
             ]
+          },
+          "location_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_kind": {
+            "description": "`online` or `offline`, plus the guest-facing link note or address.",
+            "type": "string"
           },
           "meeting_type_id": {
             "format": "uuid",
@@ -9306,6 +9346,18 @@
             "format": "int32",
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "location_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "location_kind": {
+            "type": [
+              "string",
               "null"
             ]
           },

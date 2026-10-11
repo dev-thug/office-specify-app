@@ -197,7 +197,17 @@
     "conflictBody": "Someone else saved first. Pick which value to keep for each field.",
     "conflictApply": "Save selected values",
     "durationRange": "5–480 min",
-    "horizonRange": "1–365 days"
+    "horizonRange": "1–365 days",
+    "colLocation": "Format",
+    "fieldLocation": "Meeting format",
+    "locationOnline": "Online",
+    "locationOffline": "In person",
+    "fieldLocationLink": "Join details (optional)",
+    "fieldLocationLinkPlaceholder": "e.g. Google Meet or Zoom link",
+    "fieldLocationLinkHint": "Only shown to guests after they book. Leave empty to say details follow after confirmation.",
+    "fieldLocationAddress": "Location",
+    "fieldLocationAddressPlaceholder": "e.g. 123 Main St, 5th floor",
+    "fieldLocationAddressHint": "Shown as-is on the booking page."
   },
   "availability": {
     "title": "Host availability",

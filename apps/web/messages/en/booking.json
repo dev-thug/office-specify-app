@@ -27,7 +27,7 @@
     "submitting": "Booking…",
     "selectSlotFirst": "Please enter your name and email.",
     "confirmingTitle": "Your request is in",
-    "confirmingBody": "We're adding it to the calendar now. Use the link below to check the status or change the time.",
+    "confirmingBody": "We'll get in touch once the time is confirmed. Use the link below to check progress or change the time.",
     "manageLink": "View or change booking",
     "manageNote": "Use this link any time to reschedule or cancel. Keep it somewhere safe.",
     "linkExpiredTitle": "This link is no longer available",
@@ -41,7 +41,10 @@
     "errorGeneric": "We couldn't take your booking. Please try again shortly.",
     "company": "Company",
     "emailLocked": "We'll book this with the address you were invited at.",
-    "errorRetryHint": "Please try again in a moment."
+    "errorRetryHint": "Please try again in a moment.",
+    "locationOnline": "Online meeting",
+    "locationOffline": "In-person meeting",
+    "locationOnlinePending": "We'll send the join link once your time is confirmed."
   },
   "manage": {
     "title": "Manage booking",
@@ -52,14 +55,14 @@
     "timezone": "Time zone",
     "meeting": "Meeting",
     "host": "Host",
-    "heldNote": "The slot is tentatively held. Please wait until confirmation completes.",
-    "confirmingNote": "Your booking is being confirmed. Refreshing shows the same state.",
+    "heldNote": "We're holding this time for you. We'll get in touch once it's confirmed.",
+    "confirmingNote": "Adding it to the calendar now. We'll get in touch once it's confirmed.",
     "cancelingNote": "Cancellation was requested. Wait for the calendar operation to finish.",
     "unknownNote": "The calendar outcome could not be verified. Do not re-request — check the status again shortly.",
     "failedNote": "The booking could not be confirmed. No booking was made.",
     "canceledNote": "It's been removed from the calendar. Reach out any time if you'd like to meet.",
     "expiredNote": "The tentative hold expired, so no booking was made.",
-    "confirmedNote": "See you then! Use the buttons below if you need to reschedule or cancel.",
+    "confirmedNote": "We'll reach out with details before the meeting. Use the buttons below to reschedule or cancel.",
     "reschedule": "Change time",
     "cancel": "Cancel booking",
     "rescheduleTitle": "Pick a new time",
@@ -92,6 +95,8 @@
     "newTime": "New time",
     "pickAgain": "Pick another time",
     "backToBooking": "Back to booking",
-    "rescheduleConfirmTitle": "Move to this time?"
+    "rescheduleConfirmTitle": "Move to this time?",
+    "location": "Format",
+    "onlineDetailPending": "We'll send the join link before the meeting."
   }
 }

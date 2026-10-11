@@ -92,7 +92,24 @@ fn parse_timezone(value: &str, field: &str) -> Result<Tz, AppError> {
         .map_err(|_| field_error(field, "must be a valid IANA timezone"))
 }
 
+fn validate_location(kind: Option<&str>, detail: Option<&str>) -> Result<(), AppError> {
+    if kind.is_some_and(|k| !matches!(k, "online" | "offline")) {
+        return Err(field_error(
+            "location_kind",
+            "location_kind must be online or offline",
+        ));
+    }
+    if detail.is_some_and(|d| d.trim().chars().count() > 500) {
+        return Err(field_error(
+            "location_detail",
+            "location_detail must be at most 500 characters",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_meeting_type(req: &CreateMeetingTypeRequest) -> Result<(), AppError> {
+    validate_location(Some(&req.location_kind), req.location_detail.as_deref())?;
     if req.name.trim().is_empty() || req.name.trim().len() > 200 {
         return Err(field_error("name", "name must be 1..=200 characters"));
     }
@@ -115,6 +132,10 @@ fn validate_meeting_type(req: &CreateMeetingTypeRequest) -> Result<(), AppError>
 }
 
 fn validate_update_meeting_type(req: &UpdateMeetingTypeRequest) -> Result<(), AppError> {
+    validate_location(
+        req.location_kind.as_deref(),
+        req.location_detail.as_ref().and_then(|d| d.as_deref()),
+    )?;
     if req
         .name
         .as_ref()
@@ -168,6 +189,8 @@ fn meeting_response(row: repo::MeetingTypeRow) -> MeetingTypeResponse {
         buffer_after_minutes: row.buffer_after_minutes,
         minimum_notice_minutes: row.minimum_notice_minutes,
         booking_horizon_days: row.booking_horizon_days,
+        location_kind: row.location_kind,
+        location_detail: row.location_detail,
         status: row.status,
         version: row.version,
     }
@@ -856,6 +879,8 @@ pub async fn public_link_details(
         booking_horizon_days: resolved.link.booking_horizon_days,
         privacy_notice_version,
         invitee,
+        location_kind: resolved.link.location_kind,
+        location_detail: resolved.link.location_detail,
     })
 }
 
@@ -1161,7 +1186,8 @@ pub async fn list_meeting_slots(
                 1 AS max_uses, NULL::timestamptz AS expires_at, NULL::timestamptz AS revoked_at,
                 0::bigint AS used_count, m.name AS meeting_name, m.description AS meeting_description,
                 m.duration_minutes, m.buffer_before_minutes, m.buffer_after_minutes,
-                m.minimum_notice_minutes, m.booking_horizon_days, m.status AS meeting_status,
+                m.minimum_notice_minutes, m.booking_horizon_days,
+                m.location_kind, m.location_detail, m.status AS meeting_status,
                 c.id AS calendar_connection_id, c.provider_calendar_id, c.status AS calendar_status,
                 i.status AS integration_status,
                 p.name AS host_name
@@ -1591,8 +1617,18 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         tx.rollback().await?;
         return Err(hidden_not_found());
     };
-    let public_details: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
-        "SELECT m.name, p.name, m.description, m.duration_minutes, m.booking_horizon_days
+    #[allow(clippy::type_complexity)]
+    let public_details: Option<(
+        String,
+        String,
+        Option<String>,
+        i32,
+        i32,
+        String,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT m.name, p.name, m.description, m.duration_minutes, m.booking_horizon_days,
+                m.location_kind, m.location_detail
            FROM bookings b
            JOIN booking_links l
              ON l.workspace_id = b.workspace_id AND l.id = b.booking_link_id
@@ -1614,6 +1650,8 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         meeting_description,
         duration_minutes,
         booking_horizon_days,
+        location_kind,
+        location_detail,
     )) = public_details
     else {
         tx.rollback().await?;
@@ -1627,6 +1665,8 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         meeting_description,
         duration_minutes,
         booking_horizon_days,
+        location_kind,
+        location_detail,
         host_display_name,
         guest_memo: booking.guest_memo,
         starts_at: booking.starts_at,
@@ -1640,8 +1680,8 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
 
 fn booking_message(status: &str) -> String {
     match status {
-        "confirmed" => "예약이 확정됐어요.".into(),
-        "confirming" | "held" => "예약 요청을 받았어요. 캘린더에 일정을 등록하고 있어요.".into(),
+        "confirmed" => "예약이 확정됐어요. 미팅 전에 자세한 안내를 연락드릴게요.".into(),
+        "confirming" | "held" => "예약 요청을 받았어요. 일정이 확정되면 연락드릴게요.".into(),
         "unknown" | "canceling" => {
             "캘린더 처리 결과를 확인하고 있어요. 같은 요청을 다시 보내지 않아도 돼요.".into()
         }

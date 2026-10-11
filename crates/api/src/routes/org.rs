@@ -567,7 +567,7 @@ async fn list_principals(
     let ctx = auth.into_inner();
     let request_id = ctx.request_id.clone();
     application::org::admin::check_principal_picker_read(&state.db, &ctx).await?;
-    let admin = ctx.role == contracts::Role::Admin;
+    let admin = ctx.role == contracts::Role::Admin || application::authz::agent_admin(&ctx);
     let filter = if admin {
         application::org::admin::PrincipalFilter {
             kind: q.kind,

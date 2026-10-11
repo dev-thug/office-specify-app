@@ -62,6 +62,12 @@ struct CreateMeetingTypeArgs {
     /// How many days ahead guests may book; server default when omitted.
     #[serde(default)]
     booking_horizon_days: Option<i32>,
+    /// How the meeting is held: `online` (default) or `offline`.
+    #[serde(default)]
+    location_kind: Option<String>,
+    /// Guest-facing video link/tool note (online) or address (offline).
+    #[serde(default)]
+    location_detail: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -73,7 +79,8 @@ struct UpdateMeetingTypeArgs {
     expected_version: i64,
     /// Fields to change: name, description (null clears), duration_minutes,
     /// buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes,
-    /// booking_horizon_days, status.
+    /// booking_horizon_days, location_kind (online|offline),
+    /// location_detail (null clears), status.
     changes: Map<String, Value>,
 }
 
@@ -400,6 +407,8 @@ pub fn tools() -> Vec<ToolDef> {
                 ("buffer_after_minutes", json!(args.buffer_after_minutes)),
                 ("minimum_notice_minutes", json!(args.minimum_notice_minutes)),
                 ("booking_horizon_days", json!(args.booking_horizon_days)),
+                ("location_kind", json!(args.location_kind)),
+                ("location_detail", json!(args.location_detail)),
             ])?;
             let request_hash = hash_of(&req)?;
             let scope = idem_scope(
@@ -424,7 +433,7 @@ pub fn tools() -> Vec<ToolDef> {
 
     let update_meeting_type = tool_with_db(
         "booking_update_meeting_type",
-        "Update a meeting type with optimistic concurrency (expected_version). Requires booking.propose. `changes` may contain name, description (null clears), duration_minutes, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_horizon_days, status.",
+        "Update a meeting type with optimistic concurrency (expected_version). Requires booking.propose. `changes` may contain name, description (null clears), duration_minutes, buffer_before_minutes, buffer_after_minutes, minimum_notice_minutes, booking_horizon_days, location_kind (online|offline), location_detail (null clears), status.",
         input_schema::<UpdateMeetingTypeArgs>(),
         object_schema(),
         false,
