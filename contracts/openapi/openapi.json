@@ -5818,6 +5818,15 @@
       },
       "ManageBookingResponse": {
         "properties": {
+          "booking_horizon_days": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "duration_minutes": {
+            "description": "Meeting length and booking window, so a reschedule can reuse the\nbooking calendar.",
+            "format": "int32",
+            "type": "integer"
+          },
           "ends_at": {
             "format": "date-time",
             "type": "string"
@@ -5840,6 +5849,12 @@
           "id": {
             "format": "uuid",
             "type": "string"
+          },
+          "meeting_description": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "meeting_name": {
             "type": "string"
@@ -7388,6 +7403,30 @@
         ],
         "type": "object"
       },
+      "PublicBookingInvitee": {
+        "description": "The recipient a bound booking link was issued to — only ever shown to the\nholder of that recipient's own capability link.",
+        "properties": {
+          "company_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "type": "object"
+      },
       "PublicBookingLinkResponse": {
         "properties": {
           "booking_horizon_days": {
@@ -7406,6 +7445,17 @@
           },
           "host_name": {
             "type": "string"
+          },
+          "invitee": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PublicBookingInvitee",
+                "description": "Invited recipient for a link bound to one address (outreach links),\nso the guest form can be prefilled. Absent for open links."
+              }
+            ]
           },
           "meeting_type_id": {
             "format": "uuid",
@@ -7448,6 +7498,18 @@
         },
         "required": [
           "expected_version"
+        ],
+        "type": "object"
+      },
+      "PublicLinkBookingResponse": {
+        "description": "Where the guest manages the booking a used-up invitation already made.",
+        "properties": {
+          "manage_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manage_url"
         ],
         "type": "object"
       },
@@ -26421,6 +26483,81 @@
         }
       }
     },
+    "/public/v1/booking-links/{token}/booking": {
+      "get": {
+        "operationId": "get_public_link_booking",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublicLinkBookingResponse"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
     "/public/v1/booking-links/{token}/bookings": {
       "post": {
         "operationId": "create_public_booking",
@@ -26848,6 +26985,115 @@
             "description": ""
           },
           "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      }
+    },
+    "/public/v1/bookings/{manage_token}/slots": {
+      "get": {
+        "operationId": "list_manage_slots",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "manage_token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "timezone",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/SlotsResponse"
+                    },
+                    "meta": {
+                      "properties": {
+                        "request_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "request_id"
+                      ],
+                      "type": "object"
+                    },
+                    "page": {
+                      "properties": {
+                        "has_more": {
+                          "type": "boolean"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "next_cursor",
+                        "has_more"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data",
+                    "meta"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
             "content": {
               "application/problem+json": {
                 "schema": {

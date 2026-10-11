@@ -135,7 +135,7 @@
     "contact": "담당자명",
     "sender": "발신자명",
     "booking": "예약 링크",
-    "unsubscribe": "수신거부 링크",
+    "unsubscribe": "수신 거부 안내",
     "bookingCtaLabel": "미팅 예약",
     "insertBookingCta": "미팅 예약 버튼 삽입",
     "bookingCtaHint": "이 예약 링크를 사용하는 캠페인에서 미팅 유형을 선택해야 합니다.",
@@ -152,6 +152,10 @@
     "legacyTextNotice": "원본 일반 텍스트 본문을 보존하고 있습니다. 메일 캔버스를 편집하면 HTML에서 새 텍스트를 생성합니다.",
     "legacyTextTitle": "기존 일반 텍스트 버전",
     "legacyTextDescription": "본문을 편집하기 전까지 이 텍스트를 버전과 함께 보존합니다. 지금 바꾸려면 HTML에서 생성한 텍스트를 선택하세요.",
-    "useGeneratedText": "HTML에서 생성한 텍스트 사용"
+    "useGeneratedText": "HTML에서 생성한 텍스트 사용",
+    "unsubscribeFooterBefore": "이 메일을 더 받고 싶지 않으시면",
+    "unsubscribeFooterLink": "수신 거부",
+    "unsubscribeFooterAfter": "를 눌러 주세요.",
+    "unsubscribeFooterText": "이 메일을 더 받고 싶지 않으시면 아래 링크를 눌러 주세요."
   }
 }

@@ -391,3 +391,19 @@ export function emailPreviewDocument(html: string): string {
   content.content.querySelectorAll("a").forEach(link => link.removeAttribute("href"));
   return '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;"><meta name="referrer" content="no-referrer"><style>body{margin:0;padding:28px;font:15px/1.7 Arial,sans-serif;color-scheme:light;color:CanvasText;background:Canvas;overflow-wrap:anywhere}p{margin:0 0 16px}a{color:LinkText}table{border-collapse:collapse;max-width:100%}td,th{padding:6px}blockquote{border-left:3px solid GrayText;padding-left:12px;margin-left:0}</style></head><body>' + content.innerHTML + '</body></html>';
 }
+
+/** Recipient-facing unsubscribe line (small, muted) authors can drop into a body. */
+export interface UnsubscribeFooterCopy {
+  before: string;
+  link: string;
+  after: string;
+}
+
+export function unsubscribeFooterHtml(copy: UnsubscribeFooterCopy): string {
+  return '<p style="font-size:12px;color:#8b95a1">' + escapeEmailText(copy.before) + ' <a href="{{compliance.unsubscribe_url}}">' +
+    escapeEmailText(copy.link) + "</a>" + escapeEmailText(copy.after) + "</p>";
+}
+
+export function unsubscribeFooterText(lead: string): string {
+  return lead + "\n{{compliance.unsubscribe_url}}";
+}

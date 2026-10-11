@@ -13,7 +13,7 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
   const t = useTranslations("app");
   return (
     <div className="flex min-h-dvh flex-col bg-background">
-      <header className="flex items-center justify-center gap-2 border-b border-border px-4 py-4">
+      <header className="flex items-center justify-center gap-2 px-4 pt-5">
         <Image
           src="/logo.png"
           alt={t("name")}
@@ -23,7 +23,7 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
         />
         <span className="text-sm font-semibold">{t("name")}</span>
       </header>
-      <main className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-8">
+      <main className="flex w-full flex-1 flex-col px-4 py-8 lg:py-12">
         {children}
       </main>
     </div>

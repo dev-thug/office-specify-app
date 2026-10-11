@@ -32,7 +32,7 @@ import {
 import { ApiError } from "@/lib/api/problem";
 
 import { EmailCanvas, type EmailCanvasHandle } from "./email-canvas";
-import { cleanEmailHtml, DEFAULT_EMAIL_VARIABLES, emailHtmlToText, escapeEmailText, renderSampleEmail } from "./email-authoring";
+import { cleanEmailHtml, DEFAULT_EMAIL_VARIABLES, emailHtmlToText, escapeEmailText, renderSampleEmail, unsubscribeFooterHtml } from "./email-authoring";
 
 import { useApiErrorMessage } from "./api-error-message";
 import { useIdempotencyKey } from "./use-idempotency-key";
@@ -246,6 +246,8 @@ function VersionEditorForm({
       setSubject(next);
       input.focus();
       requestAnimationFrame(() => input.setSelectionRange(start + value.length, start + value.length));
+    } else if (preset.name === "compliance.unsubscribe_url") {
+      canvas.current?.insertHtml(unsubscribeFooterHtml({ before: a("unsubscribeFooterBefore"), link: a("unsubscribeFooterLink"), after: a("unsubscribeFooterAfter") }));
     } else {
       canvas.current?.insertVariable(preset.name);
     }

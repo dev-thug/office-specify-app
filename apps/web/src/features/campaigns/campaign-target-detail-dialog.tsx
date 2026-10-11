@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import { CalendarPlusIcon, ExternalLink, PlusIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useMemo, useRef, useState, type FormEvent } from "react";
@@ -26,8 +26,8 @@ import { ResearchEvidencePanel } from "@/features/research/research-evidence-pan
 import { getMe } from "@/lib/api/auth";
 import { companyActivitiesPath, getCompany } from "@/lib/api/companies";
 import { DraftSendingWorkflow } from "@/features/sending/draft-sending-workflow";
-import { EmailCanvas } from "@/features/templates/email-canvas";
-import { cleanEmailHtml, emailHtmlToText, renderSampleEmail } from "@/features/templates/email-authoring";
+import { EmailCanvas, type EmailCanvasHandle } from "@/features/templates/email-canvas";
+import { cleanEmailHtml, emailHtmlToText, renderSampleEmail, unsubscribeFooterHtml, unsubscribeFooterText } from "@/features/templates/email-authoring";
 import { getMessageDraft, patchMessageDraft, type MessageDraftResponse } from "@/lib/api/sending";
 import { apiFetch, idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
@@ -349,6 +349,7 @@ function CampaignTargetDraftEditor({
   onChanged: () => void | Promise<unknown>;
 }) {
   const t = useTranslations("campaigns.personalized.target");
+  const ta = useTranslations("templates.authoring");
   const queryClient = useQueryClient();
   const etagRef = useRef<string | undefined>(undefined);
   const operationKeyRef = useRef<string | null>(null);
@@ -370,6 +371,10 @@ function CampaignTargetDraftEditor({
   const [queueing, setQueueing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<"subject" | "body" | "variables" | "personal", string>>>({});
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const canvasRef = useRef<EmailCanvasHandle>(null);
+  const insertTarget = useRef<"subject" | "body">("body");
 
   const draftQueryKey = ["sales-campaigns", "draft", campaign.id, target.id, draftId] as const;
   const draftQuery = useQuery({
@@ -488,13 +493,50 @@ function CampaignTargetDraftEditor({
     typeof parsedVariables?.["message.body"] === "string"
       ? (parsedVariables["message.body"] as string)
       : "";
+  // 발송 시 서버가 CRM에서 채우는 값 — 미리보기에도 같은 값을 보여 준다.
+  const recipientValues = useMemo(() => {
+    const values: Record<string, string> = {};
+    if (target.company_name) values["company.name"] = target.company_name;
+    if (target.contact_name) values["contact.name"] = target.contact_name;
+    return values;
+  }, [target.company_name, target.contact_name]);
   const sampleValues = useMemo(
-    () =>
-      Object.fromEntries(
+    () => ({
+      ...recipientValues,
+      ...Object.fromEntries(
         Object.entries(parsedVariables ?? {}).map(([key, value]) => [key, String(value ?? "")])
       ),
-    [parsedVariables]
+    }),
+    [parsedVariables, recipientValues]
   );
+  function insertVariable(name: string) {
+    // 수신 거부는 링크만 덩그러니 두지 않고 안내 문장째 넣는다.
+    if (name === "compliance.unsubscribe_url" && insertTarget.current === "body") {
+      if (bodyEditorMode === "rich") {
+        canvasRef.current?.insertHtml(unsubscribeFooterHtml({ before: ta("unsubscribeFooterBefore"), link: ta("unsubscribeFooterLink"), after: ta("unsubscribeFooterAfter") }));
+        return;
+      }
+      insertPlain(`\n\n${unsubscribeFooterText(ta("unsubscribeFooterText"))}`);
+      return;
+    }
+    insertPlain(`{{${name}}}`, name);
+  }
+  function insertPlain(token: string, name?: string) {
+    if (insertTarget.current === "subject" || bodyEditorMode === "plain") {
+      const field = insertTarget.current === "subject" ? "subject" : "bodyText";
+      const element = field === "subject" ? subjectRef.current : bodyRef.current;
+      const current = field === "subject" ? subject : bodyText;
+      const start = element?.selectionStart ?? current.length;
+      const end = element?.selectionEnd ?? start;
+      updateEditorValue(field, current.slice(0, start) + token + current.slice(end));
+      requestAnimationFrame(() => {
+        element?.focus();
+        element?.setSelectionRange(start + token.length, start + token.length);
+      });
+    } else if (name) {
+      canvasRef.current?.insertVariable(name);
+    }
+  }
   const sampleHtml = useMemo(
     () => renderSampleEmail(bodyHtml, sampleValues),
     [bodyHtml, sampleValues]
@@ -738,9 +780,19 @@ function CampaignTargetDraftEditor({
               <p className="text-2xs text-muted-foreground">{t("personalBodyHint")}</p>
             </div>
           ) : null}
+          <VariableChips
+            t={t}
+            values={recipientValues}
+            bookingAvailable={Boolean(campaign.meeting_type_id)}
+            richMode={bodyEditorMode === "rich"}
+            onInsert={insertVariable}
+            onInsertBookingButton={() => canvasRef.current?.insertBookingCta(t("variableBookingButtonLabel"))}
+          />
           <div className="grid gap-1.5">
             <Label htmlFor="campaign-target-subject">{t("subject")}</Label>
             <Input
+              ref={subjectRef}
+              onFocus={() => { insertTarget.current = "subject"; }}
               id="campaign-target-subject"
               value={subject}
               onChange={(event) => {
@@ -780,6 +832,8 @@ function CampaignTargetDraftEditor({
               <div className="grid gap-1.5">
                 <Label htmlFor="campaign-target-body">{t("plainTextFallback")}</Label>
                 <Textarea
+                  ref={bodyRef}
+                  onFocus={() => { insertTarget.current = "body"; }}
                   id="campaign-target-body"
                   value={bodyText}
                   onChange={(event) => updateEditorValue("bodyText", event.target.value)}
@@ -795,12 +849,13 @@ function CampaignTargetDraftEditor({
               <div className="grid gap-1.5">
                 <Label id="campaign-target-body-rich" tabIndex={-1}>{t("bodyHtml")}</Label>
                 <EmailCanvas
+                  ref={canvasRef}
                   html={bodyHtml}
                   previewHtml={sampleHtml}
                   previewSubject={sampleSubject}
                   previewButtonLabel={t("samplePreview")}
                   onChange={(value) => updateEditorValue("bodyHtml", value)}
-                  onFocus={() => undefined}
+                  onFocus={() => { insertTarget.current = "body"; }}
                 />
                 {fieldErrors.body ? (
                   <p role="alert" className="text-2xs text-destructive">{fieldErrors.body}</p>
@@ -915,4 +970,71 @@ function CampaignTargetDraftEditor({
 
 function emailPreviewDocument(html: string) {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;padding:16px;font:14px/1.55 system-ui,sans-serif;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style></head><body>${cleanEmailHtml(html).html}</body></html>`;
+}
+
+const DRAFT_VARIABLES = [
+  { name: "company.name", label: "variableCompany" },
+  { name: "contact.name", label: "variableContact" },
+  { name: "sender.display_name", label: "variableSender" },
+  { name: "meeting.booking_url", label: "variableBooking" },
+  { name: "compliance.unsubscribe_url", label: "variableUnsubscribe" },
+] as const;
+
+/** 클릭 한 번으로 마지막에 커서가 있던 제목/본문에 {{변수}}를 넣는다. */
+function VariableChips({
+  t,
+  values,
+  bookingAvailable,
+  richMode,
+  onInsert,
+  onInsertBookingButton,
+}: {
+  t: ReturnType<typeof useTranslations>;
+  values: Record<string, string>;
+  bookingAvailable: boolean;
+  richMode: boolean;
+  onInsert: (name: string) => void;
+  onInsertBookingButton: () => void;
+}) {
+  const chips = DRAFT_VARIABLES.filter((variable) => variable.name !== "meeting.booking_url" || bookingAvailable);
+  return (
+    <div className="grid gap-2 rounded-xl bg-muted/50 p-3">
+      <div>
+        <p className="text-sm font-medium">{t("variablesInsert")}</p>
+        <p className="text-2xs text-muted-foreground">{t("variablesInsertHint")}</p>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {chips.map((variable) => (
+          <Button
+            key={variable.name}
+            type="button"
+            size="xs"
+            variant="outline"
+            title={`{{${variable.name}}}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onInsert(variable.name)}
+          >
+            <PlusIcon aria-hidden />
+            {t(variable.label)}
+            {values[variable.name] ? (
+              <span className="max-w-32 truncate text-muted-foreground">· {values[variable.name]}</span>
+            ) : null}
+          </Button>
+        ))}
+        {bookingAvailable && richMode ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={onInsertBookingButton}
+          >
+            <CalendarPlusIcon aria-hidden />
+            {t("variableBookingButton")}
+          </Button>
+        ) : null}
+      </div>
+      {!bookingAvailable ? <p className="text-2xs text-muted-foreground">{t("variableBookingUnavailable")}</p> : null}
+    </div>
+  );
 }

@@ -35,7 +35,15 @@ export interface PublicBookingLink {
   booking_horizon_days?: number;
   /** 예약 요청 시 그대로 에코해야 하는 고지 버전. */
   privacy_notice_version: string;
+  /** 특정 수신자에게 발급된 링크(아웃리치)면 그 수신자 — 폼을 미리 채운다. */
+  invitee?: PublicBookingInvitee;
   [key: string]: unknown;
+}
+
+export interface PublicBookingInvitee {
+  email: string;
+  name?: string | null;
+  company_name?: string | null;
 }
 
 /** GET slots data — B.4.2 예시 그대로. */
@@ -58,6 +66,15 @@ export function getPublicBookingLink(
 ): Promise<ApiResult<PublicBookingLink>> {
   return apiFetch<PublicBookingLink>(
     `/public/v1/booking-links/${encodeURIComponent(token)}`
+  );
+}
+
+/** 이미 예약에 쓰인 초대 링크 → 그 예약의 관리 페이지 (수신자 지정·1회용 링크만). */
+export function getPublicLinkBooking(
+  token: string
+): Promise<ApiResult<{ manage_url: string }>> {
+  return apiFetch<{ manage_url: string }>(
+    `/public/v1/booking-links/${encodeURIComponent(token)}/booking`
   );
 }
 
@@ -137,6 +154,9 @@ export interface PublicManagedBooking {
   guest_timezone?: string;
   guest_name?: string;
   meeting_name?: string | null;
+  meeting_description?: string | null;
+  duration_minutes?: number;
+  booking_horizon_days?: number;
   host_display_name?: string | null;
   failure_code?: string | null;
   /** expected_version 으로 되돌려 보낼 현재 버전. */
@@ -150,6 +170,17 @@ export function getManagedBooking(
 ): Promise<ApiResult<PublicManagedBooking>> {
   return apiFetch<PublicManagedBooking>(
     `/public/v1/bookings/${encodeURIComponent(manageToken)}`
+  );
+}
+
+/** 시간 변경 후보 — 처음 초대 링크와 같은 가용 시간 (GET bookings/{manage_token}/slots). */
+export function getManagedSlots(
+  manageToken: string,
+  query: PublicSlotsQuery
+): Promise<ApiResult<PublicSlotsData>> {
+  const qs = new URLSearchParams({ from: query.from, to: query.to, timezone: query.timezone });
+  return apiFetch<PublicSlotsData>(
+    `/public/v1/bookings/${encodeURIComponent(manageToken)}/slots?${qs}`
   );
 }
 

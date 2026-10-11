@@ -18,5 +18,5 @@ export default async function PublicUnsubscribePage({
   params: Promise<{ token: string }>;
 }): Promise<ReactNode> {
   const { token } = await params;
-  return <UnsubscribeConfirm token={token} />;
+  return <div className="mx-auto flex w-full max-w-xl flex-1 flex-col"><UnsubscribeConfirm token={token} /></div>;
 }

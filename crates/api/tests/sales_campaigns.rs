@@ -831,6 +831,73 @@ async fn campaign_with_a_frozen_message_stays_pinned_when_the_default_sender_cha
 }
 
 #[tokio::test]
+async fn direct_sales_draft_fills_recipient_variables_from_the_crm_at_freeze() {
+    let Some(test) = setup().await else { return };
+    let suffix = Uuid::new_v4().simple().to_string();
+    let (profile, channel, sender, _) = create_smtp_profile(&test, &suffix).await;
+    assert_eq!(
+        put_sender(&test, profile, "sales-vars-sender-001")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let campaign = create_group(&test, "Recipient variables", "sales-vars-campaign-001").await;
+    let campaign_id = campaign["id"].as_str().unwrap();
+    let (company_id, contact_id, email_address_id) = create_crm_target(&test, &suffix).await;
+    insert_marketing_basis(&test, email_address_id).await;
+    let target = add_target(
+        &test,
+        campaign_id,
+        company_id,
+        contact_id,
+        email_address_id,
+        "sales-vars-target-001",
+    )
+    .await
+    .json::<Value>()
+    .await
+    .unwrap()["data"]
+        .clone();
+    let draft = create_target_draft(
+        &test,
+        campaign_id,
+        target["id"].as_str().unwrap(),
+        "{{company.name}} 제안",
+        "{{ contact.name }}님, {{sender.display_name}}입니다.",
+        "sales-vars-draft-001",
+    )
+    .await;
+    let frozen = freeze_draft(
+        &test,
+        draft["draft_id"].as_str().unwrap(),
+        channel,
+        sender,
+        "sales-vars-freeze-001",
+    )
+    .await;
+
+    let mut tx = test
+        .app
+        .state
+        .db
+        .begin(test.world.workspace_id)
+        .await
+        .unwrap();
+    let (subject, body): (String, String) = sqlx::query_as(
+        "SELECT subject, body_text FROM outbound_messages WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(test.world.workspace_id)
+    .bind(Uuid::parse_str(frozen["outbound_message_id"].as_str().unwrap()).unwrap())
+    .fetch_one(tx.conn())
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(subject, format!("Company {suffix} 제안"));
+    assert!(body.starts_with(&format!("Contact {suffix}님, ")), "{body}");
+    assert!(!body.contains("{{"), "{body}");
+}
+
+#[tokio::test]
 async fn sender_get_resolves_the_sole_globally_eligible_profile_without_a_default() {
     let Some(test) = setup().await else { return };
     let (profile_id, _, _, _) =

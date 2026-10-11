@@ -2196,6 +2196,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/public/v1/booking-links/{token}/booking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_public_link_booking"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public/v1/booking-links/{token}/bookings": {
         parameters: {
             query?: never;
@@ -2270,6 +2286,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["reschedule_public_booking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public/v1/bookings/{manage_token}/slots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_manage_slots"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4487,6 +4519,14 @@ export interface components {
             version: number;
         };
         ManageBookingResponse: {
+            /** Format: int32 */
+            booking_horizon_days?: number;
+            /**
+             * Format: int32
+             * @description Meeting length and booking window, so a reschedule can reuse the
+             *     booking calendar.
+             */
+            duration_minutes?: number;
             /** Format: date-time */
             ends_at: string;
             guest_memo?: string | null;
@@ -4495,6 +4535,7 @@ export interface components {
             host_display_name: string;
             /** Format: uuid */
             id: string;
+            meeting_description?: string | null;
             meeting_name: string;
             message: string;
             /** Format: date-time */
@@ -5054,6 +5095,15 @@ export interface components {
             type: string;
             violations?: components["schemas"]["Violation"][];
         };
+        /**
+         * @description The recipient a bound booking link was issued to — only ever shown to the
+         *     holder of that recipient's own capability link.
+         */
+        PublicBookingInvitee: {
+            company_name?: string | null;
+            email: string;
+            name?: string | null;
+        };
         PublicBookingLinkResponse: {
             /** Format: int32 */
             booking_horizon_days: number;
@@ -5061,6 +5111,7 @@ export interface components {
             /** Format: int32 */
             duration_minutes: number;
             host_name: string;
+            invitee?: null | components["schemas"]["PublicBookingInvitee"];
             /** Format: uuid */
             meeting_type_id: string;
             /** Format: int32 */
@@ -5073,6 +5124,10 @@ export interface components {
         PublicCancelRequest: {
             /** Format: int64 */
             expected_version: number;
+        };
+        /** @description Where the guest manages the booking a used-up invitation already made. */
+        PublicLinkBookingResponse: {
+            manage_url: string;
         };
         PublicRescheduleRequest: {
             /** Format: int64 */
@@ -15269,6 +15324,44 @@ export interface operations {
             };
         };
     };
+    get_public_link_booking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["PublicLinkBookingResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     create_public_booking: {
         parameters: {
             query?: never;
@@ -15474,6 +15567,56 @@ export interface operations {
                 };
             };
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_manage_slots: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                timezone: string;
+            };
+            header?: never;
+            path: {
+                manage_token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["SlotsResponse"];
+                        meta: {
+                            request_id: string;
+                        };
+                        page?: {
+                            has_more: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

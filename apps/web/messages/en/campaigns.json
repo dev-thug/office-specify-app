@@ -416,7 +416,7 @@
       "bodyRequired": "Enter the message body",
       "fieldBody": "Body",
       "fillRequired": "Please fill in:",
-      "subjectPlaceholder": "Subject the recipient will see",
+      "subjectPlaceholder": "Write a subject for this company",
       "advancedVariables": "Advanced: template variables (JSON)",
       "manageContacts": "Manage company contacts",
       "manageEmails": "Manage contact emails",
@@ -454,7 +454,7 @@
       "replyTo": "Reply-To",
       "sources": "Evidence and sources",
       "openCompany": "Open CRM company",
-      "newDraft": "Create company-specific draft",
+      "newDraft": "Write a new company draft",
       "draftTitle": "Draft for {company}",
       "draftDescription": "Write copy for this recipient. If you select a saved template version, its variables and the edited copy stay attached to this draft.",
       "template": "Reusable template",
@@ -468,7 +468,6 @@
       "variablesHint": "Use an object of recipient-specific values. The final recipient preview is generated on freeze.",
       "variablesInvalid": "Enter a valid JSON object.",
       "subject": "Subject",
-      "subjectPlaceholder": "Write a subject for this company",
       "body": "Message",
       "bodyPlaceholder": "Write a company-specific message",
       "messageFormat": "Message format",
@@ -491,7 +490,6 @@
       "remoteConflict": "This draft changed on the server. Your unsaved edits are still here; reload explicitly before continuing.",
       "reloadRemote": "Discard edits and reload latest draft",
       "noDraft": "No message draft yet. Create separate copy for this company.",
-      "newDraft": "Write a new company draft",
       "replacementDraftAllowed": "The previous send failed or was canceled. Create new copy and request a fresh approval.",
       "frozenReviewCopyNote": "This reviewed snapshot cannot be edited. Create a separate editable copy; the original remains in the send history.",
       "copyReviewedDraft": "Create editable copy",
@@ -506,7 +504,17 @@
       "writeFollowUpDraft": "Write follow-up draft",
       "writingFollowUpDraft": "Creating follow-up draft…",
       "approved": "Approved snapshot is ready to queue from the board.",
-      "openBoard": "Back to campaign board"
+      "openBoard": "Back to campaign board",
+      "variablesInsert": "Insert variable",
+      "variablesInsertHint": "Inserted where you were last typing — subject or body. Company, contact and sender names are filled from the CRM when the message is sent.",
+      "variableCompany": "Company name",
+      "variableContact": "Contact name",
+      "variableSender": "Sender name",
+      "variableBooking": "Meeting booking link",
+      "variableBookingButton": "Booking button",
+      "variableBookingButtonLabel": "Pick a meeting time",
+      "variableUnsubscribe": "Unsubscribe link",
+      "variableBookingUnavailable": "This campaign has no meeting type, so a booking link can't be added."
     }
   }
 }

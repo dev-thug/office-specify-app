@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { cleanEmailHtml, emailHtmlToText, emailPreviewDocument, renderSampleEmail, DEFAULT_EMAIL_VARIABLES } from "../email-authoring";
+import { cleanEmailHtml, emailHtmlToText, emailPreviewDocument, renderSampleEmail, DEFAULT_EMAIL_VARIABLES, unsubscribeFooterHtml } from "../email-authoring";
 
 describe("email authoring", () => {
+  it("keeps the toned unsubscribe footer through sanitizing", () => {
+    const footer = unsubscribeFooterHtml({ before: "이 메일을 더 받고 싶지 않으시면", link: "수신 거부", after: "를 눌러 주세요." });
+    const cleaned = cleanEmailHtml(footer);
+    expect(cleaned.removed).toBe(false);
+    expect(cleaned.html).toContain('href="{{compliance.unsubscribe_url}}"');
+    expect(cleaned.html).toContain("font-size:12px");
+    expect(emailHtmlToText(cleaned.html)).toContain("이 메일을 더 받고 싶지 않으시면 수신 거부 ({{compliance.unsubscribe_url}})를 눌러 주세요.");
+  });
+
   it("preserves supported formatting, links and variable placeholders", () => {
     const html = '<p>Hello <strong>{{contact.name}}</strong></p><ul><li>One</li></ul><a href="https://example.test">Visit</a>';
     expect(cleanEmailHtml(html)).toEqual({html, removed: false});

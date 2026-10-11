@@ -868,6 +868,10 @@ pub async fn freeze_draft_in_tx<'db>(
     }
 
     // ---- render + system variables ---------------------------------------
+    let crm_vars = match &sales_binding {
+        Some(binding) => sales_recipient_variables(&mut tx, binding, sender_identity_id).await?,
+        None => std::collections::BTreeMap::new(),
+    };
     let outbound_id = Uuid::new_v4();
     let mut unsubscribe_token: Option<String> = None;
     let mut unsubscribe_url: Option<String> = None;
@@ -951,6 +955,7 @@ pub async fn freeze_draft_in_tx<'db>(
             serde_json::Value::Object(m) => m.clone(),
             _ => serde_json::Map::new(),
         };
+        merge_recipient_variables(&mut system_vars, &crm_vars, &variables);
         let r = domain::templates::render(
             &specs,
             render_subject,
@@ -975,14 +980,18 @@ pub async fn freeze_draft_in_tx<'db>(
         })?;
         (r.subject, r.body_text, r.body_html)
     } else if sales_binding.is_some() {
-        // Personalized sales drafts without a template may still use the two
-        // server-owned public URL placeholders. All other placeholders remain
-        // closed unless the draft selects a template version with a schema.
+        // Personalized sales drafts without a template may use the two
+        // server-owned public URL placeholders plus the recipient facts the
+        // server fills from the CRM (company, contact, sender). Any other
+        // placeholder needs a template version with a schema.
         let specs = domain::templates::parse_variable_schema(&serde_json::json!({
             "type": "object",
             "properties": {
                 "compliance.unsubscribe_url": {"type": "string", "format": "uri"},
-                "meeting.booking_url": {"type": "string", "format": "uri"}
+                "meeting.booking_url": {"type": "string", "format": "uri"},
+                "company.name": {"type": "string"},
+                "contact.name": {"type": "string"},
+                "sender.display_name": {"type": "string"}
             },
             "additionalProperties": false
         }))
@@ -1031,6 +1040,7 @@ pub async fn freeze_draft_in_tx<'db>(
             serde_json::Value::Object(m) => m.clone(),
             _ => serde_json::Map::new(),
         };
+        merge_recipient_variables(&mut system_vars, &crm_vars, &variables);
         let rendered = domain::templates::render(
             &specs,
             &d.subject,
@@ -2058,6 +2068,56 @@ pub async fn cancel(
         status: "canceled".to_string(),
         version: response_version,
     })
+}
+
+/// Recipient facts a sales-campaign draft may reference without declaring
+/// them: `company.name`, `contact.name` and `sender.display_name`, read from
+/// the CRM target and the campaign's bound sender at freeze time.
+async fn sales_recipient_variables(
+    tx: &mut Tx<'_>,
+    binding: &infrastructure::repo::sales_campaigns::DraftBinding,
+    sender_identity_id: Uuid,
+) -> Result<std::collections::BTreeMap<String, String>, AppError> {
+    use infrastructure::repo::campaigns as crm;
+    let mut vars = std::collections::BTreeMap::new();
+    if let Some((_, display_name)) = crm::get_sender_identity(tx, sender_identity_id).await? {
+        vars.insert("sender.display_name".to_string(), display_name);
+    }
+    let mut company = None;
+    if let Some(contact_id) = binding.contact_id
+        && let Some((contact_name, contact_company)) =
+            crm::contact_and_company_names(tx, contact_id).await?
+    {
+        vars.insert("contact.name".to_string(), contact_name);
+        company = contact_company;
+    }
+    if let Some(company_id) = binding.company_id {
+        // The target's own company wins over the contact's current employer.
+        if let Some(name) = crm::company_name(tx, company_id).await? {
+            company = Some(name);
+        }
+    }
+    if let Some(name) = company {
+        vars.insert("company.name".to_string(), name);
+    }
+    vars.retain(|_, value| !value.trim().is_empty());
+    Ok(vars)
+}
+
+/// Fill CRM recipient facts the author did not set explicitly — an
+/// explicit draft variable always wins over the CRM value.
+fn merge_recipient_variables(
+    system_vars: &mut std::collections::BTreeMap<String, String>,
+    crm_vars: &std::collections::BTreeMap<String, String>,
+    variables: &serde_json::Map<String, serde_json::Value>,
+) {
+    for (name, value) in crm_vars {
+        if !variables.contains_key(name) {
+            system_vars
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
 }
 
 #[cfg(test)]

@@ -242,12 +242,16 @@ pub async fn active_principal_kind(
 }
 
 pub async fn published_privacy_notice_version(tx: &mut Tx<'_>) -> Result<Option<String>, AppError> {
-    sqlx::query_scalar(
+    // The key is absent until an operator publishes a notice: `->>` then
+    // yields SQL NULL, which must decode as `None` rather than fail as a
+    // `String` (that surfaced as a 500 on the public booking page).
+    sqlx::query_scalar::<_, Option<String>>(
         "SELECT settings->>'booking_privacy_notice_version' FROM workspaces WHERE id = $1",
     )
     .bind(tx.workspace_id())
     .fetch_optional(tx.conn())
     .await
+    .map(Option::flatten)
     .map_err(map_sqlx)
 }
 
@@ -477,6 +481,46 @@ pub async fn issue_manage_token(
     .fetch_one(tx.conn())
     .await
     .map_err(map_sqlx)
+}
+
+/// Latest booking still holding a use of this link (not canceled/failed/expired).
+pub async fn latest_active_booking_for_link(
+    tx: &mut Tx<'_>,
+    link_id: Uuid,
+) -> Result<Option<(Uuid, DateTime<Utc>)>, AppError> {
+    sqlx::query_as(
+        "SELECT id, starts_at FROM bookings
+          WHERE workspace_id = $1 AND booking_link_id = $2
+            AND status NOT IN ('canceled','failed','expired')
+          ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(tx.workspace_id())
+    .bind(link_id)
+    .fetch_optional(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Idempotent manage-token issue: a token derived deterministically from the
+/// same inputs is inserted once and reused on every later call.
+pub async fn ensure_manage_token(
+    tx: &mut Tx<'_>,
+    booking_id: Uuid,
+    token_hash: &[u8; 32],
+    expires_at: DateTime<Utc>,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO booking_manage_tokens (workspace_id, booking_id, token_hash, expires_at)
+         VALUES ($1,$2,$3,$4) ON CONFLICT (token_hash) DO NOTHING",
+    )
+    .bind(tx.workspace_id())
+    .bind(booking_id)
+    .bind(&token_hash[..])
+    .bind(expires_at)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(())
 }
 
 pub async fn get_manage_token(

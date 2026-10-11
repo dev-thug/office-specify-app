@@ -88,6 +88,93 @@ fn midday_in_three_days() -> chrono::DateTime<Utc> {
 }
 
 #[tokio::test]
+async fn public_link_without_published_privacy_notice_is_unavailable_not_internal() {
+    let (app, world) = setup().await;
+    let fixture = create_fixture(&app, &world, 1).await;
+    let mut tx = app.state.db.begin(world.workspace_id).await.unwrap();
+    sqlx::query("UPDATE workspaces SET settings = settings - 'booking_privacy_notice_version' WHERE id = $1")
+        .bind(world.workspace_id).execute(tx.conn()).await.unwrap();
+    tx.commit().await.unwrap();
+    let response = app
+        .client
+        .get(app.url(&format!("/public/v1/booking-links/{}", fixture.token)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn used_up_invitation_resolves_to_its_booking_manage_page() {
+    for (max_uses, key) in [
+        (1, "booking-resume-single-0001"),
+        (5, "booking-resume-multi-0001"),
+    ] {
+        let (app, world) = setup().await;
+        let fixture = create_fixture(&app, &world, max_uses).await;
+        let created = app
+            .client
+            .post(app.url(&format!(
+                "/public/v1/booking-links/{}/bookings",
+                fixture.token
+            )))
+            .header("idempotency-key", key)
+            .json(&json!({
+                "guest_name":"Guest Person",
+                "guest_email":format!("{key}@example.test"),
+                "starts_at":midday_in_three_days().to_rfc3339(),
+                "timezone":"UTC",
+                "privacy_notice_version":"booking-privacy-v3"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::ACCEPTED);
+        let created: serde_json::Value = created.json().await.unwrap();
+        let resume_path = format!("/public/v1/booking-links/{}/booking", fixture.token);
+        let resume = app.get(&resume_path).await;
+        if max_uses > 1 {
+            // An open multi-use link must not reveal another guest's booking.
+            assert_eq!(resume.status(), StatusCode::NOT_FOUND);
+            continue;
+        }
+        assert_eq!(
+            app.get(&format!("/public/v1/booking-links/{}", fixture.token))
+                .await
+                .status(),
+            StatusCode::GONE
+        );
+        assert_eq!(resume.status(), StatusCode::OK);
+        let resume: serde_json::Value = resume.json().await.unwrap();
+        let manage_url = resume["data"]["manage_url"].as_str().unwrap().to_string();
+        let again: serde_json::Value = app.get(&resume_path).await.json().await.unwrap();
+        assert_eq!(
+            again["data"]["manage_url"], manage_url,
+            "reopening reuses one capability"
+        );
+        let manage_token = manage_url.rsplit('/').next().unwrap();
+        let status = app
+            .get(&format!("/public/v1/bookings/{manage_token}"))
+            .await;
+        assert_eq!(status.status(), StatusCode::OK);
+        let status: serde_json::Value = status.json().await.unwrap();
+        assert_eq!(status["data"]["id"], created["data"]["id"]);
+        assert_eq!(status["data"]["duration_minutes"], 30);
+        // Rescheduling reuses the invitation's availability even though the link is used up.
+        let day = midday_in_three_days().date_naive();
+        let slots = app
+            .get(&format!(
+                "/public/v1/bookings/{manage_token}/slots?from={day}&to={}&timezone=UTC",
+                day + Duration::days(1)
+            ))
+            .await;
+        assert_eq!(slots.status(), StatusCode::OK);
+        let slots: serde_json::Value = slots.json().await.unwrap();
+        assert!(!slots["data"]["slots"].as_array().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn public_booking_replay_returns_same_manage_token_without_storing_it() {
     let (app, world) = setup().await;
     let fixture = create_fixture(&app, &world, 5).await;

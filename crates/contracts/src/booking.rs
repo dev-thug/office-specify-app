@@ -185,6 +185,25 @@ pub struct PublicBookingLinkResponse {
     pub booking_horizon_days: i32,
     /// The exact notice version the guest must acknowledge in a booking POST.
     pub privacy_notice_version: String,
+    /// Invited recipient for a link bound to one address (outreach links),
+    /// so the guest form can be prefilled. Absent for open links.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invitee: Option<PublicBookingInvitee>,
+}
+
+/// Where the guest manages the booking a used-up invitation already made.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct PublicLinkBookingResponse {
+    pub manage_url: String,
+}
+
+/// The recipient a bound booking link was issued to — only ever shown to the
+/// holder of that recipient's own capability link.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct PublicBookingInvitee {
+    pub email: String,
+    pub name: Option<String>,
+    pub company_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -260,6 +279,14 @@ pub struct ManageBookingResponse {
     pub id: Uuid,
     pub guest_name: String,
     pub meeting_name: String,
+    #[serde(default)]
+    pub meeting_description: Option<String>,
+    /// Meeting length and booking window, so a reschedule can reuse the
+    /// booking calendar.
+    #[serde(default)]
+    pub duration_minutes: i32,
+    #[serde(default)]
+    pub booking_horizon_days: i32,
     pub host_display_name: String,
     pub guest_memo: Option<String>,
     pub starts_at: DateTime<Utc>,

@@ -748,6 +748,60 @@ pub async fn resolve_public_link(db: &Db, raw_token: &str) -> Result<ResolvedLin
     Ok(resolved)
 }
 
+/// The booking a used-up link already produced, so reopening the invitation
+/// lands on its status page instead of "link unavailable". Only links that
+/// identify one guest qualify — bound to a recipient, or single-use — so an
+/// open multi-use link never reveals someone else's booking.
+pub struct LinkBooking {
+    pub workspace_id: Uuid,
+    pub link_id: Uuid,
+    pub booking_id: Uuid,
+    pub starts_at: DateTime<Utc>,
+}
+
+pub async fn link_booking(db: &Db, raw_token: &str) -> Result<LinkBooking, AppError> {
+    let location = public_tokens::booking_link_token(db, raw_token).await?;
+    let mut tx = db.begin(location.workspace_id).await?;
+    let link = repo::get_booking_link_by_id_from_token(&mut tx, location.token_id).await?;
+    let booking = match &link {
+        Some(link)
+            if link.revoked_at.is_none()
+                && (link.bound_email_address_id.is_some() || link.max_uses == 1) =>
+        {
+            repo::latest_active_booking_for_link(&mut tx, link.id).await?
+        }
+        _ => None,
+    };
+    tx.rollback().await?;
+    let (booking_id, starts_at) =
+        booking.ok_or_else(|| AppError::not_found("booking not found"))?;
+    Ok(LinkBooking {
+        workspace_id: location.workspace_id,
+        link_id: location.token_id,
+        booking_id,
+        starts_at,
+    })
+}
+
+/// Make sure `raw_manage_token` opens `booking` (idempotent).
+pub async fn ensure_link_manage_token(
+    db: &Db,
+    booking: &LinkBooking,
+    raw_manage_token: &str,
+) -> Result<(), AppError> {
+    let mut tx = db.begin(booking.workspace_id).await?;
+    let token_hash = infrastructure::crypto::sha256_bytes(raw_manage_token.as_bytes());
+    repo::ensure_manage_token(
+        &mut tx,
+        booking.booking_id,
+        &token_hash,
+        booking.starts_at + Duration::days(90),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn public_link_details(
     db: &Db,
     raw_token: &str,
@@ -762,7 +816,7 @@ pub async fn public_link_details(
             "calendar is unavailable",
         ));
     }
-    let (timezone, privacy_notice_version) = {
+    let (timezone, privacy_notice_version, invitee) = {
         let mut tx = db.begin(resolved.workspace_id).await?;
         let rows = repo::availability_rules(&mut tx, resolved.link.host_principal_id).await?;
         let version = repo::published_privacy_notice_version(&mut tx)
@@ -773,12 +827,17 @@ pub async fn public_link_details(
                     "published booking privacy notice is not configured",
                 )
             })?;
+        let invitee = match resolved.link.bound_email_address_id {
+            Some(address_id) => bound_invitee(&mut tx, address_id).await?,
+            None => None,
+        };
         tx.rollback().await?;
         (
             rows.first()
                 .map(|r| r.timezone.clone())
                 .unwrap_or_else(|| "UTC".into()),
             version,
+            invitee,
         )
     };
     Ok(PublicBookingLinkResponse {
@@ -791,7 +850,33 @@ pub async fn public_link_details(
         minimum_notice_minutes: resolved.link.minimum_notice_minutes,
         booking_horizon_days: resolved.link.booking_horizon_days,
         privacy_notice_version,
+        invitee,
     })
+}
+
+/// Prefill facts for a link bound to one recipient: the invited address and,
+/// when the CRM knows it, the contact and company behind that address.
+async fn bound_invitee(
+    tx: &mut Tx<'_>,
+    address_id: Uuid,
+) -> Result<Option<PublicBookingInvitee>, AppError> {
+    use infrastructure::repo::campaigns as crm;
+    let Some((email, _)) = crm::get_email_address(tx, address_id).await? else {
+        return Ok(None);
+    };
+    let (mut name, mut company_name) = (None, None);
+    if let Some(contact_id) = crm::first_contact_for_address(tx, address_id).await?
+        && let Some((contact_name, company)) =
+            crm::contact_and_company_names(tx, contact_id).await?
+    {
+        name = Some(contact_name).filter(|value| !value.trim().is_empty());
+        company_name = company.filter(|value| !value.trim().is_empty());
+    }
+    Ok(Some(PublicBookingInvitee {
+        email,
+        name,
+        company_name,
+    }))
 }
 
 fn day_bounds(date: NaiveDate, timezone: Tz) -> Result<(DateTime<Utc>, DateTime<Utc>), AppError> {
@@ -1452,6 +1537,40 @@ fn validate_guest(request: &CreatePublicBookingRequest) -> Result<(), AppError> 
     Ok(())
 }
 
+/// Candidate times for rescheduling: the same availability the original
+/// invitation offered, computed for the booking's own link (even when the
+/// link itself is used up).
+pub async fn manage_slots(
+    db: &Db,
+    calendar: &dyn CalendarProvider,
+    raw_token: &str,
+    from: NaiveDate,
+    to: NaiveDate,
+    timezone: &str,
+) -> Result<SlotsResponse, AppError> {
+    let location = public_tokens::booking_manage_token(db, raw_token).await?;
+    let mut tx = db.begin(location.workspace_id).await?;
+    let token = repo::get_manage_token(&mut tx, location.token_id)
+        .await?
+        .filter(|token| token.revoked_at.is_none() && token.expires_at > Utc::now());
+    let booking = match token {
+        Some(token) => repo::get_booking(&mut tx, token.booking_id).await?,
+        None => None,
+    };
+    let link = match &booking {
+        Some(booking) => repo::get_booking_link(&mut tx, booking.booking_link_id, false).await?,
+        None => None,
+    };
+    tx.rollback().await?;
+    let link = link.ok_or_else(hidden_not_found)?;
+    let resolved = ResolvedLink {
+        workspace_id: location.workspace_id,
+        link_id: link.id,
+        link,
+    };
+    compute_slots(db, calendar, resolved, from, to, timezone).await
+}
+
 pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingResponse, AppError> {
     let location = public_tokens::booking_manage_token(db, raw_token).await?;
     let mut tx = db.begin(location.workspace_id).await?;
@@ -1467,8 +1586,8 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         tx.rollback().await?;
         return Err(hidden_not_found());
     };
-    let public_details: Option<(String, String)> = sqlx::query_as(
-        "SELECT m.name, p.name
+    let public_details: Option<(String, String, Option<String>, i32, i32)> = sqlx::query_as(
+        "SELECT m.name, p.name, m.description, m.duration_minutes, m.booking_horizon_days
            FROM bookings b
            JOIN booking_links l
              ON l.workspace_id = b.workspace_id AND l.id = b.booking_link_id
@@ -1484,7 +1603,14 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
     .fetch_optional(tx.conn())
     .await
     .map_err(infrastructure::error::map_sqlx)?;
-    let Some((meeting_name, host_display_name)) = public_details else {
+    let Some((
+        meeting_name,
+        host_display_name,
+        meeting_description,
+        duration_minutes,
+        booking_horizon_days,
+    )) = public_details
+    else {
         tx.rollback().await?;
         return Err(hidden_not_found());
     };
@@ -1493,6 +1619,9 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
         id: booking.id,
         guest_name: booking.guest_name,
         meeting_name,
+        meeting_description,
+        duration_minutes,
+        booking_horizon_days,
         host_display_name,
         guest_memo: booking.guest_memo,
         starts_at: booking.starts_at,
@@ -1506,15 +1635,13 @@ pub async fn manage_booking(db: &Db, raw_token: &str) -> Result<ManageBookingRes
 
 fn booking_message(status: &str) -> String {
     match status {
-        "confirmed" => "예약이 확정되었습니다.".into(),
-        "confirming" | "held" => {
-            "예약 요청을 접수했습니다. 캘린더 확정 결과를 확인해 주세요.".into()
-        }
+        "confirmed" => "예약이 확정됐어요.".into(),
+        "confirming" | "held" => "예약 요청을 받았어요. 캘린더에 일정을 등록하고 있어요.".into(),
         "unknown" | "canceling" => {
-            "캘린더 결과를 확인 중입니다. 같은 요청을 다시 보내지 마세요.".into()
+            "캘린더 처리 결과를 확인하고 있어요. 같은 요청을 다시 보내지 않아도 돼요.".into()
         }
-        "canceled" => "예약이 취소되었습니다.".into(),
-        "failed" | "expired" => "예약을 완료하지 못했습니다. 새 시간을 선택해 주세요.".into(),
+        "canceled" => "예약이 취소됐어요.".into(),
+        "failed" | "expired" => "예약을 완료하지 못했어요. 다른 시간을 골라 주세요.".into(),
         _ => "예약 상태를 확인해 주세요.".into(),
     }
 }

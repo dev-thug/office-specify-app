@@ -73,9 +73,11 @@ pub fn router() -> OpenApiRouter<AppState> {
 pub fn public_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(get_public_link))
+        .routes(routes!(get_public_link_booking))
         .routes(routes!(list_public_slots))
         .routes(routes!(create_public_booking))
         .routes(routes!(get_manage_booking))
+        .routes(routes!(list_manage_slots))
         .routes(routes!(reschedule_public_booking))
         .routes(routes!(cancel_public_booking))
 }
@@ -474,6 +476,37 @@ async fn get_public_link(
     Ok(axum::Json(envelope(row, &request_id.0)))
 }
 
+#[utoipa::path(get, path = "/booking-links/{token}/booking", params(("token" = String, Path)),
+    responses((status = 200, body = PublicLinkBookingResponse), (status = 404, body = Problem)))]
+async fn get_public_link_booking(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    request_id: RequestIdHeader,
+) -> Result<axum::Json<Envelope<PublicLinkBookingResponse>>, ProblemError> {
+    public_booking_read_limit(&state, &headers, &addr).await?;
+    let booking = application::booking::link_booking(&state.db, &token).await?;
+    // Deterministic per (link capability, booking): reopening the invitation
+    // always resolves to the same manage capability instead of minting more.
+    let capability = infrastructure::crypto::sha256_hex(token.as_bytes());
+    let seed = format!(
+        "booking-resume:{capability}:{}:{}",
+        booking.link_id, booking.booking_id
+    );
+    let manage_token = infrastructure::crypto::b64_encode(&infrastructure::crypto::hmac_sha256(
+        &state.config.hmac_key,
+        seed.as_bytes(),
+    ));
+    application::booking::ensure_link_manage_token(&state.db, &booking, &manage_token).await?;
+    Ok(axum::Json(envelope(
+        PublicLinkBookingResponse {
+            manage_url: format!("/public/booking/{manage_token}"),
+        },
+        &request_id.0,
+    )))
+}
+
 #[utoipa::path(get, path = "/booking-links/{token}/slots", params(("token" = String, Path), ("from" = String, Query), ("to" = String, Query), ("timezone" = String, Query)),
     responses((status = 200, body = SlotsResponse), (status = 503, body = Problem)))]
 async fn list_public_slots(
@@ -572,7 +605,7 @@ async fn create_public_booking(
         timezone: stored.body.timezone,
         manage_url: format!("/public/booking/{manage_token}"),
         status_url: format!("/public/v1/bookings/{manage_token}"),
-        message: "예약 요청을 접수했습니다. 캘린더 확정 결과를 확인해 주세요.".into(),
+        message: "예약 요청을 받았어요. 캘린더에 일정을 등록하고 있어요.".into(),
     };
     Ok((
         StatusCode::ACCEPTED,
@@ -648,6 +681,31 @@ async fn get_manage_booking(
 ) -> Result<axum::Json<Envelope<ManageBookingResponse>>, ProblemError> {
     public_booking_read_limit(&state, &headers, &addr).await?;
     let row = application::booking::manage_booking(&state.db, &token).await?;
+    Ok(axum::Json(envelope(row, &request_id.0)))
+}
+
+#[utoipa::path(get, path = "/bookings/{manage_token}/slots", params(("manage_token" = String, Path), ("from" = String, Query), ("to" = String, Query), ("timezone" = String, Query)),
+    responses((status = 200, body = SlotsResponse), (status = 404, body = Problem), (status = 503, body = Problem)))]
+async fn list_manage_slots(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+    Query(q): Query<SlotQuery>,
+    request_id: RequestIdHeader,
+) -> Result<axum::Json<Envelope<SlotsResponse>>, ProblemError> {
+    public_booking_read_limit(&state, &headers, &addr).await?;
+    let from = parse_date("from", &q.from)?;
+    let to = parse_date("to", &q.to)?;
+    let row = application::booking::manage_slots(
+        &state.db,
+        state.calendar.as_ref(),
+        &token,
+        from,
+        to,
+        &q.timezone,
+    )
+    .await?;
     Ok(axum::Json(envelope(row, &request_id.0)))
 }
 

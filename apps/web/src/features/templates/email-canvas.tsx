@@ -19,6 +19,7 @@ import { cleanEmailHtml, emailPreviewDocument, escapeEmailText, safeEmailLink } 
 export interface EmailCanvasHandle {
   insertVariable: (name: string) => void;
   insertBookingCta: (label: string) => void;
+  insertHtml: (html: string) => void;
 }
 
 export const EmailCanvas = forwardRef<EmailCanvasHandle, {
@@ -107,7 +108,9 @@ export const EmailCanvas = forwardRef<EmailCanvasHandle, {
       }
     },
     insertBookingCta(label) {
-      const value = '<table role="presentation" border="0" cellpadding="12" cellspacing="0"><tbody><tr><td bgcolor="#f3f4f6"><a href="{{meeting.booking_url}}"><strong>' + escapeEmailText(label) + "</strong></a></td></tr></tbody></table>";
+      this.insertHtml('<table role="presentation" border="0" cellpadding="12" cellspacing="0"><tbody><tr><td bgcolor="#f3f4f6"><a href="{{meeting.booking_url}}"><strong>' + escapeEmailText(label) + "</strong></a></td></tr></tbody></table>");
+    },
+    insertHtml(value) {
       if (mode === "html" && code.current) {
         const element = code.current;
         const start = element.selectionStart;

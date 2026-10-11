@@ -957,6 +957,16 @@ pub async fn contact_and_company_names(
     .map_err(map_sqlx)
 }
 
+/// Company display name, for sales targets bound to a company without a contact.
+pub async fn company_name(tx: &mut Tx<'_>, company_id: Uuid) -> Result<Option<String>, AppError> {
+    sqlx::query_scalar("SELECT name FROM companies WHERE workspace_id = $1 AND id = $2")
+        .bind(tx.workspace_id())
+        .bind(company_id)
+        .fetch_optional(tx.conn())
+        .await
+        .map_err(map_sqlx)
+}
+
 // ------------------------------------------------------------- eligibility
 
 /// (address_original, verification_status) for a recipient id.
