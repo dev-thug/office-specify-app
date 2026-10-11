@@ -241,7 +241,7 @@ describe("SMTP settings", () => {
       password: "super-secret-smtp-password",
       from_address: "news@updates.acme.test",
       from_name: "Acme News",
-      reply_to: null,
+      reply_to: "mailbox@acme.test",
       custom_headers: {},
       sender_confirmed: true,
     });
@@ -576,6 +576,47 @@ describe("mail accounts screen", () => {
       from_name: "Acme Sales",
       password: "zoho-app-password",
       sender_confirmed: true,
+    });
+  });
+
+  it("replies default to the mailbox address when sending from an alias", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/smtp-connections" && init?.method === "POST") {
+        bodies.push(JSON.parse(String(init.body)));
+        return response(profile, 201);
+      }
+      return response([]);
+    });
+    mount(fetcher);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add SMTP connection" })).toBeEnabled()
+    );
+
+    async function submitWith(replyTo?: string) {
+      fireEvent.click(screen.getByRole("button", { name: "Add SMTP connection" }));
+      fireEvent.change(screen.getByLabelText("SMTP password"), { target: { value: "pw-secret-1" } });
+      fireEvent.change(screen.getByLabelText("From name"), { target: { value: "Acme" } });
+      fireEvent.change(screen.getByLabelText("From address"), {
+        target: { value: "hello@news.acme.test" },
+      });
+      if (replyTo) {
+        fireEvent.change(screen.getByLabelText("Reply-To"), { target: { value: replyTo } });
+      }
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "This From address is registered to the selected mail account.",
+        })
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Save SMTP connection" }));
+      await waitFor(() => expect(bodies.length).toBeGreaterThan(0));
+    }
+
+    await submitWith();
+    expect(bodies[0]).toMatchObject({
+      from_address: "hello@news.acme.test",
+      reply_to: "mailbox@acme.test",
     });
   });
 });

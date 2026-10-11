@@ -632,6 +632,11 @@ export function SmtpSettings({
   const selectedAccount = mailAccounts.find((account) => account.id === selectedAccountId);
   const autoAddress = selectedAccount?.primary_address ?? "";
   const autoName = autoAddress ? t("autoName", { address: autoAddress }) : "";
+  // 별칭으로 보내면 답장은 기본적으로 메일 계정 주소로 받는다 (직접 바꿀 수 있다).
+  const aliasDiffers =
+    Boolean(autoAddress) &&
+    form.fromAddress.trim() !== "" &&
+    form.fromAddress.trim().toLowerCase() !== autoAddress.toLowerCase();
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -669,7 +674,7 @@ export function SmtpSettings({
       password: form.password,
       from_address: form.fromAddress.trim() || autoAddress,
       from_name: form.fromName.trim(),
-      reply_to: form.replyTo.trim() || null,
+      reply_to: form.replyTo.trim() || (aliasDiffers ? autoAddress : null),
       custom_headers: customHeaders,
       sender_confirmed: true,
     });
@@ -925,6 +930,21 @@ export function SmtpSettings({
               />
               <p className="text-2xs text-muted-foreground">{t("fromAliasHint")}</p>
             </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="smtp-reply-to">{t("replyTo")}</Label>
+              <Input
+                id="smtp-reply-to"
+                type="email"
+                placeholder={aliasDiffers ? autoAddress : t("replyToOptional")}
+                value={form.replyTo}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, replyTo: event.target.value }))
+                }
+              />
+              <p className="text-2xs text-muted-foreground">
+                {aliasDiffers ? t("replyToAliasHint", { address: autoAddress }) : t("replyToHint")}
+              </p>
+            </div>
             <div className="flex items-start gap-2">
               <Checkbox
                 id="smtp-sender-confirmed"
@@ -1035,18 +1055,6 @@ export function SmtpSettings({
                     value={form.username}
                     onChange={(event) =>
                       setForm((current) => ({ ...current, username: event.target.value }))
-                    }
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="smtp-reply-to">{t("replyTo")}</Label>
-                  <Input
-                    id="smtp-reply-to"
-                    type="email"
-                    placeholder={t("replyToOptional")}
-                    value={form.replyTo}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, replyTo: event.target.value }))
                     }
                   />
                 </div>

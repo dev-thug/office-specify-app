@@ -3,15 +3,14 @@
 
 use std::sync::Arc;
 
-use application::{approvals, sales_campaigns, sending};
+use application::{sales_campaigns, sending};
 use chrono::{DateTime, Duration, Utc};
 use contracts::{
-    approvals::CreateDecisionRequest,
     sales_campaigns::{
         AddSalesCampaignTargetRequest, CreateSalesCampaignDraftRequest, CreateSalesCampaignRequest,
         QueueSalesCampaignTargetRequest,
     },
-    sending::{CreateOutboundApprovalRequest, FreezeMessageDraftRequest},
+    sending::FreezeMessageDraftRequest,
 };
 use infrastructure::{
     config::Config,
@@ -251,7 +250,6 @@ async fn queued_sales_message(
     outcome_suffix: &str,
 ) -> (Uuid, Uuid, Uuid, DateTime<Utc>, String) {
     let admin = ctx_for(world, &world.admin, "sales-dispatch-admin");
-    let manager = ctx_for(world, &world.manager, "sales-dispatch-manager");
     let (_profile_id, channel_id, sender_id) = create_sender(api_db, world, outcome_suffix).await;
     let (company_id, contact_id, email_id) = create_contact(api_db, world, outcome_suffix).await;
 
@@ -333,36 +331,7 @@ async fn queued_sales_message(
     let payload_hash = frozen.payload_hash;
     tx.commit().await.unwrap();
 
-    let approval_request = CreateOutboundApprovalRequest {
-        reason: "Approve exact company-specific message".into(),
-        expected_payload_hash: payload_hash.clone(),
-        expires_at: None,
-    };
-    let tx = api_db.begin(world.workspace_id).await.unwrap();
-    let (tx, approval) =
-        sending::create_approval_request_in_tx(tx, &admin, outbound_id, &approval_request)
-            .await
-            .unwrap();
-    let approval_id = approval.approval_request_id;
-    let approval_version = approval.version;
-    tx.commit().await.unwrap();
-
-    let mut tx = api_db.begin(world.workspace_id).await.unwrap();
-    approvals::decide(
-        &mut tx,
-        &manager,
-        approval_id,
-        approval_version,
-        &CreateDecisionRequest {
-            decision: "approved".into(),
-            expected_snapshot_hash: payload_hash.clone(),
-            reason: Some("Reviewed frozen message".into()),
-        },
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-
+    // Queueing a campaign card is the go-ahead: no approval request/decision.
     let mut tx = api_db.begin(world.workspace_id).await.unwrap();
     let queued = sales_campaigns::queue_sales_campaign_target(
         &mut tx,

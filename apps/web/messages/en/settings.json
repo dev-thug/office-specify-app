@@ -40,6 +40,8 @@
     "autoName": "Zoho SMTP ({address})",
     "passwordHint": "Use an app password created under Zoho account (accounts.zoho.com) → Security → App Passwords, not your Zoho sign-in password.",
     "fromAliasHint": "Enter a Zoho alias to send from it; leave blank to send from the selected mailbox address. SMTP login still uses the mailbox address.",
+    "replyToHint": "Replies go to this address. Leave blank to receive them at the From address.",
+    "replyToAliasHint": "Because you send from an alias, replies go to {address} when left blank. Enter another address to override.",
     "advancedTitle": "Advanced (Zoho defaults filled in)",
     "advancedHint": "smtppro.zoho.com · 587 · STARTTLS. Login and From address default to the selected mailbox. Change only for another Zoho data center (.eu, .in…) or an alias.",
     "formDescription": "The password is write-only and encrypted on the server. It is cleared when this form closes.",
