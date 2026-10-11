@@ -184,6 +184,8 @@
       "emptyDescription": "초대 링크를 만들면 여기에 상태가 표시됩니다."
     },
     "agents": {
+      "createdTitle": "{name} 에이전트를 만들고 토큰을 발급했습니다",
+      "createsToken": "에이전트를 만들면 같은 scope로 첫 MCP 토큰이 함께 발급됩니다.",
       "selectAll": "모두 선택",
       "clearAll": "선택 해제",
       "presets": "빠른 선택",

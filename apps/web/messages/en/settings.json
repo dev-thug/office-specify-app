@@ -184,6 +184,8 @@
       "emptyDescription": "Invitation status appears here once a link is created."
     },
     "agents": {
+      "createdTitle": "Agent {name} created and a token issued",
+      "createsToken": "Creating the agent also issues its first MCP token with the same scopes.",
       "selectAll": "Select all",
       "clearAll": "Clear",
       "presets": "Quick select",

@@ -156,4 +156,45 @@ describe("MCP credential issuance", () => {
     expect(screen.queryByText("someone-else")).toBeNull();
     expect(urls.some((url) => /\/agents\/[^/]+\/credentials/.test(url))).toBe(false);
   });
+
+  it("creating an agent also issues its first token with the same scopes (scopes chosen once)", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const posts: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          posts.push({ url, body: JSON.parse(String(init.body)) });
+          if (url.endsWith("/agents")) {
+            return json({ id: "agent-9", kind: "agent", name: "Sales bot", status: "active", role: "agent" }, { status: 201 });
+          }
+          return json(
+            { id: "c9", principal_id: "agent-9", name: "Sales bot MCP", key_prefix: "osk", scopes: [], secret: "osk_NEWTOKEN", expires_at: "2027-10-11T00:00:00Z" },
+            { status: 201 }
+          );
+        }
+        return json([], { page: { next_cursor: null, has_more: false } });
+      })
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NextIntlClientProvider locale="en" messages={{ settings, common }}>
+          <AgentsSection />
+        </NextIntlClientProvider>
+      </QueryClientProvider>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Sales bot" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sales campaigns" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[0]!.url.endsWith("/agents")).toBe(true);
+    expect(posts[1]!.url.endsWith("/agents/agent-9/credentials")).toBe(true);
+    expect(posts[1]!.body.scopes).toEqual(posts[0]!.body.scopes);
+    expect(await screen.findByDisplayValue("osk_NEWTOKEN")).toBeInTheDocument();
+  });
 });

@@ -419,6 +419,68 @@ function ScopeChecklist({
   );
 }
 
+/** 발급 직후 한 번만 보여 주는 토큰·MCP 주소·클라이언트 설정. */
+function CredentialSecretPanel({ secret }: { secret: string }) {
+  const t = useTranslations("settings.members");
+  return (
+    <div className="grid gap-3">
+      <CopyField value={secret} label={t("credentials.secretLabel")} />
+      <CopyField value={mcpEndpoint()} label={t("credentials.mcpUrlLabel")} />
+      <div className="grid gap-1.5">
+        <p className="text-xs font-medium">{t("credentials.clientConfigLabel")}</p>
+        <CopyField
+          value={JSON.stringify(
+            {
+              mcpServers: {
+                office: {
+                  type: "http",
+                  url: mcpEndpoint(),
+                  headers: { Authorization: `Bearer ${secret}` },
+                },
+              },
+            },
+            null,
+            2
+          )}
+          label={t("credentials.clientConfigLabel")}
+        />
+        <p className="text-2xs text-muted-foreground">{t("credentials.clientConfigHint")}</p>
+      </div>
+    </div>
+  );
+}
+
+/** 만료 선택 — 0 = 만료 없음. */
+function ExpirySelect({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: number;
+  onChange: (days: number) => void;
+}) {
+  const t = useTranslations("settings.members");
+  return (
+    <select
+      id={id}
+      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+    >
+      {CREDENTIAL_EXPIRY_DAYS.map((days) => (
+        <option key={days} value={days}>
+          {days === 0 ? t("credentials.neverExpires") : t("credentials.expiresInDays", { days })}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function expiryPayload(days: number) {
+  return days === 0 ? { never_expires: true } : { expires_in_days: days };
+}
+
 function NewAgentDialog({
   open,
   onOpenChange,
@@ -431,34 +493,61 @@ function NewAgentDialog({
   const t = useTranslations("settings.members");
   const tSettings = useTranslations("settings");
   const tCommon = useTranslations("common");
-  const idemRef = useRef(idempotencyKey());
+  const queryClient = useQueryClient();
+  const agentKeyRef = useRef(idempotencyKey());
+  const credentialKeyRef = useRef(idempotencyKey());
 
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
+  const [expiresInDays, setExpiresInDays] = useState<number>(365);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ agentName: string; secret?: string } | null>(null);
 
+  // 에이전트 생성과 첫 credential 발급을 한 번에 처리한다. scope를 한 번만 고르면 된다.
   const submit = useMutation({
-    mutationFn: () =>
-      createAgent(
+    mutationFn: async () => {
+      const agent = await createAgent(
         { name: name.trim(), scopes },
-        { idempotencyKey: idemRef.current }
-      ),
-    onSuccess: () => {
-      toast.success(t("agents.createSuccess"));
-      idemRef.current = idempotencyKey();
-      setName("");
-      setScopes([]);
+        { idempotencyKey: agentKeyRef.current }
+      );
+      const credential = await createAgentCredential(
+        agent.data.id,
+        {
+          name: `${name.trim()} MCP`,
+          scopes,
+          ...expiryPayload(expiresInDays),
+        },
+        { idempotencyKey: credentialKeyRef.current }
+      );
+      return { agentName: name.trim(), credential: credential.data };
+    },
+    onSuccess: ({ agentName, credential }) => {
+      agentKeyRef.current = idempotencyKey();
+      credentialKeyRef.current = idempotencyKey();
       setError(null);
+      setCreated({ agentName, secret: credentialSecret(credential) });
       onCreated?.();
-      onOpenChange(false);
+      queryClient.invalidateQueries({ queryKey: CREDENTIALS_QUERY_KEY });
     },
     onError: (err) => {
       setError(apiErrorText(tSettings, err));
       if (err instanceof ApiError && err.problem.retryable !== true && err.status < 500) {
-        idemRef.current = idempotencyKey();
+        agentKeyRef.current = idempotencyKey();
+        credentialKeyRef.current = idempotencyKey();
       }
+      // 에이전트만 만들어지고 credential 발급이 실패했을 수 있으므로 목록을 갱신한다.
+      onCreated?.();
     },
   });
+
+  function close() {
+    setName("");
+    setScopes([]);
+    setExpiresInDays(365);
+    setError(null);
+    setCreated(null);
+    onOpenChange(false);
+  }
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -466,43 +555,78 @@ function NewAgentDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t("agents.new")}</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={onSubmit} className="flex flex-col gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="agent-name">{t("agents.nameLabel")}</Label>
-            <Input
-              id="agent-name"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label>{t("agents.scopesLabel")}</Label>
-            <ScopeChecklist
-              scopes={scopes}
-              setScopes={setScopes}
-              labelPrefix={t("agents.scopesLabel")}
-            />
-          </div>
-          {error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button type="submit" disabled={submit.isPending || !name.trim() || scopes.length === 0}>
-              {t("agents.createSubmit")}
-            </Button>
-          </DialogFooter>
-        </form>
+        {created ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>{t("agents.createdTitle", { name: created.agentName })}</DialogTitle>
+              <DialogDescription>{t("credentials.createdDescription")}</DialogDescription>
+            </DialogHeader>
+            {created.secret ? (
+              <CredentialSecretPanel secret={created.secret} />
+            ) : (
+              <p role="alert" className="text-sm text-amber-on-subtle">
+                {t("inviteMissingLink")}
+              </p>
+            )}
+            <DialogFooter>
+              <Button type="button" onClick={close}>
+                {tCommon("close")}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>{t("agents.new")}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={onSubmit} className="flex flex-col gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-name">{t("agents.nameLabel")}</Label>
+                <Input
+                  id="agent-name"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>{t("agents.scopesLabel")}</Label>
+                <ScopeChecklist
+                  scopes={scopes}
+                  setScopes={setScopes}
+                  labelPrefix={t("agents.scopesLabel")}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-credential-exp">{t("credentials.expiresAtLabel")}</Label>
+                <ExpirySelect
+                  id="agent-credential-exp"
+                  value={expiresInDays}
+                  onChange={setExpiresInDays}
+                />
+                <p className="text-2xs text-muted-foreground">{t("agents.createsToken")}</p>
+              </div>
+              {error ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              ) : null}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={close}>
+                  {tCommon("cancel")}
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={submit.isPending || !name.trim() || scopes.length === 0}
+                >
+                  {t("agents.createSubmit")}
+                </Button>
+              </DialogFooter>
+            </form>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -541,7 +665,15 @@ function NewCredentialDialog({
   const idemRef = useRef(idempotencyKey());
 
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<string[]>([]);
+  // 처음에는 이 에이전트의 가장 최근 credential scope를 그대로 쓴다.
+  const existing = useAgentCredentials(agent.id);
+  const lastScopes =
+    (existing.data?.pages.flatMap((p) => p.data) ?? [])
+      .filter((c) => !c.revoked_at)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]?.scopes ?? [];
+  const [scopesOverride, setScopesOverride] = useState<string[] | null>(null);
+  const scopes = scopesOverride ?? lastScopes;
+  const setScopes = (next: string[]) => setScopesOverride(next);
   const [expiresInDays, setExpiresInDays] = useState<number>(365);
   const [created, setCreated] = useState<ServiceCredentialCreated | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -554,9 +686,7 @@ function NewCredentialDialog({
           // 서버는 이름이 필수라서 비워 두면 에이전트 이름으로 채운다.
           name: name.trim() || `${agent.name} MCP`,
           scopes,
-          ...(expiresInDays === 0
-            ? { never_expires: true }
-            : { expires_in_days: expiresInDays }),
+          ...expiryPayload(expiresInDays),
         },
         { idempotencyKey: idemRef.current }
       ),
@@ -578,7 +708,7 @@ function NewCredentialDialog({
   function close() {
     setCreated(null);
     setName("");
-    setScopes([]);
+    setScopesOverride(null);
     setExpiresInDays(365);
     setError(null);
     onOpenChange(false);
@@ -607,30 +737,7 @@ function NewCredentialDialog({
               <DialogDescription>{t("credentials.createdDescription")}</DialogDescription>
             </DialogHeader>
             {secret ? (
-              <div className="grid gap-3">
-                <CopyField value={secret} label={t("credentials.secretLabel")} />
-                <CopyField value={mcpEndpoint()} label={t("credentials.mcpUrlLabel")} />
-                <div className="grid gap-1.5">
-                  <p className="text-xs font-medium">{t("credentials.clientConfigLabel")}</p>
-                  <CopyField
-                    value={JSON.stringify(
-                      {
-                        mcpServers: {
-                          office: {
-                            type: "http",
-                            url: mcpEndpoint(),
-                            headers: { Authorization: `Bearer ${secret}` },
-                          },
-                        },
-                      },
-                      null,
-                      2
-                    )}
-                    label={t("credentials.clientConfigLabel")}
-                  />
-                  <p className="text-2xs text-muted-foreground">{t("credentials.clientConfigHint")}</p>
-                </div>
-              </div>
+              <CredentialSecretPanel secret={secret} />
             ) : (
               <p role="alert" className="text-sm text-amber-on-subtle">
                 {t("inviteMissingLink")}
@@ -662,20 +769,11 @@ function NewCredentialDialog({
                 <Label htmlFor={`cred-exp-${agent.id}`}>
                   {t("credentials.expiresAtLabel")}
                 </Label>
-                <select
+                <ExpirySelect
                   id={`cred-exp-${agent.id}`}
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
                   value={expiresInDays}
-                  onChange={(e) => setExpiresInDays(Number(e.target.value))}
-                >
-                  {CREDENTIAL_EXPIRY_DAYS.map((days) => (
-                    <option key={days} value={days}>
-                      {days === 0
-                        ? t("credentials.neverExpires")
-                        : t("credentials.expiresInDays", { days })}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setExpiresInDays}
+                />
               </div>
               <div className="grid gap-1.5">
                 <Label>{t("agents.scopesLabel")}</Label>
