@@ -172,6 +172,17 @@ pub async fn get_settings(
     current(db, ctx.workspace_id, config).await
 }
 
+/// The only route that completes the OAuth code exchange.
+const CALLBACK_PATH: &str = "/api/v1/integrations/zoho/callback";
+
+fn callback_path_matches(uri: Option<&str>) -> bool {
+    uri.is_some_and(|uri| {
+        uri.split(['?', '#'])
+            .next()
+            .is_some_and(|base| base.trim_end_matches('/').ends_with(CALLBACK_PATH))
+    })
+}
+
 fn invalid(field: &str, code: &str) -> Violation {
     Violation {
         field: field.into(),
@@ -252,6 +263,10 @@ pub async fn put_settings(
             .any(|violation| violation.field == "redirect_uri")
     {
         violations.push(invalid("redirect_uri", "invalid"));
+    } else if !callback_path_matches(candidate.redirect_uri.as_deref()) {
+        // e.g. a leftover `/integrations/zoho-campaigns/callback` registration:
+        // Zoho would redirect the browser to a route Office does not serve.
+        violations.push(invalid("redirect_uri", "invalid_path"));
     }
     if !violations.is_empty() {
         return Err(AppError::validation(

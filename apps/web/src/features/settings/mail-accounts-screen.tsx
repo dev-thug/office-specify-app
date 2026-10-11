@@ -288,7 +288,12 @@ function ConnectDialog({
       if (err instanceof ApiError) {
         for (const v of err.problem.violations) {
           if (v.field && ["client_id", "client_secret", "redirect_uri"].includes(v.field)) {
-            next[v.field] = v.code === "required" ? t("oauthRequired") : t("oauthInvalid");
+            next[v.field] =
+              v.code === "required"
+                ? t("oauthRequired")
+                : v.code === "invalid_path"
+                  ? t("oauthRedirectPath")
+                  : t("oauthInvalid");
           }
         }
       }

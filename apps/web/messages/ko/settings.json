@@ -243,6 +243,7 @@
     "oauthClientIdFormat": "Client ID는 1000. 으로 시작합니다",
     "oauthLoadError": "Zoho OAuth 설정을 불러오지 못했습니다",
     "regionHint": "실제 Zoho Mail 연동은 US(com) 데이터센터 계정만 지원합니다.",
+    "oauthRedirectPath": "Redirect URI는 /api/v1/integrations/zoho/callback 로 끝나야 합니다 (예: zoho-campaigns 경로는 사용할 수 없습니다)",
     "connectSubmit": "OAuth 시작",
     "reconnect": "재연결",
     "reconnectDone": "재인증을 시작했습니다. 연결 상태를 확인하세요.",

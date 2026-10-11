@@ -338,3 +338,31 @@ async fn oauth_client_settings_saved_in_settings_enable_connection_start() {
         Some("https://office.example/api/v1/integrations/zoho/callback")
     );
 }
+
+#[tokio::test]
+async fn oauth_client_settings_reject_a_callback_on_the_wrong_path() {
+    let Some((app, world, _directory)) = setup_unconfigured().await else {
+        return;
+    };
+    let csrf = login(&app, &world).await;
+    let response = app
+        .client
+        .put(app.url("/api/v1/mail-accounts/oauth-settings"))
+        .header("x-csrf-token", &csrf)
+        .json(&json!({
+            "client_id": "1000.SETTINGSCLIENT",
+            "client_secret": "settings-secret-value",
+            "redirect_uri": "https://office.example/api/v1/integrations/zoho-campaigns/callback",
+        }))
+        .send()
+        .await
+        .unwrap();
+    let problem = TestApp::problem(response, StatusCode::BAD_REQUEST).await;
+    assert!(
+        problem["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["field"] == "redirect_uri" && v["code"] == "invalid_path")
+    );
+}

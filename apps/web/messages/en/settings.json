@@ -243,6 +243,7 @@
     "oauthClientIdFormat": "Client IDs start with 1000.",
     "oauthLoadError": "Could not load the Zoho OAuth settings",
     "regionHint": "Live Zoho Mail connections currently support US (com) data-center accounts only.",
+    "oauthRedirectPath": "The Redirect URI must end with /api/v1/integrations/zoho/callback (the old zoho-campaigns path does not work)",
     "connectSubmit": "Start OAuth",
     "reconnect": "Reconnect",
     "reconnectDone": "Reauth started. Check the connection status.",
