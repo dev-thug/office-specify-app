@@ -404,6 +404,14 @@
       "openBulkCampaign": "기존 일괄 캠페인 열기"
     },
     "target": {
+      "changeSender": "발신자 변경",
+      "researchReference": "회사 조사 (참고)",
+      "subjectRequired": "제목을 입력하세요",
+      "bodyRequired": "본문을 입력하세요",
+      "fieldBody": "본문",
+      "fillRequired": "비어 있는 항목을 채워 주세요:",
+      "subjectPlaceholder": "수신자에게 보일 제목",
+      "advancedVariables": "고급: 템플릿 변수(JSON)",
       "manageContacts": "회사 담당자 관리",
       "manageEmails": "담당자 이메일 관리",
       "suppressedEmail": "이 주소는 수신 거부(suppression) 상태라 발송 단계에서 제외됩니다. 카드 추가와 초안 작성은 가능합니다.",

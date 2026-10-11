@@ -27,7 +27,7 @@ import { getMe } from "@/lib/api/auth";
 import { companyActivitiesPath, getCompany } from "@/lib/api/companies";
 import { DraftSendingWorkflow } from "@/features/sending/draft-sending-workflow";
 import { EmailCanvas } from "@/features/templates/email-canvas";
-import { cleanEmailHtml, renderSampleEmail } from "@/features/templates/email-authoring";
+import { cleanEmailHtml, emailHtmlToText, renderSampleEmail } from "@/features/templates/email-authoring";
 import { getMessageDraft, patchMessageDraft, type MessageDraftResponse } from "@/lib/api/sending";
 import { apiFetch, idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
@@ -166,9 +166,17 @@ export function CampaignTargetDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <section aria-label={t("sendingIdentity")} className="grid gap-1 rounded-xl border border-border bg-app-panel-muted px-3 py-3 text-sm">
-          <p>{t("from")}: {campaign.from_name} &lt;{campaign.from_address}&gt;</p>
-          <p className="text-muted-foreground">{t("replyTo")}: {campaign.reply_to ?? campaign.from_address}</p>
+        <section aria-label={t("sendingIdentity")} className="flex flex-wrap items-start justify-between gap-2 rounded-xl border border-border bg-app-panel-muted px-3 py-3 text-sm">
+          <div className="grid gap-1">
+            <p>{t("from")}: {campaign.from_name} &lt;{campaign.from_address}&gt;</p>
+            <p className="text-muted-foreground">{t("replyTo")}: {campaign.reply_to ?? campaign.from_address}</p>
+          </div>
+          <Link
+            href="/app/settings/mail-accounts"
+            className="text-xs text-primary underline underline-offset-2"
+          >
+            {t("changeSender")}
+          </Link>
         </section>
 
         {queueNotice ? (
@@ -177,11 +185,79 @@ export function CampaignTargetDetailDialog({
           </Alert>
         ) : null}
 
+        {target.current_draft && (outboundStatus === "failed" || outboundStatus === "dead" || outboundStatus === "canceled") && !startNewDraft ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-app-panel-muted px-3 py-3">
+            <p className="text-sm text-muted-foreground">{t("replacementDraftAllowed")}</p>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setActiveDraftId(null);
+                setStartNewDraft(true);
+              }}
+            >
+              {t("newDraft")}
+            </Button>
+          </div>
+        ) : null}
+        {canCopyReviewedDraft ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-app-panel-muted px-3 py-3">
+            <p className="text-sm text-muted-foreground">{t("frozenReviewCopyNote")}</p>
+            <Button type="button" size="sm" disabled={copyPending} onClick={() => void copyReviewedDraft()}>
+              {copyPending ? t("copyingReviewedDraft") : t("copyReviewedDraft")}
+            </Button>
+            {copyError ? <p role="alert" className="w-full text-sm text-destructive">{copyError}</p> : null}
+          </div>
+        ) : null}
+        {outboundStatus === "unknown" ? (
+          <Alert variant="warning">
+            <AlertDescription>{t("unknownDraftLocked")}</AlertDescription>
+          </Alert>
+        ) : null}
+        {outboundStatus === "queued" || outboundStatus === "claimed" || outboundStatus === "submitting" ? (
+          <Alert variant="warning">
+            <AlertDescription>{t("queuedDraftLocked")}</AlertDescription>
+          </Alert>
+        ) : null}
+        {acceptedFollowUpAvailable ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-app-panel-muted px-3 py-3">
+            <p className="text-sm text-muted-foreground">{t("acceptedFollowUpUnavailable")}</p>
+            {isHumanReviewer ? (
+              <Button
+                type="button"
+                size="sm"
+                disabled={copyPending || !canCreateAcceptedFollowUp}
+                onClick={() => void copyReviewedDraft(true)}
+              >
+                {copyPending ? t("writingFollowUpDraft") : t("writeFollowUpDraft")}
+              </Button>
+            ) : meQuery.isPending ? (
+              <p role="status" className="text-xs text-muted-foreground">{t("checkingFollowUpPermission")}</p>
+            ) : (
+              <p role="status" className="text-xs text-muted-foreground">{t("acceptedFollowUpHumanOnly")}</p>
+            )}
+            {copyError ? <p role="alert" className="w-full text-sm text-destructive">{copyError}</p> : null}
+          </div>
+        ) : null}
+        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <div className="min-w-0">
+        <CampaignTargetDraftEditor
+              campaign={campaign}
+              target={target}
+              draftId={!startNewDraft ? activeDraftId ?? undefined : undefined}
+              onCreated={(draft) => {
+                setActiveDraftId(draft.draft_id);
+                setStartNewDraft(false);
+              }}
+              onReloadRemote={reloadRemoteDraft}
+              onChanged={onChanged}
+            />
+          </div>
         {target.company_id ? (
-          <section className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4">
+          <aside aria-label={t("researchReference")} className="flex min-w-0 flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold">{t("research")}</h2>
+                <h2 className="text-sm font-semibold">{t("researchReference")}</h2>
                 <p className="mt-1 text-xs text-muted-foreground">{t("sources")}</p>
               </div>
               <Button asChild variant="outline" size="xs">
@@ -243,74 +319,9 @@ export function CampaignTargetDetailDialog({
                 }
               />
             </section>
-          </section>
+          </aside>
         ) : null}
-
-        {target.current_draft && (outboundStatus === "failed" || outboundStatus === "dead" || outboundStatus === "canceled") && !startNewDraft ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-app-panel-muted px-3 py-3">
-            <p className="text-sm text-muted-foreground">{t("replacementDraftAllowed")}</p>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                setActiveDraftId(null);
-                setStartNewDraft(true);
-              }}
-            >
-              {t("newDraft")}
-            </Button>
-          </div>
-        ) : null}
-        {canCopyReviewedDraft ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-app-panel-muted px-3 py-3">
-            <p className="text-sm text-muted-foreground">{t("frozenReviewCopyNote")}</p>
-            <Button type="button" size="sm" disabled={copyPending} onClick={() => void copyReviewedDraft()}>
-              {copyPending ? t("copyingReviewedDraft") : t("copyReviewedDraft")}
-            </Button>
-            {copyError ? <p role="alert" className="w-full text-sm text-destructive">{copyError}</p> : null}
-          </div>
-        ) : null}
-        {outboundStatus === "unknown" ? (
-          <Alert variant="warning">
-            <AlertDescription>{t("unknownDraftLocked")}</AlertDescription>
-          </Alert>
-        ) : null}
-        {outboundStatus === "queued" || outboundStatus === "claimed" || outboundStatus === "submitting" ? (
-          <Alert variant="warning">
-            <AlertDescription>{t("queuedDraftLocked")}</AlertDescription>
-          </Alert>
-        ) : null}
-        {acceptedFollowUpAvailable ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-app-panel-muted px-3 py-3">
-            <p className="text-sm text-muted-foreground">{t("acceptedFollowUpUnavailable")}</p>
-            {isHumanReviewer ? (
-              <Button
-                type="button"
-                size="sm"
-                disabled={copyPending || !canCreateAcceptedFollowUp}
-                onClick={() => void copyReviewedDraft(true)}
-              >
-                {copyPending ? t("writingFollowUpDraft") : t("writeFollowUpDraft")}
-              </Button>
-            ) : meQuery.isPending ? (
-              <p role="status" className="text-xs text-muted-foreground">{t("checkingFollowUpPermission")}</p>
-            ) : (
-              <p role="status" className="text-xs text-muted-foreground">{t("acceptedFollowUpHumanOnly")}</p>
-            )}
-            {copyError ? <p role="alert" className="w-full text-sm text-destructive">{copyError}</p> : null}
-          </div>
-        ) : null}
-        <CampaignTargetDraftEditor
-          campaign={campaign}
-          target={target}
-          draftId={!startNewDraft ? activeDraftId ?? undefined : undefined}
-          onCreated={(draft) => {
-            setActiveDraftId(draft.draft_id);
-            setStartNewDraft(false);
-          }}
-          onReloadRemote={reloadRemoteDraft}
-          onChanged={onChanged}
-        />
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -351,6 +362,7 @@ function CampaignTargetDraftEditor({
   const [bodyEditorModeOverride, setBodyEditorModeOverride] = useState<"plain" | "rich" | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<"subject" | "body" | "variables", string>>>({});
 
   const draftQueryKey = ["sales-campaigns", "draft", campaign.id, target.id, draftId] as const;
   const draftQuery = useQuery({
@@ -419,6 +431,12 @@ function CampaignTargetDraftEditor({
   };
   const { subject, bodyText, bodyHtml, variablesJson } = editorValues;
   const bodyEditorMode = bodyEditorModeOverride ?? (bodyHtml.trim() ? "rich" : "plain");
+  // 리치 편집만 쓰는 경우 별도 일반 텍스트 없이도 저장할 수 있도록 HTML에서 만든다.
+  const effectiveBodyText = bodyText.trim()
+    ? bodyText
+    : bodyHtml.trim()
+      ? emailHtmlToText(bodyHtml)
+      : "";
   const editorFields = Object.keys(baseEditorValues) as (keyof DraftEditorValues)[];
   const isDirty = editorFields.some(
     (field) => editorValues[field] !== baseEditorValues[field]
@@ -436,6 +454,7 @@ function CampaignTargetDraftEditor({
   ) {
     operationKeyRef.current = null;
     setError(null);
+    setFieldErrors({});
     setEditorOverrides((current) => ({
       key: editorKey,
       values: {
@@ -483,7 +502,33 @@ function CampaignTargetDraftEditor({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!subject.trim() || !bodyText.trim() || !parsedVariables || pending || remoteConflict) return;
+    if (pending || remoteConflict) return;
+    // 저장 버튼은 항상 눌러 볼 수 있고, 비어 있는 항목은 여기서 알려 준다.
+    const problems: Partial<Record<"subject" | "body" | "variables", string>> = {};
+    if (!subject.trim()) problems.subject = t("subjectRequired");
+    if (!effectiveBodyText.trim()) problems.body = t("bodyRequired");
+    if (parsedVariables === null) problems.variables = t("variablesInvalid");
+    setFieldErrors(problems);
+    const missing = Object.keys(problems);
+    if (missing.length > 0) {
+      const labels: Record<string, string> = {
+        subject: t("subject"),
+        body: t("fieldBody"),
+        variables: t("variables"),
+      };
+      setError(`${t("fillRequired")} ${missing.map((key) => labels[key]).join(", ")}`);
+      const focusId =
+        problems.subject
+          ? "campaign-target-subject"
+          : problems.body
+            ? bodyEditorMode === "plain"
+              ? "campaign-target-body"
+              : "campaign-target-body-rich"
+            : "campaign-target-variables";
+      requestAnimationFrame(() => document.getElementById(focusId)?.focus());
+      return;
+    }
+    if (parsedVariables === null) return;
     operationKeyRef.current ??= idempotencyKey();
     setPending(true);
     setError(null);
@@ -493,7 +538,7 @@ function CampaignTargetDraftEditor({
           draftId,
           {
             subject: subject.trim(),
-            body_text: bodyText,
+            body_text: effectiveBodyText,
             body_html: bodyHtml.trim() ? bodyHtml : null,
             variables: draft.template_version_id ? parsedVariables : undefined,
           },
@@ -516,7 +561,7 @@ function CampaignTargetDraftEditor({
           target.id,
           {
             subject: subject.trim(),
-            body_text: bodyText,
+            body_text: effectiveBodyText,
             body_html: bodyHtml.trim() ? bodyHtml : null,
             template_version_id: selectedVersionId || null,
             variables: parsedVariables,
@@ -591,7 +636,7 @@ function CampaignTargetDraftEditor({
           <AlertDescription>{t("draftError")}</AlertDescription>
         </Alert>
       ) : canEdit ? (
-        <form className="flex flex-col gap-4" onSubmit={(event) => void save(event)}>
+        <form className="flex flex-col gap-4" noValidate onSubmit={(event) => void save(event)}>
           {!draftId ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
@@ -656,8 +701,12 @@ function CampaignTargetDraftEditor({
                 updateEditorValue("subject", event.target.value);
               }}
               maxLength={998}
-              required
+              aria-invalid={fieldErrors.subject ? true : undefined}
+              placeholder={t("subjectPlaceholder")}
             />
+            {fieldErrors.subject ? (
+              <p role="alert" className="text-2xs text-destructive">{fieldErrors.subject}</p>
+            ) : null}
           </div>
           <div className="grid gap-2">
             <div role="group" aria-label={t("messageFormat")} className="flex flex-wrap gap-2">
@@ -689,13 +738,16 @@ function CampaignTargetDraftEditor({
                   value={bodyText}
                   onChange={(event) => updateEditorValue("bodyText", event.target.value)}
                   rows={8}
-                  required
+                  aria-invalid={fieldErrors.body ? true : undefined}
                 />
+                {fieldErrors.body ? (
+                  <p role="alert" className="text-2xs text-destructive">{fieldErrors.body}</p>
+                ) : null}
                 <p className="text-2xs text-muted-foreground">{t("plainTextFallbackHint")}</p>
               </div>
             ) : (
               <div className="grid gap-1.5">
-                <Label>{t("bodyHtml")}</Label>
+                <Label id="campaign-target-body-rich" tabIndex={-1}>{t("bodyHtml")}</Label>
                 <EmailCanvas
                   html={bodyHtml}
                   previewHtml={sampleHtml}
@@ -704,43 +756,45 @@ function CampaignTargetDraftEditor({
                   onChange={(value) => updateEditorValue("bodyHtml", value)}
                   onFocus={() => undefined}
                 />
+                {fieldErrors.body ? (
+                  <p role="alert" className="text-2xs text-destructive">{fieldErrors.body}</p>
+                ) : null}
                 <p className="text-2xs text-muted-foreground">{t("previewNotice")}</p>
               </div>
             )}
           </div>
+          <details
+            className="rounded-xl border border-border px-3 py-2"
+            open={variablesJson.trim() !== "{}" || parsedVariables === null}
+          >
+            <summary className="cursor-pointer text-sm font-medium">{t("advancedVariables")}</summary>
+            <div className="mt-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="campaign-target-variables">{t("variables")}</Label>
-            <Textarea
-              id="campaign-target-variables"
-              value={variablesJson}
-              onChange={(event) => {
-                updateEditorValue("variablesJson", event.target.value);
-              }}
-              rows={4}
-              spellCheck={false}
-              aria-invalid={parsedVariables === null}
-            />
-            <p className="text-2xs text-muted-foreground">{t("variablesHint")}</p>
-            {parsedVariables === null ? (
-              <p role="alert" className="text-2xs text-destructive">{t("variablesInvalid")}</p>
-            ) : null}
-          </div>
+                <Label htmlFor="campaign-target-variables">{t("variables")}</Label>
+                <Textarea
+                  id="campaign-target-variables"
+                  value={variablesJson}
+                  onChange={(event) => {
+                    updateEditorValue("variablesJson", event.target.value);
+                  }}
+                  rows={4}
+                  spellCheck={false}
+                  aria-invalid={parsedVariables === null}
+                />
+                <p className="text-2xs text-muted-foreground">{t("variablesHint")}</p>
+                {parsedVariables === null ? (
+                  <p role="alert" className="text-2xs text-destructive">{t("variablesInvalid")}</p>
+                ) : null}
+              </div>
+            </div>
+          </details>
           {error ? (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
           <div className="flex justify-end">
-            <Button
-              type="submit"
-              disabled={
-                !subject.trim() ||
-                !bodyText.trim() ||
-                parsedVariables === null ||
-                pending ||
-                remoteConflict
-              }
-            >
+            <Button type="submit" disabled={pending || remoteConflict}>
               {pending ? t("savingDraft") : draftId ? t("saveDraft") : t("createDraft")}
             </Button>
           </div>

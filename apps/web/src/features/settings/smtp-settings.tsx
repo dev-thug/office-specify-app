@@ -907,6 +907,23 @@ export function SmtpSettings({
                 }
               />
             </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="smtp-from-address">{t("fromAddress")}</Label>
+              <Input
+                id="smtp-from-address"
+                type="email"
+                autoComplete="email"
+                placeholder={autoAddress || t("fromAddressPlaceholder")}
+                value={form.fromAddress}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    fromAddress: event.target.value,
+                  }))
+                }
+              />
+              <p className="text-2xs text-muted-foreground">{t("fromAliasHint")}</p>
+            </div>
             <div className="flex items-start gap-2">
               <Checkbox
                 id="smtp-sender-confirmed"
@@ -1017,22 +1034,6 @@ export function SmtpSettings({
                     value={form.username}
                     onChange={(event) =>
                       setForm((current) => ({ ...current, username: event.target.value }))
-                    }
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="smtp-from-address">{t("fromAddress")}</Label>
-                  <Input
-                    id="smtp-from-address"
-                    type="email"
-                    autoComplete="email"
-                    placeholder={autoAddress || t("fromAddressPlaceholder")}
-                    value={form.fromAddress}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        fromAddress: event.target.value,
-                      }))
                     }
                   />
                 </div>

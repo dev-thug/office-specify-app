@@ -404,6 +404,14 @@
       "openBulkCampaign": "Open legacy bulk campaign"
     },
     "target": {
+      "changeSender": "Change sender",
+      "researchReference": "Company research (reference)",
+      "subjectRequired": "Enter a subject",
+      "bodyRequired": "Enter the message body",
+      "fieldBody": "Body",
+      "fillRequired": "Please fill in:",
+      "subjectPlaceholder": "Subject the recipient will see",
+      "advancedVariables": "Advanced: template variables (JSON)",
       "manageContacts": "Manage company contacts",
       "manageEmails": "Manage contact emails",
       "suppressedEmail": "This address is suppressed and will be skipped when sending. You can still add the card and prepare a draft.",

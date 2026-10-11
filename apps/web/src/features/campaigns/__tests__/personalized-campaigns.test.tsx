@@ -1135,6 +1135,43 @@ describe("personalized campaign routes", () => {
     expect(patches).toEqual([]);
   });
 
+  it("keeps Save draft enabled and names the empty fields when it is pressed", async () => {
+    const data = salesCampaign([
+      campaignTarget({ id: "empty-target", stage: "research", current_draft: null }),
+    ]);
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (init?.method === "POST") posts.push(url.pathname);
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      })
+    );
+    mount(
+      <CampaignTargetDetailDialog
+        campaign={data.campaign}
+        target={data.targets[0]!}
+        queueNotice={null}
+        open
+        onOpenChange={() => undefined}
+        onChanged={() => undefined}
+      />
+    );
+
+    const save = await screen.findByRole("button", { name: "Save draft" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+
+    expect(await screen.findByText(/Please fill in:/)).toHaveTextContent(/Subject/);
+    expect(screen.getByText("Enter a subject")).toBeInTheDocument();
+    expect(screen.getByText("Enter the message body")).toBeInTheDocument();
+    expect(posts).toEqual([]);
+  });
+
   it("allows an accessible backward move from Review to Draft", async () => {
     const data = salesCampaign([
       campaignTarget({
