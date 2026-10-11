@@ -1800,7 +1800,14 @@ async fn submit_tx(
         Some((_, k, _)) => k == "agent",
         None => false,
     };
-    if approved_submit || o.purpose != "correspondence" || requester_is_agent {
+    // Queueing a sales-campaign card is itself the go-ahead — by a person in
+    // the UI or by an agent through MCP — so no separate approval request is
+    // needed. Scope, credential, mailbox send grant, suppression and the other
+    // dispatch checks still apply. Non-campaign sends keep their approvals.
+    let sales_campaign_send = sales_binding.is_some();
+    if !sales_campaign_send
+        && (approved_submit || o.purpose != "correspondence" || requester_is_agent)
+    {
         require_current_outbound_approval(tx, &o).await?;
     }
 

@@ -404,6 +404,8 @@
       "openBulkCampaign": "Open legacy bulk campaign"
     },
     "target": {
+      "sendQueue": "Send to queue",
+      "queueing": "Sending to queue…",
       "changeSender": "Change sender",
       "researchReference": "Company research (reference)",
       "subjectRequired": "Enter a subject",

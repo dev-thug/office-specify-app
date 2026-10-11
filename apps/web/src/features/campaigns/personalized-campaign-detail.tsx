@@ -19,6 +19,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CampaignBoardAddTargetDialog } from "@/features/campaigns/campaign-board-add-target-dialog";
 import { CampaignTargetDetailDialog } from "@/features/campaigns/campaign-target-detail-dialog";
 import { getCampaign } from "@/lib/api/campaigns";
+import { freezeMessageDraft, getMessageDraft } from "@/lib/api/sending";
+import { readEtag } from "@/lib/api/mutate";
 import { idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
 import {
@@ -67,23 +69,6 @@ function isBoardStage(value: string): value is BoardStage {
 
 function targetName(target: SalesCampaignTarget, unavailable: string) {
   return target.company_name?.trim() || unavailable;
-}
-
-function approvedCurrentSnapshot(target: SalesCampaignTarget) {
-  const draft = target.current_draft;
-  const outbound = target.outbound;
-  return Boolean(
-    draft &&
-      draft.status === "frozen" &&
-      draft.outbound_message_id &&
-      outbound &&
-      outbound.outbound_message_id === draft.outbound_message_id &&
-      outbound.payload_hash &&
-      outbound.approval_status === "approved" &&
-      outbound.approved_at &&
-      (!outbound.approval_expires_at ||
-        Date.parse(outbound.approval_expires_at) > Date.now())
-  );
 }
 
 const EMPTY_TARGETS: SalesCampaignTarget[] = [];
@@ -298,42 +283,72 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
     }
   }
 
+  /**
+   * 카드를 "발송 대기"로 보낸다. 별도의 동결·승인 단계 없이, 초안이 아직 확정되지 않았다면
+   * 캠페인 발신 채널로 자동 확정한 뒤 바로 예약한다.
+   */
   async function queueTarget(target: SalesCampaignTarget) {
-    if (!approvedCurrentSnapshot(target)) {
+    if (!campaign) return;
+    if (!target.current_draft) {
       setSelectedTargetId(target.id);
-      setQueueNotice(
-        target.current_draft?.status === "frozen"
-          ? t("queueApprovalNeeded")
-          : t("queueMissingSnapshot")
-      );
+      setQueueNotice(t("draftRequiredFirst"));
       return;
     }
     if (!beginTargetAction(target.id)) return;
-    const outbound = target.outbound!;
-    const scope = `queue:${campaignId}:${target.id}:${target.version}:${outbound.payload_hash}`;
     setActionError(null);
     setQueueNotice(null);
+    let scope: string | undefined;
     try {
+      let current = target;
+      if (target.current_draft.status !== "frozen" || !target.outbound) {
+        const draftId = target.current_draft.draft_id;
+        const draft = await getMessageDraft(draftId);
+        scope = `freeze:${campaignId}:${draftId}:${draft.data.version}`;
+        await freezeMessageDraft(
+          draftId,
+          {
+            delivery_channel_id: campaign.delivery_channel_id,
+            tracking_requested: false,
+            ...(campaign.meeting_type_id ? {meeting_type_id: campaign.meeting_type_id} : {}),
+          },
+          {
+            etag: readEtag(draft) ?? draft.data.version,
+            idempotencyKey: getOperationKey(scope),
+          }
+        );
+        settleOperation(scope);
+        scope = undefined;
+        const fresh = (await getSalesCampaign(campaignId)).data;
+        queryClient.setQueryData<SalesCampaignResponse>(
+          ["sales-campaigns", "detail", campaignId],
+          fresh
+        );
+        current = fresh.targets.find(item => item.id === target.id) ?? target;
+      }
+      const outbound = current.outbound;
+      if (!outbound) throw new Error("outbound snapshot missing");
+      scope = `queue:${campaignId}:${current.id}:${current.version}:${outbound.payload_hash}`;
       const response = await queueSalesCampaignTarget(
         campaignId,
-        target.id,
+        current.id,
         {
           outbound_message_id: outbound.outbound_message_id,
           expected_payload_hash: outbound.payload_hash,
-          expected_target_version: target.version,
+          expected_target_version: current.version,
         },
         { idempotencyKey: getOperationKey(scope) }
       );
       settleOperation(scope);
-      setBatchTimes((current) => ({
-        ...current,
+      scope = undefined;
+      setBatchTimes((previous) => ({
+        ...previous,
         [target.id]: response.data.batch_at,
       }));
       await queryClient.invalidateQueries({
         queryKey: ["sales-campaigns", "detail", campaignId],
       });
     } catch (error) {
-      settleOperation(scope, error);
+      if (scope) settleOperation(scope, error);
       setActionError(t("queueError"));
       await refresh();
     } finally {
@@ -745,6 +760,7 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
           campaign={campaign}
           target={selectedTarget}
           queueNotice={queueNotice}
+          onQueue={() => queueTarget(selectedTarget)}
           open
           onOpenChange={(open) => {
             if (!open) {

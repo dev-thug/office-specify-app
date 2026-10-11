@@ -56,7 +56,7 @@
 미리보기에서 유지하며, 스크립트·외부 리소스·숨김 CSS 등은 제거합니다. 동결 전의
 샘플 미리보기는 승인 대상이 아니며, 동결된 수신자별 본문으로 검토해야 합니다.
 전송된 카드에서 **후속 초안 작성**을 선택하면 별도의 새 초안을 만들며, 다시
-동결·승인해야 발송할 수 있습니다.
+발송 대기로 보내야 발송됩니다.
 
 ## 에이전트 연결
 
@@ -72,10 +72,11 @@
    선택 사항인 `template_version_id`는 템플릿 컨테이너 ID와 다릅니다.
    `meeting.booking_url`과 `compliance.unsubscribe_url`은 서버가 생성하므로 직접 값을 넣지 않습니다.
 6. `sales_campaigns_move_stage`는 `research`, `draft`, `review` 준비 상태만 바꿉니다.
-   사람에게 정확한 미리보기와 승인 요청을 인계합니다.
-7. 승인 후 최신 보드를 다시 읽고 `sales_campaigns_queue`에 현재 대상 버전,
-   동결 메시지 ID와 정확한 해시를 넣습니다. `mail.submit_approved`와 현재 발송
-   grant가 필요합니다. 동일 작업 재시도는 같은 idempotency key를 사용합니다.
+7. 준비가 끝나면 최신 보드를 다시 읽고 `sales_campaigns_queue`에 현재 대상 버전,
+   확정(동결)된 메시지 ID와 정확한 해시를 넣습니다. 별도의 사람 승인 요청은
+   필요하지 않으며, 카드를 발송 대기로 보내는 것이 곧 발송 지시입니다.
+   `mail.submit_approved`와 현재 발송 grant가 필요합니다. 동일 작업 재시도는 같은
+   idempotency key를 사용합니다.
 
 도구 공개는 권한 부여가 아닙니다. 에이전트에는 필요한 `campaign.compose`,
 `crm.read`, `mail.read`, `mail.compose`, `mail.submit_approved`와 해당 메일함 grant만

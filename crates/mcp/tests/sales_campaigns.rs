@@ -778,8 +778,8 @@ async fn personalized_campaign_keeps_target_copy_and_queues_only_approved_curren
             }),
         )
         .await;
-    assert_eq!(aurora_message["approval_required"], true);
-    assert_eq!(forge_message["approval_required"], true);
+    assert_eq!(aurora_message["approval_required"], false);
+    assert_eq!(forge_message["approval_required"], false);
     assert_ne!(aurora_message["draft_id"], forge_message["draft_id"]);
     assert!(
         aurora_message["body_text"]
@@ -1169,41 +1169,7 @@ async fn personalized_campaign_keeps_target_copy_and_queues_only_approved_curren
         .await;
     assert!(foreign["result"]["isError"] == true || foreign.get("error").is_some());
 
-    let unapproved = rig
-        .tool_error(
-            "sales_campaigns_queue",
-            json!({
-                "idempotency_key":new_key("sales-campaign-unapproved"),
-                "campaign_id":campaign_id,
-                "target_id":forge_target_id,
-                "outbound_message_id":forge_frozen["outbound_message_id"],
-                "expected_payload_hash":forge_frozen["payload_hash"],
-                "expected_target_version":forge_frozen["target_version"]
-            }),
-        )
-        .await;
-    assert!(unapproved["result"]["isError"] == true || unapproved.get("error").is_some());
-
-    let approved = human_data(
-        rig.manager_post(
-            &format!(
-                "/api/v1/approvals/{}/decisions",
-                forge_frozen["approval_request_id"].as_str().unwrap()
-            ),
-            json!({
-                "decision":"approved",
-                "expected_snapshot_hash":forge_frozen["payload_hash"],
-                "reason":"Reviewed the exact company-specific Forge snapshot"
-            }),
-            Some(1),
-            &new_key("sales-campaign-human-approval"),
-        )
-        .await,
-        StatusCode::OK,
-    )
-    .await;
-    assert_eq!(approved["approval_status"], "approved");
-    assert_eq!(approved["execution_status"], "ready");
+    // Queueing is the go-ahead: no separate human approval is required.
 
     let before_queue = rig
         .call("sales_campaigns_get", json!({"campaign_id":campaign_id}))

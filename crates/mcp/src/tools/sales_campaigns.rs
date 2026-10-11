@@ -119,7 +119,7 @@ struct SalesCampaignQueueInput {
     campaign_id: Uuid,
     target_id: Uuid,
     outbound_message_id: Uuid,
-    /// Must equal the exact hash shown in the current independent approval.
+    /// Must equal the exact payload hash of the current frozen outbound message.
     expected_payload_hash: String,
     expected_target_version: i64,
 }
@@ -165,9 +165,9 @@ impl From<MessageDraftResponse> for SalesCampaignDraftOutput {
             body_html: draft.body_html,
             status: draft.status,
             version: draft.version,
-            // Sales campaign drafts are marketing messages and always require
-            // independent human approval before they can be queued.
-            approval_required: true,
+            // Queueing a campaign card is itself the go-ahead; no separate
+            // human approval request is needed.
+            approval_required: false,
         }
     }
 }
@@ -554,7 +554,7 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
         ),
         tool_with_db(
             "sales_campaigns_queue",
-            "Queue one current frozen outbound message only after an independent human approved the exact expected_payload_hash. Requires campaign.compose, mail.submit_approved, and the current mailbox send grant. The server stores one idempotent durable dispatch job at the next ten-minute UTC boundary; this tool does not approve or send mail immediately. Unknown sends are never retried automatically.",
+            "Queue one current frozen outbound message by its exact expected_payload_hash; no separate human approval is needed. Requires campaign.compose, mail.submit_approved, and the current mailbox send grant. The server stores one idempotent durable dispatch job at the next ten-minute UTC boundary; this tool does not approve or send mail immediately. Unknown sends are never retried automatically.",
             idempotent_versioned_schema::<SalesCampaignQueueInput>(),
             schema::<QueueSalesCampaignTargetResponse>(),
             true,

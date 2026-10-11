@@ -404,6 +404,8 @@
       "openBulkCampaign": "기존 일괄 캠페인 열기"
     },
     "target": {
+      "sendQueue": "발송 대기로 보내기",
+      "queueing": "발송 대기로 보내는 중…",
       "changeSender": "발신자 변경",
       "researchReference": "회사 조사 (참고)",
       "subjectRequired": "제목을 입력하세요",

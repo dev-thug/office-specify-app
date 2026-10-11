@@ -1878,7 +1878,7 @@ describe("personalized campaign routes", () => {
     expect(data.targets[0]!.stage).toBe("draft");
     expect(requests.some((row) => row.path.endsWith("/queue"))).toBe(false);
     expect(requests.some((row) => row.path.endsWith("/submit"))).toBe(false);
-    expect(within(dialog).getByRole("button", { name: "Request review" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Save changes" })).toBeEnabled();
   });
 
   it("creates a separate editable copy of a frozen Review snapshot", async () => {
@@ -2042,7 +2042,7 @@ describe("personalized campaign routes", () => {
     ).toBeNull();
   });
 
-  it("opens the review detail instead of queueing an unapproved drag", async () => {
+  it("queues a frozen card on drag without a separate approval", async () => {
     const data = salesCampaign([
       campaignTarget({
         id: "northstar-target",
@@ -2097,14 +2097,104 @@ describe("personalized campaign routes", () => {
     const pointer = beginBoardPointer(card);
     finishBoardPointerOn(pointer, screen.getByRole("region", { name: "Queued" }));
 
-    expect(
-      await screen.findByText(/Approve the frozen message before scheduling/i)
-    ).toBeInTheDocument();
-    expect(
-      calls.some(
-        (call) => call.url.endsWith("/queue") && call.method === "POST"
-      )
-    ).toBe(false);
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) => call.url.endsWith("/queue") && call.method === "POST"
+        )
+      ).toBe(true)
+    );
+    expect(screen.queryByText(/Approve the frozen message before scheduling/i)).toBeNull();
+  });
+
+  it("freezes an unfrozen draft automatically and then queues the card", async () => {
+    const data = salesCampaign([
+      campaignTarget({
+        id: "northstar-target",
+        stage: "review",
+        workflow_stage: "review",
+        version: 3,
+        current_draft: { ...EXISTING_DRAFT, draft_id: "northstar-draft" },
+      }),
+    ]);
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        const method = init?.method ?? "GET";
+        calls.push({
+          url: url.pathname,
+          method,
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        let payload: unknown = [];
+        if (url.pathname === "/api/v1/message-drafts/northstar-draft") {
+          payload = { draft_id: "northstar-draft", version: 1, status: "draft" };
+        } else if (url.pathname.endsWith("/freeze")) {
+          payload = {
+            outbound_message_id: "outbound-1",
+            status: "draft",
+            payload_hash: "cd".repeat(32),
+            version: 1,
+          };
+          data.targets[0]!.current_draft = {
+            ...EXISTING_DRAFT,
+            draft_id: "northstar-draft",
+            status: "frozen",
+            outbound_message_id: "outbound-1",
+          };
+          data.targets[0]!.outbound = {
+            outbound_message_id: "outbound-1",
+            status: "draft",
+            payload_hash: "cd".repeat(32),
+            approval_status: null,
+            approval_expires_at: null,
+            approved_at: null,
+            provider_accepted: false,
+            accepted_at: null,
+            failure_code: null,
+            open_count: 0,
+            click_count: 0,
+            known_reply_count: 0,
+            last_reply_at: null,
+          } as never;
+          data.targets[0]!.version = 4;
+        } else if (url.pathname.endsWith("/queue")) {
+          payload = {
+            submission: { status: "queued", job_id: "job-1", provider_accepted: false },
+            batch_at: "2026-10-11T05:10:00Z",
+          };
+        } else if (url.pathname === "/api/v1/sales-campaigns/campaign-1") {
+          payload = data;
+        }
+        return new Response(JSON.stringify({ data: payload }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      })
+    );
+    mount(await CampaignDetailPage({ params: Promise.resolve({ id: "campaign-1" }) }));
+
+    const card = await screen.findByRole("article", { name: "Northstar" });
+    finishBoardPointerOn(beginBoardPointer(card), screen.getByRole("region", { name: "Queued" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/queue") && c.method === "POST")).toBe(true)
+    );
+    const freezeIndex = calls.findIndex((c) => c.url.endsWith("/freeze") && c.method === "POST");
+    const queueIndex = calls.findIndex((c) => c.url.endsWith("/queue") && c.method === "POST");
+    expect(freezeIndex).toBeGreaterThanOrEqual(0);
+    expect(freezeIndex).toBeLessThan(queueIndex);
+    expect(calls[freezeIndex]!.body).toMatchObject({
+      delivery_channel_id: "channel-1",
+      tracking_requested: false,
+    });
+    expect(calls[queueIndex]!.body).toMatchObject({
+      outbound_message_id: "outbound-1",
+      expected_payload_hash: "cd".repeat(32),
+      expected_target_version: 4,
+    });
   });
 
   it("queues an approved drag with the frozen hash and target version", async () => {

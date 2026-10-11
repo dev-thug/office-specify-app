@@ -56,7 +56,7 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
     expect(screen.queryByRole("button", { name: "Request review" })).toBeNull();
   });
 
-  it("freezes a campaign draft only on the campaign's bound delivery channel", async () => {
+  it("shows no freeze or approval step for campaign drafts (the board queues them)", async () => {
     const calls = mockSendingApi({ draft: draft({ purpose: "marketing" }) });
     renderWorkflow(
       <DraftSendingWorkflow
@@ -69,25 +69,13 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
       />
     );
 
-    expect(
-      screen.queryByRole("combobox", { name: "Delivery channel" })
-    ).toBeNull();
-    expect(
-      screen.queryByRole("combobox", {
-        name: "Booking link meeting type (optional)",
-      })
-    ).toBeNull();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Request review" })
-    );
     await waitFor(() =>
-      expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(true)
+      expect(calls.some((call) => call.url.includes("/message-drafts/draft-1"))).toBe(true)
     );
-    const freezeCall = calls.find((call) => call.url.endsWith("/freeze"))!;
-    expect(JSON.parse(String(freezeCall.init.body))).toMatchObject({
-      delivery_channel_id: "channel-marketing",
-      meeting_type_id: "meeting-1",
-    });
+    expect(screen.queryByRole("button", { name: "Request review" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request approval" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Delivery channel" })).toBeNull();
+    expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(false);
   });
 
   it("sends generic linked drafts back to the campaign board instead of exposing freeze controls", async () => {
@@ -116,52 +104,6 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
     expect(
       screen.queryByRole("button", { name: "Request approval" })
     ).toBeNull();
-  });
-
-  it("allows a message-level meeting type when the campaign has no pinned type", async () => {
-    mockSendingApi({ draft: draft({ purpose: "marketing" }) });
-    renderWorkflow(
-      <DraftSendingWorkflow
-        draftId="draft-1"
-        mailAccountId="mailbox-1"
-        salesCampaignId="campaign-1"
-        allowSubmit={false}
-        lockedDeliveryChannelId="channel-marketing"
-        campaignMeetingTypeId={null}
-      />
-    );
-
-    expect(
-      screen.queryByRole("combobox", { name: "Delivery channel" })
-    ).toBeNull();
-    expect(
-      await screen.findByRole("combobox", {
-        name: "Booking link meeting type (optional)",
-      })
-    ).toBeInTheDocument();
-  });
-
-  it("blocks freeze and review while the campaign draft has unsaved edits", async () => {
-    const calls = mockSendingApi({ draft: draft() });
-    renderWorkflow(
-      <DraftSendingWorkflow
-        draftId="draft-1"
-        mailAccountId="mailbox-1"
-        salesCampaignId="campaign-1"
-        allowSubmit={false}
-        lockedDeliveryChannelId="channel-1"
-        campaignMeetingTypeId={null}
-        freezeBlocked
-      />
-    );
-
-    expect(
-      await screen.findByText("Save draft changes before freezing and requesting review.")
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Request review" })
-    ).toBeDisabled();
-    expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(false);
   });
 });
 

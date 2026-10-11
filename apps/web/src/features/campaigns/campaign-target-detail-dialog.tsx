@@ -50,6 +50,7 @@ export function CampaignTargetDetailDialog({
   campaign,
   target,
   queueNotice,
+  onQueue,
   open,
   onOpenChange,
   onChanged,
@@ -57,6 +58,8 @@ export function CampaignTargetDetailDialog({
   campaign: SalesCampaignSummary;
   target: SalesCampaignTarget;
   queueNotice: string | null;
+  /** 카드를 "발송 대기"로 보낸다(필요하면 확정까지 자동 처리). */
+  onQueue?: () => void | Promise<unknown>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onChanged: () => void | Promise<unknown>;
@@ -251,6 +254,7 @@ export function CampaignTargetDetailDialog({
               }}
               onReloadRemote={reloadRemoteDraft}
               onChanged={onChanged}
+              onQueue={onQueue}
             />
           </div>
         {target.company_id ? (
@@ -334,9 +338,11 @@ function CampaignTargetDraftEditor({
   onCreated,
   onReloadRemote,
   onChanged,
+  onQueue,
 }: {
   campaign: SalesCampaignSummary;
   target: SalesCampaignTarget;
+  onQueue?: () => void | Promise<unknown>;
   draftId?: string;
   onCreated: (draft: MessageDraftResponse) => void;
   onReloadRemote: () => void;
@@ -361,6 +367,7 @@ function CampaignTargetDraftEditor({
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [bodyEditorModeOverride, setBodyEditorModeOverride] = useState<"plain" | "rich" | null>(null);
   const [pending, setPending] = useState(false);
+  const [queueing, setQueueing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<"subject" | "body" | "variables", string>>>({});
 
@@ -793,7 +800,20 @@ function CampaignTargetDraftEditor({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {draftId && onQueue && !isDirty && (!target.outbound || target.outbound.status === "draft") ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending || remoteConflict || queueing}
+                onClick={() => {
+                  setQueueing(true);
+                  void Promise.resolve(onQueue()).finally(() => setQueueing(false));
+                }}
+              >
+                {queueing ? t("queueing") : t("sendQueue")}
+              </Button>
+            ) : null}
             <Button type="submit" disabled={pending || remoteConflict}>
               {pending ? t("savingDraft") : draftId ? t("saveDraft") : t("createDraft")}
             </Button>

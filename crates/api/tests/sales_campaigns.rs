@@ -1315,7 +1315,7 @@ async fn one_target_per_group_email_prevents_shared_address_duplicates() {
 }
 
 #[tokio::test]
-async fn queue_needs_an_independent_human_approval_and_replays_the_persisted_batch() {
+async fn human_queue_needs_no_separate_approval_and_replays_the_persisted_batch() {
     let Some(test) = setup().await else { return };
     let (profile_id, channel_id, sender_id, _) =
         create_smtp_profile(&test, &Uuid::new_v4().simple().to_string()).await;
@@ -1359,39 +1359,7 @@ async fn queue_needs_an_independent_human_approval_and_replays_the_persisted_bat
     let current = campaign_target_detail(&test, campaign_id).await;
     let target_version = current["targets"][0]["version"].as_i64().unwrap();
 
-    let denied = queue_target(
-        &test,
-        campaign_id,
-        target_id,
-        outbound_id,
-        payload_hash,
-        target_version,
-        "sales-queue-unapproved-001",
-    )
-    .await;
-    assert_eq!(denied.status(), StatusCode::CONFLICT);
-    let queued_before_approval: i64 = {
-        let mut tx = test
-            .app
-            .state
-            .db
-            .begin(test.world.workspace_id)
-            .await
-            .unwrap();
-        let count = sqlx::query_scalar(
-            "SELECT count(*) FROM jobs WHERE workspace_id = $1
-              AND kind = 'sending.dispatch_outbound' AND state = 'queued'",
-        )
-        .bind(test.world.workspace_id)
-        .fetch_one(tx.conn())
-        .await
-        .unwrap();
-        tx.rollback().await.unwrap();
-        count
-    };
-    assert_eq!(queued_before_approval, 0);
-
-    request_and_approve_outbound(&test, outbound_id, payload_hash).await;
+    // A human queueing the card is the approval; no separate request is needed.
     let key = "sales-queue-approved-001";
     let first = queue_target(
         &test,
@@ -1508,22 +1476,6 @@ async fn stale_outbound_cannot_queue_after_target_current_draft_changes() {
         "sales-stale-freeze-a-001",
     )
     .await;
-    let version_a = campaign_target_detail(&test, campaign_id).await["targets"][0]["version"]
-        .as_i64()
-        .unwrap();
-
-    let unapproved = queue_target(
-        &test,
-        campaign_id,
-        target_id,
-        frozen_a["outbound_message_id"].as_str().unwrap(),
-        frozen_a["payload_hash"].as_str().unwrap(),
-        version_a,
-        "sales-stale-unapproved-001",
-    )
-    .await;
-    assert_eq!(unapproved.status(), StatusCode::CONFLICT);
-
     let draft_b = create_target_draft(
         &test,
         campaign_id,

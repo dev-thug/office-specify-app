@@ -647,7 +647,7 @@ export function DraftSendingWorkflow({
               </p>
             </div>
           ) : null}
-          {!outboundId && activeDraft.status === "draft" ? (
+          {!outboundId && activeDraft.status === "draft" && !salesCampaignId ? (
             <>
               <details
                 key={String(!lockedDeliveryChannelId && channelRows.length !== 1)}
@@ -911,7 +911,8 @@ export function DraftSendingWorkflow({
 
           {disposition.canRequestApproval &&
           outbound.status === "draft" &&
-          !approvalRequestExists ? (
+          !approvalRequestExists &&
+          !salesCampaignId ? (
             <div className="grid gap-2 rounded-2xl border border-border p-3">
               <p className="text-sm">{t("approvalRequired")}</p>
               <div className="grid gap-1.5">
