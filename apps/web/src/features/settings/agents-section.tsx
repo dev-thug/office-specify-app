@@ -42,6 +42,7 @@ import {
   createAgentCredential,
   credentialSecret,
   revokeCredential,
+  CREDENTIALS_QUERY_KEY,
   useAgentCredentials,
   usePrincipals,
   type Principal,
@@ -218,7 +219,7 @@ function AgentCredentials({ agent }: { agent: Principal }) {
     onSuccess: () => {
       toast.success(t("credentials.revokeSuccess"));
       queryClient.invalidateQueries({
-        queryKey: ["settings", "agents", agent.id, "credentials"],
+        queryKey: CREDENTIALS_QUERY_KEY,
       });
     },
     onError: (err) => toast.error(apiErrorText(tSettings, err)),
@@ -563,7 +564,7 @@ function NewCredentialDialog({
       setCreated(res.data);
       idemRef.current = idempotencyKey();
       queryClient.invalidateQueries({
-        queryKey: ["settings", "agents", agent.id, "credentials"],
+        queryKey: CREDENTIALS_QUERY_KEY,
       });
     },
     onError: (err) => {

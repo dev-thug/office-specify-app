@@ -28,6 +28,8 @@
  * - `GET /me/sessions` + `POST /me/sessions/{id}/revoke` — 본인 세션 관리
  * - `PUT /me/password`                   — 본인 비밀번호 변경
  */
+import { useQuery } from "@tanstack/react-query";
+
 import { apiFetch } from "./client";
 import { mutate, type MutateOptions } from "./mutate";
 import { useCursorList, type ListParams } from "./use-cursor-list";
@@ -216,13 +218,31 @@ export function credentialSecret(
   return created.secret ?? created.token;
 }
 
-/** `GET /api/v1/agents/{id}/credentials` — 부록 B 미명시 가정. */
+/** 서비스 credential 목록 캐시 키 — 발급·해지 후 이 키를 무효화한다. */
+export const CREDENTIALS_QUERY_KEY = ["settings", "credentials"] as const;
+
+/**
+ * `GET /api/v1/credentials` — 워크스페이스의 모든 서비스 credential(secret 제외, 관리자 전용).
+ * 서버에는 에이전트별 목록 경로가 없어서 한 번 가져와 에이전트별로 거른다.
+ */
 export function useAgentCredentials(agentId: string | undefined) {
-  return useCursorList<ServiceCredential>({
-    queryKey: ["settings", "agents", agentId, "credentials"],
-    path: `/api/v1/agents/${encodeURIComponent(agentId ?? "")}/credentials`,
+  const query = useQuery({
+    queryKey: CREDENTIALS_QUERY_KEY,
+    queryFn: async () => (await apiFetch<ServiceCredential[]>("/api/v1/credentials")).data,
     enabled: !!agentId,
   });
+  const rows = (query.data ?? []).filter((credential) => credential.principal_id === agentId);
+  return {
+    // useCursorList 와 같은 모양을 유지해 호출부를 바꾸지 않는다.
+    data: { pages: [{ data: rows, page: { has_more: false, next_cursor: null } }] },
+    isPending: query.isPending,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: async () => undefined,
+  };
 }
 
 export interface CreateCredentialInput {

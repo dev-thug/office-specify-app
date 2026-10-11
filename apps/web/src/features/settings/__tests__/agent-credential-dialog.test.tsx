@@ -119,4 +119,41 @@ describe("MCP credential issuance", () => {
     expect(posts[0]).not.toHaveProperty("expires_in_days");
     expect((posts[0]!.scopes as string[]).length).toBeGreaterThanOrEqual(20);
   });
+
+  it("lists each agent's credentials from GET /credentials (no per-agent list endpoint)", async () => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.startsWith("/api/v1/credentials")) {
+          return json([
+            { id: "c1", principal_id: "agent-1", name: "mine", key_prefix: "osk_a", scopes: ["crm.read"], expires_at: "2027-01-01T00:00:00Z", last_used_at: null, revoked_at: null, created_at: "2026-10-11T00:00:00Z" },
+            { id: "c2", principal_id: "agent-2", name: "someone-else", key_prefix: "osk_b", scopes: ["crm.read"], expires_at: "2027-01-01T00:00:00Z", last_used_at: null, revoked_at: null, created_at: "2026-10-11T00:00:00Z" },
+          ]);
+        }
+        if (url.includes("/principals")) {
+          return json(
+            [{ id: "agent-1", kind: "agent", name: "Research agent", status: "active", role: "agent" }],
+            { page: { next_cursor: null, has_more: false } }
+          );
+        }
+        return json([], { page: { next_cursor: null, has_more: false } });
+      })
+    );
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NextIntlClientProvider locale="en" messages={{ settings, common }}>
+          <AgentsSection />
+        </NextIntlClientProvider>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText("mine")).toBeInTheDocument();
+    expect(screen.queryByText("someone-else")).toBeNull();
+    expect(urls.some((url) => /\/agents\/[^/]+\/credentials/.test(url))).toBe(false);
+  });
 });
