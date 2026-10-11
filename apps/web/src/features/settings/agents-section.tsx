@@ -76,6 +76,34 @@ export const AGENT_SCOPES = [
   "agents.run",
 ] as const;
 
+/** 자주 쓰는 scope 묶음 — 선택만으로 시작할 수 있게 한다. */
+export const SCOPE_PRESETS: { id: "research" | "sales"; scopes: readonly string[] }[] = [
+  { id: "research", scopes: ["crm.read", "research.propose", "research.write"] },
+  {
+    id: "sales",
+    scopes: [
+      "crm.read",
+      "research.propose",
+      "research.write",
+      "templates.read",
+      "mail.read",
+      "mail.compose",
+      "mail.submit_approved",
+      "campaign.compose",
+    ],
+  },
+];
+
+const CREDENTIAL_EXPIRY_DAYS = [30, 90, 180, 365, 730] as const;
+
+/** 에이전트가 접속할 MCP 주소. 배포 환경은 NEXT_PUBLIC_MCP_URL 로 지정한다. */
+export function mcpEndpoint(): string {
+  const configured = process.env.NEXT_PUBLIC_MCP_URL;
+  if (configured) return configured;
+  if (typeof window !== "undefined") return `http://${window.location.hostname}:8081/mcp`;
+  return "http://127.0.0.1:8081/mcp";
+}
+
 export function AgentsSection() {
   const t = useTranslations("settings.members");
   const tSettings = useTranslations("settings");
@@ -329,7 +357,23 @@ function ScopeChecklist({
   setScopes: (s: string[]) => void;
   labelPrefix: string;
 }) {
+  const t = useTranslations("settings.members");
   return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-2xs text-muted-foreground">{t("agents.presets")}</span>
+        {SCOPE_PRESETS.map((preset) => (
+          <Button
+            key={preset.id}
+            type="button"
+            variant="outline"
+            size="xs"
+            onClick={() => setScopes([...preset.scopes])}
+          >
+            {t(`agents.preset.${preset.id}`)}
+          </Button>
+        ))}
+      </div>
     <fieldset className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-lg border border-border p-2.5">
       <legend className="sr-only">{labelPrefix}</legend>
       {AGENT_SCOPES.map((scope) => (
@@ -353,6 +397,7 @@ function ScopeChecklist({
         </label>
       ))}
     </fieldset>
+    </div>
   );
 }
 
@@ -479,7 +524,7 @@ function NewCredentialDialog({
 
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>([]);
-  const [expiresAt, setExpiresAt] = useState("");
+  const [expiresInDays, setExpiresInDays] = useState<number>(365);
   const [created, setCreated] = useState<ServiceCredentialCreated | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -488,10 +533,10 @@ function NewCredentialDialog({
       createAgentCredential(
         agent.id,
         {
-          name: name.trim() || undefined,
+          // 서버는 이름이 필수라서 비워 두면 에이전트 이름으로 채운다.
+          name: name.trim() || `${agent.name} MCP`,
           scopes,
-          // datetime-local 값을 RFC 3339(UTC)로 변환해 보낸다.
-          expires_at: new Date(expiresAt).toISOString(),
+          expires_in_days: expiresInDays,
         },
         { idempotencyKey: idemRef.current }
       ),
@@ -514,14 +559,14 @@ function NewCredentialDialog({
     setCreated(null);
     setName("");
     setScopes([]);
-    setExpiresAt("");
+    setExpiresInDays(365);
     setError(null);
     onOpenChange(false);
   }
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!submit.isPending && scopes.length > 0 && expiresAt) submit.mutate();
+    if (!submit.isPending && scopes.length > 0) submit.mutate();
   }
 
   const secret = created ? credentialSecret(created) : undefined;
@@ -542,7 +587,30 @@ function NewCredentialDialog({
               <DialogDescription>{t("credentials.createdDescription")}</DialogDescription>
             </DialogHeader>
             {secret ? (
-              <CopyField value={secret} label={t("credentials.columns.name")} />
+              <div className="grid gap-3">
+                <CopyField value={secret} label={t("credentials.secretLabel")} />
+                <CopyField value={mcpEndpoint()} label={t("credentials.mcpUrlLabel")} />
+                <div className="grid gap-1.5">
+                  <p className="text-xs font-medium">{t("credentials.clientConfigLabel")}</p>
+                  <CopyField
+                    value={JSON.stringify(
+                      {
+                        mcpServers: {
+                          office: {
+                            type: "http",
+                            url: mcpEndpoint(),
+                            headers: { Authorization: `Bearer ${secret}` },
+                          },
+                        },
+                      },
+                      null,
+                      2
+                    )}
+                    label={t("credentials.clientConfigLabel")}
+                  />
+                  <p className="text-2xs text-muted-foreground">{t("credentials.clientConfigHint")}</p>
+                </div>
+              </div>
             ) : (
               <p role="alert" className="text-sm text-amber-on-subtle">
                 {t("inviteMissingLink")}
@@ -574,13 +642,18 @@ function NewCredentialDialog({
                 <Label htmlFor={`cred-exp-${agent.id}`}>
                   {t("credentials.expiresAtLabel")}
                 </Label>
-                <Input
+                <select
                   id={`cred-exp-${agent.id}`}
-                  type="datetime-local"
-                  required
-                  value={expiresAt}
-                  onChange={(e) => setExpiresAt(e.target.value)}
-                />
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={expiresInDays}
+                  onChange={(e) => setExpiresInDays(Number(e.target.value))}
+                >
+                  {CREDENTIAL_EXPIRY_DAYS.map((days) => (
+                    <option key={days} value={days}>
+                      {t("credentials.expiresInDays", { days })}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid gap-1.5">
                 <Label>{t("agents.scopesLabel")}</Label>
@@ -601,7 +674,7 @@ function NewCredentialDialog({
                 </Button>
                 <Button
                   type="submit"
-                  disabled={submit.isPending || scopes.length === 0 || !expiresAt}
+                  disabled={submit.isPending || scopes.length === 0}
                 >
                   {t("credentials.createSubmit")}
                 </Button>

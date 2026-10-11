@@ -226,9 +226,11 @@ export function useAgentCredentials(agentId: string | undefined) {
 }
 
 export interface CreateCredentialInput {
-  name?: string;
+  /** 서버에서 필수 — 비워 두면 400. */
+  name: string;
   scopes: string[];
-  expires_at: string;
+  /** 만료까지 일 수 (서버 기본 365, 최대 730). */
+  expires_in_days?: number;
 }
 
 export function createAgentCredential(

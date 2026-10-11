@@ -184,6 +184,8 @@
       "emptyDescription": "Invitation status appears here once a link is created."
     },
     "agents": {
+      "presets": "Quick select",
+      "preset": {"research": "Company research", "sales": "Sales campaigns"},
       "new": "Add agent",
       "emptyTitle": "No agents registered",
       "emptyDescription": "Create an agent principal and issue service credentials.",
@@ -198,6 +200,11 @@
       "createSuccess": "Agent created"
     },
     "credentials": {
+      "expiresInDays": "Expires in {days} days",
+      "secretLabel": "Bearer token (secret)",
+      "mcpUrlLabel": "MCP URL",
+      "clientConfigLabel": "MCP client config",
+      "clientConfigHint": "Paste into the config of an HTTP MCP client such as Claude Code or Cursor. This token cannot be shown again.",
       "new": "Issue credential",
       "newTitle": "Issue credential for {name}",
       "nameLabel": "Name",
