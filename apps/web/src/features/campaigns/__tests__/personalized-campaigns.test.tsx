@@ -80,6 +80,15 @@ function campaignTarget(overrides: Partial<SalesCampaignTarget>): SalesCampaignT
   };
 }
 
+/** Moving a card to Draft/Review requires an existing draft (server rule). */
+const EXISTING_DRAFT: NonNullable<SalesCampaignTarget["current_draft"]> = {
+  draft_id: "existing-draft",
+  subject: "Existing draft",
+  status: "draft",
+  version: 1,
+  outbound_message_id: null,
+};
+
 function salesCampaign(targets: SalesCampaignTarget[]): SalesCampaignResponse {
   return {
     campaign: {
@@ -203,7 +212,7 @@ afterEach(() => {
 
 describe("personalized campaign routes", () => {
   it("shows a floating card and landing placeholder, and Escape cancels without a request", async () => {
-    const data = salesCampaign([campaignTarget({})]);
+    const data = salesCampaign([campaignTarget({current_draft: EXISTING_DRAFT})]);
     const fetcher = vi.fn(async () => new Response(JSON.stringify({data}), {headers:{"content-type":"application/json"}}));
     vi.stubGlobal("fetch", fetcher);
     mount(await CampaignDetailPage({params:Promise.resolve({id:"campaign-1"})}));
@@ -222,7 +231,7 @@ describe("personalized campaign routes", () => {
   });
 
   it("scrolls at the board edge and stops the animation when canceled", async () => {
-    const data = salesCampaign([campaignTarget({})]);
+    const data = salesCampaign([campaignTarget({current_draft: EXISTING_DRAFT})]);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({data}), {headers:{"content-type":"application/json"}})));
     mount(await CampaignDetailPage({params:Promise.resolve({id:"campaign-1"})}));
     const card = await screen.findByRole("article", {name:"Northstar"});
@@ -245,7 +254,7 @@ describe("personalized campaign routes", () => {
   });
 
   it("accepts rapid round trips during a slow save and serializes the latest destination", async () => {
-    const data = salesCampaign([campaignTarget({})]);
+    const data = salesCampaign([campaignTarget({current_draft: EXISTING_DRAFT})]);
     const saves: {body: Record<string, unknown>; resolve: (r:Response)=>void}[] = [];
     vi.stubGlobal("fetch", vi.fn(async (_input:RequestInfo | URL, init?:RequestInit) => {
       if (init?.method === "PATCH") return new Promise<Response>(resolve => saves.push({body:JSON.parse(String(init.body)),resolve}));
@@ -270,7 +279,7 @@ describe("personalized campaign routes", () => {
   });
 
   it("moves immediately while saving and restores the original lane on failure", async () => {
-    const data = salesCampaign([campaignTarget({})]);
+    const data = salesCampaign([campaignTarget({current_draft: EXISTING_DRAFT})]);
     let rejectMove!: (response: Response) => void;
     vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === "PATCH") return new Promise<Response>(resolve => { rejectMove = resolve; });
@@ -1086,6 +1095,46 @@ describe("personalized campaign routes", () => {
     });
   });
 
+  it("opens the draft editor instead of PATCHing when a card without a draft is moved to Draft", async () => {
+    const data = salesCampaign([
+      campaignTarget({
+        id: "research-target",
+        company_name: "Northstar",
+        stage: "research",
+        workflow_stage: "research",
+        version: 1,
+        current_draft: null,
+      }),
+    ]);
+    const patches: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (init?.method === "PATCH") patches.push(url.pathname);
+        const response = url.pathname === "/api/v1/sales-campaigns/campaign-1"
+          ? data
+          : [];
+        return new Response(JSON.stringify({ data: response }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      })
+    );
+    const page = await CampaignDetailPage({
+      params: Promise.resolve({ id: "campaign-1" }),
+    });
+    mount(page);
+
+    const card = await screen.findByRole("article", { name: "Northstar" });
+    fireEvent.click(within(card).getByRole("button", { name: /Move Northstar to Draft/ }));
+
+    expect(
+      await screen.findByText(/Write a draft for this company first/)
+    ).toBeInTheDocument();
+    expect(patches).toEqual([]);
+  });
+
   it("allows an accessible backward move from Review to Draft", async () => {
     const data = salesCampaign([
       campaignTarget({
@@ -1156,6 +1205,7 @@ describe("personalized campaign routes", () => {
         stage: "research",
         workflow_stage: "research",
         version: 2,
+        current_draft: EXISTING_DRAFT,
       }),
     ]);
     const stageUpdates: Record<string, unknown>[] = [];
@@ -1302,6 +1352,7 @@ describe("personalized campaign routes", () => {
         stage: "research",
         workflow_stage: "research",
         version: 2,
+        current_draft: EXISTING_DRAFT,
       }),
     ]);
     let detailReads = 0;

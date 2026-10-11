@@ -209,6 +209,13 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
       setQueueNotice(t("frozenReviewCopyRequired"));
       return;
     }
+    // Saving a draft is what moves a card to Draft; the server rejects a stage
+    // change to Draft/Review while the card has no draft.
+    if ((stage === "draft" || stage === "review") && !target.current_draft) {
+      setSelectedTargetId(target.id);
+      setQueueNotice(t("draftRequiredFirst"));
+      return;
+    }
     // Stage edits may be superseded while saving; delivery operations remain locked.
     if (pendingTargetIdsRef.current.has(target.id) && !stageIntents.current.has(target.id)) return;
     stageIntents.current.set(target.id, stage);
@@ -246,7 +253,15 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
     } catch (error) {
       if (scope) settleOperation(scope, error);
       stageIntents.current.delete(target.id);
-      setActionError(t("moveError"));
+      if (
+        error instanceof ApiError &&
+        error.problem.violations.some(violation => violation.code === "DRAFT_REQUIRED")
+      ) {
+        setSelectedTargetId(target.id);
+        setQueueNotice(t("draftRequiredFirst"));
+      } else {
+        setActionError(t("moveError"));
+      }
       await refresh();
     } finally {
       stageIntents.current.delete(target.id);

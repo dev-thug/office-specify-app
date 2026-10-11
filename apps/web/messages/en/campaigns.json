@@ -380,6 +380,7 @@
       "moveToStage": "Move {company} to {stage}",
       "queue": "Queue for next batch",
       "queueApprovalNeeded": "Approve the frozen message before scheduling. Open the card to review and approve it.",
+      "draftRequiredFirst": "Write a draft for this company first. Saving the draft moves the card to Draft automatically.",
       "queueMissingSnapshot": "Freeze and review the current message before queuing it.",
       "queueError": "The server did not confirm this card was queued. Refresh its status before trying again.",
       "moveError": "The server did not confirm this stage change. Refresh the board and try again.",
