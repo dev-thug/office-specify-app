@@ -242,6 +242,7 @@
     "oauthInvalid": "Invalid format",
     "oauthClientIdFormat": "Client IDs start with 1000.",
     "oauthLoadError": "Could not load the Zoho OAuth settings",
+    "regionHint": "Live Zoho Mail connections currently support US (com) data-center accounts only.",
     "connectSubmit": "Start OAuth",
     "reconnect": "Reconnect",
     "reconnectDone": "Reauth started. Check the connection status.",

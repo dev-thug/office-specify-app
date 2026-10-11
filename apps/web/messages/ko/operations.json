@@ -202,7 +202,10 @@
       "description": "아래 URL로 이동해 공급자 인증을 완료하세요. 이 URL은 이 대화상자를 닫으면 다시 표시되지 않습니다.",
       "open": "연결 페이지 열기",
       "copy": "URL 복사",
-      "copied": "복사했습니다"
+      "copied": "복사했습니다",
+      "usedClient": "사용된 Client ID",
+      "usedRedirect": "사용된 Redirect URI",
+      "troubleshoot": "Zoho에서 \"올바르지 않은 클라이언트\" 또는 redirect 오류가 나오면: ① 위 Client ID가 Zoho API Console의 값과 같은지, ② Redirect URI가 Authorized Redirect URIs에 정확히 등록돼 있는지, ③ 계정이 US(zoho.com) 데이터센터인지 확인하세요. 값을 고치려면 메일함 연결 창의 \"클라이언트 설정 변경\"을 사용하세요."
     },
     "calendar": {
       "host": "호스트",

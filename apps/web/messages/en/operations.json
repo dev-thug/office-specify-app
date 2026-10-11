@@ -202,7 +202,10 @@
       "description": "Open this URL to finish provider auth. It is not shown again after you close this dialog.",
       "open": "Open connection page",
       "copy": "Copy URL",
-      "copied": "Copied"
+      "copied": "Copied",
+      "usedClient": "Client ID in use",
+      "usedRedirect": "Redirect URI in use",
+      "troubleshoot": "If Zoho reports an invalid client or a redirect error: (1) check that the Client ID above matches the Zoho API Console, (2) confirm the Redirect URI is registered exactly under Authorized Redirect URIs, and (3) confirm your account is on the US (zoho.com) data center. Use \"Change client settings\" in the Connect mailbox dialog to fix values."
     },
     "calendar": {
       "host": "Host",

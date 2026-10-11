@@ -470,6 +470,7 @@ function ConnectDialog({
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-2xs text-muted-foreground">{t("regionHint")}</p>
           </div>
           {error ? (
             <p role="alert" className="text-sm text-destructive">
