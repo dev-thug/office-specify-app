@@ -429,9 +429,9 @@ pub async fn evaluate(
     // -- Approval (non-correspondence, or any agent-requested send) ----
     // Sales-campaign cards are queued explicitly by a person or an agent, which
     // is the go-ahead (see submit); other sends keep their approvals.
-    let sales_campaign_send = infrastructure::repo::sales_campaigns::outbound_binding(tx, o.id)
-        .await?
-        .is_some();
+    // Read-only on purpose: the worker role has no row-lock privileges.
+    let sales_campaign_send =
+        infrastructure::repo::sales_campaigns::is_campaign_outbound(tx, o.id).await?;
     let approval_needed =
         !sales_campaign_send && (o.purpose != "correspondence" || requester_is_agent);
     if o.launch_id.is_some() {

@@ -403,7 +403,7 @@ impl Runner {
                     handler.external_effect(),
                 )
                 .await;
-                tracing::warn!(job_id = %job.id, kind = %job.kind, code = e.code.as_str(), "job failed");
+                tracing::warn!(job_id = %job.id, kind = %job.kind, code = e.code.as_str(), detail = %e.detail, "job failed");
             }
             Err(_panic) => {
                 let _ = tx.rollback().await;

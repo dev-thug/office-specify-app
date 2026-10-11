@@ -181,6 +181,25 @@ pub async fn draft_binding(
     .map_err(map_sqlx)
 }
 
+/// Read-only check (no locks, SELECT privilege only — safe for the worker role)
+/// that an outbound message belongs to a sales-campaign target draft.
+pub async fn is_campaign_outbound(tx: &mut Tx<'_>, outbound_id: Uuid) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1
+              FROM outbound_messages o
+              JOIN sales_campaign_target_drafts td
+                ON td.workspace_id = o.workspace_id AND td.draft_id = o.source_draft_id
+               AND td.mail_account_id = o.mail_account_id
+             WHERE o.workspace_id = $1 AND o.id = $2)",
+    )
+    .bind(tx.workspace_id())
+    .bind(outbound_id)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
 pub async fn outbound_binding(
     tx: &mut Tx<'_>,
     outbound_id: Uuid,
