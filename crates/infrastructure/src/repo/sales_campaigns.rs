@@ -508,6 +508,80 @@ pub async fn insert_campaign(
     .map_err(map_sqlx)
 }
 
+/// True when any draft of this campaign has already produced an outbound
+/// message (queued, sent or failed) — its channel/sender must stay pinned.
+pub async fn campaign_has_outbound(tx: &mut Tx<'_>, campaign_id: Uuid) -> Result<bool, AppError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1
+              FROM sales_campaign_target_drafts t
+              JOIN outbound_messages o
+                ON o.workspace_id = t.workspace_id AND o.source_draft_id = t.draft_id
+             WHERE t.workspace_id = $1 AND t.sales_campaign_id = $2)",
+    )
+    .bind(tx.workspace_id())
+    .bind(campaign_id)
+    .fetch_one(tx.conn())
+    .await
+    .map_err(map_sqlx)
+}
+
+/// Move every campaign of the profile's mailbox that has produced no
+/// outbound message yet to `profile`, so a changed default sender (e.g. a
+/// Zoho alias) takes effect on existing campaigns immediately.
+pub async fn repin_unsent_campaigns(
+    tx: &mut Tx<'_>,
+    profile: &SenderProfileRow,
+) -> Result<u64, AppError> {
+    let result = sqlx::query(
+        "UPDATE sales_campaigns c
+            SET delivery_channel_id = $2, sender_identity_id = $3,
+                smtp_profile_id = $4, version = c.version + 1, updated_at = now()
+          WHERE c.workspace_id = $1
+            AND c.mail_account_id = $5
+            AND c.smtp_profile_id <> $4
+            AND NOT EXISTS (
+                SELECT 1
+                  FROM sales_campaign_target_drafts t
+                  JOIN outbound_messages o
+                    ON o.workspace_id = t.workspace_id AND o.source_draft_id = t.draft_id
+                 WHERE t.workspace_id = c.workspace_id
+                   AND t.sales_campaign_id = c.id)",
+    )
+    .bind(tx.workspace_id())
+    .bind(profile.delivery_channel_id)
+    .bind(profile.sender_identity_id)
+    .bind(profile.smtp_profile_id)
+    .bind(profile.mail_account_id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(result.rows_affected())
+}
+
+/// Re-pin a campaign to another sender profile of the same mailbox.
+pub async fn repin_campaign_sender(
+    tx: &mut Tx<'_>,
+    campaign_id: Uuid,
+    profile: &SenderProfileRow,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE sales_campaigns
+            SET delivery_channel_id = $3, sender_identity_id = $4,
+                smtp_profile_id = $5, version = version + 1, updated_at = now()
+          WHERE workspace_id = $1 AND id = $2",
+    )
+    .bind(tx.workspace_id())
+    .bind(campaign_id)
+    .bind(profile.delivery_channel_id)
+    .bind(profile.sender_identity_id)
+    .bind(profile.smtp_profile_id)
+    .execute(tx.conn())
+    .await
+    .map_err(map_sqlx)?;
+    Ok(())
+}
+
 pub async fn count_targets(tx: &mut Tx<'_>, campaign_id: Uuid) -> Result<i64, AppError> {
     sqlx::query_scalar(
         "SELECT count(*) FROM sales_campaign_targets

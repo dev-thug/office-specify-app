@@ -34,6 +34,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_sales_campaigns))
         .routes(routes!(create_sales_campaign))
         .routes(routes!(get_sales_campaign))
+        .routes(routes!(refresh_sales_campaign_sender))
         .routes(routes!(get_sales_campaign_sender))
         .routes(routes!(set_sales_campaign_sender))
         .routes(routes!(add_sales_campaign_target))
@@ -182,6 +183,31 @@ async fn create_sales_campaign(
         StatusCode::CREATED,
         etag(stored.body.version),
         axum::Json(envelope(stored.body, &request_id)),
+    ))
+}
+
+#[utoipa::path(
+    post, path = "/sales-campaigns/{id}/sender/refresh",
+    params(("id" = Uuid, Path, description = "Sales campaign id")),
+    responses(
+        (status = 200, description = "Campaign re-pinned to the current default sender", body = SalesCampaignSummary),
+        (status = 403, description = "Mailbox/scope denied", body = Problem),
+        (status = 404, description = "Campaign not found", body = Problem),
+        (status = 409, description = "Messages already queued/sent, or a different mailbox", body = Problem),
+    )
+)]
+async fn refresh_sales_campaign_sender(
+    State(state): State<AppState>,
+    auth: AuthCtx,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ProblemError> {
+    let ctx = auth.into_inner();
+    let summary =
+        application::sales_campaigns::refresh_sales_campaign_sender(&state.db, &ctx, id).await?;
+    let version = summary.version;
+    Ok((
+        etag(version),
+        axum::Json(envelope(summary, &ctx.request_id)),
     ))
 }
 

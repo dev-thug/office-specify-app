@@ -118,6 +118,7 @@ export function useSmtpConnections(enabled = true) {
       return result.data;
     },
     enabled,
+    refetchInterval: 5_000,
   });
 }
 

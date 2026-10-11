@@ -510,6 +510,7 @@ export function SmtpSettings({
     queryKey: ["sales-campaigns", "sender"],
     enabled: isAdmin,
     queryFn: async () => (await getSalesCampaignSender()).data,
+    refetchInterval: 5_000,
     retry: false,
   });
   const [formOpen, setFormOpen] = useState(false);
@@ -539,7 +540,7 @@ export function SmtpSettings({
       queryKey: DELIVERY_CHANNELS_QUERY_KEY,
     });
     void queryClient.invalidateQueries({
-      queryKey: ["sales-campaigns", "sender"],
+      queryKey: ["sales-campaigns"],
     });
   }
 

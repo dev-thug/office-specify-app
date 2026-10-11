@@ -227,7 +227,9 @@ describe("personalized campaign routes", () => {
     expect(screen.queryByTestId("board-drag-preview")).not.toBeInTheDocument();
     expect(screen.queryByTestId("board-drop-placeholder")).not.toBeInTheDocument();
     endBoardPointer(pointer, 30, 30);
-    expect(fetcher.mock.calls).toHaveLength(1);
+    // Reads (board + default sender) are fine; cancelling must not write.
+    const calls = fetcher.mock.calls as unknown as [unknown, RequestInit?][];
+    expect(calls.filter(([, init]) => init?.method && init.method !== "GET")).toHaveLength(0);
   });
 
   it("scrolls at the board edge and stops the animation when canceled", async () => {
@@ -1876,7 +1878,7 @@ describe("personalized campaign routes", () => {
     expect(data.targets[0]!.stage).toBe("draft");
     expect(requests.some((row) => row.path.endsWith("/queue"))).toBe(false);
     expect(requests.some((row) => row.path.endsWith("/submit"))).toBe(false);
-    expect(within(dialog).getByRole("button", { name: "Freeze exact message" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Request review" })).toBeEnabled();
   });
 
   it("creates a separate editable copy of a frozen Review snapshot", async () => {

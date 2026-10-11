@@ -244,6 +244,10 @@ export function DraftSendingWorkflow({
     [channelsQuery.data, mailAccountId, activeDraft?.purpose, lockedDeliveryChannelId]
   );
 
+  // 선택 가능한 채널이 하나뿐이면 따로 고르지 않아도 그 채널을 쓴다.
+  const effectiveChannelId =
+    selectedChannelId || (channelRows.length === 1 ? (channelRows[0]?.id ?? "") : "");
+
   const meetingTypesQuery = useCursorList<MeetingType>({
     queryKey: MEETING_TYPES_QUERY_KEY,
     path: MEETING_TYPES_PATH,
@@ -384,13 +388,13 @@ export function DraftSendingWorkflow({
       sendBlocked ||
       freezeBlocked ||
       activeDraft.status !== "draft" ||
-      !selectedChannelId
+      !effectiveChannelId
     ) {
       return;
     }
-    const scope = `freeze:${activeDraft.draft_id}:${selectedChannelId}:${effectiveMeetingTypeId}:${trackingRequested}`;
+    const scope = `freeze:${activeDraft.draft_id}:${effectiveChannelId}:${effectiveMeetingTypeId}:${trackingRequested}`;
     const request: FreezeMessageDraftInput = {
-      delivery_channel_id: selectedChannelId,
+      delivery_channel_id: effectiveChannelId,
       tracking_requested: trackingRequested,
     };
     if (effectiveMeetingTypeId) request.meeting_type_id = effectiveMeetingTypeId;
@@ -407,6 +411,26 @@ export function DraftSendingWorkflow({
         outboundId: result.data.outbound_message_id,
       });
       setSelectedChannelId("");
+      // 검토 요청은 한 번에: 승인 요청까지 이어서 보낸다. 실패하면 아래의
+      // 승인 요청 영역에서 직접 다시 시도할 수 있다.
+      if (hasComposeGrant && me?.kind === "human") {
+        try {
+          const reason = approvalReason.trim() || t("defaultApprovalReason");
+          const approvalScope = `approval:${result.data.outbound_message_id}:${result.data.payload_hash}:${reason}`;
+          const approval = await requestOutboundApproval(
+            result.data.outbound_message_id,
+            { reason, expected_payload_hash: result.data.payload_hash },
+            { idempotencyKey: getOperationKey(approvalScope) }
+          );
+          settleOperationKey(approvalScope);
+          setCreatedApproval({
+            outboundId: result.data.outbound_message_id,
+            approvalId: approval.data.approval_request_id,
+          });
+        } catch {
+          // 승인 요청 영역으로 폴백
+        }
+      }
       await queryClient.invalidateQueries({
         queryKey: ["sending", "draft", activeDraft.draft_id],
       });
@@ -440,14 +464,15 @@ export function DraftSendingWorkflow({
   }
 
   async function requestApproval() {
-    if (!outbound || !canRequestApproval || !approvalReason.trim()) return;
-    const scope = `approval:${outbound.outbound_message_id}:${outbound.payload_hash}:${approvalReason.trim()}`;
+    if (!outbound || !canRequestApproval) return;
+    const reason = approvalReason.trim() || t("defaultApprovalReason");
+    const scope = `approval:${outbound.outbound_message_id}:${outbound.payload_hash}:${reason}`;
     setPending("approval");
     try {
       const result = await requestOutboundApproval(
         outbound.outbound_message_id,
         {
-          reason: approvalReason.trim(),
+          reason,
           expected_payload_hash: outbound.payload_hash,
         },
         { idempotencyKey: getOperationKey(scope) }
@@ -624,7 +649,13 @@ export function DraftSendingWorkflow({
           ) : null}
           {!outboundId && activeDraft.status === "draft" ? (
             <>
-              <div className="grid gap-3 sm:grid-cols-2">
+              <details
+                key={String(!lockedDeliveryChannelId && channelRows.length !== 1)}
+                className="rounded-xl border border-border px-3 py-2"
+                open={!lockedDeliveryChannelId && channelRows.length !== 1}
+              >
+              <summary className="cursor-pointer text-sm font-medium">{t("sendOptions")}</summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 {lockedDeliveryChannelId ? (
                   <div className="grid gap-1.5">
                     <Label>{t("channel")}</Label>
@@ -640,7 +671,7 @@ export function DraftSendingWorkflow({
                       id={channelSelectId}
                       aria-label={t("channel")}
                       className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                      value={selectedChannelId}
+                      value={effectiveChannelId}
                       onChange={(event) => setSelectedChannelId(event.target.value)}
                       disabled={channelsQuery.isLoading || pending === "freeze"}
                     >
@@ -716,6 +747,7 @@ export function DraftSendingWorkflow({
                   </div>
                 </div>
               </div>
+              </details>
               {channelsQuery.isLoading ? (
                 <p className="text-xs text-muted-foreground">{t("channelsLoading")}</p>
               ) : null}
@@ -747,8 +779,8 @@ export function DraftSendingWorkflow({
                 className="self-start"
                 disabled={
                   freezeBlocked ||
-                  !selectedChannelId ||
-                  channelRows.every((channel) => channel.id !== selectedChannelId) ||
+                  !effectiveChannelId ||
+                  channelRows.every((channel) => channel.id !== effectiveChannelId) ||
                   sendBlocked ||
                   pending !== null
                 }
@@ -899,11 +931,7 @@ export function DraftSendingWorkflow({
                 variant="outline"
                 size="sm"
                 className="self-start"
-                disabled={
-                  !canRequestApproval ||
-                  !approvalReason.trim() ||
-                  pending !== null
-                }
+                disabled={!canRequestApproval || pending !== null}
                 onClick={() => void requestApproval()}
               >
                 {pending === "approval" ? t("requestingApproval") : t("requestApproval")}

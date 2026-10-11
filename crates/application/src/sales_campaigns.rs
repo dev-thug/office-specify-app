@@ -612,6 +612,8 @@ pub async fn set_sales_campaign_sender(
     }
     authz::require_mailbox(tx, ctx, profile.mail_account_id, authz::MailboxPerm::Send).await?;
     repo::set_default_sender_profile(tx, profile.smtp_profile_id, ctx.principal_id).await?;
+    // Campaigns that have not queued or sent anything follow the new default.
+    let repinned = repo::repin_unsent_campaigns(tx, &profile).await?;
     audit::record(
         tx,
         audit_entry(
@@ -619,7 +621,7 @@ pub async fn set_sales_campaign_sender(
             "sales_campaign.sender_default_set",
             "smtp_profile",
             profile.smtp_profile_id,
-            json!({"mail_account_id":profile.mail_account_id,"delivery_channel_id":profile.delivery_channel_id}),
+            json!({"mail_account_id":profile.mail_account_id,"delivery_channel_id":profile.delivery_channel_id,"campaigns_repinned":repinned}),
         ),
     )
     .await?;
@@ -701,6 +703,60 @@ pub async fn create_sales_campaign(
     let row = repo::get_campaign(tx, campaign_id)
         .await?
         .ok_or_else(|| AppError::internal("created sales campaign disappeared"))?;
+    Ok(campaign_summary(row))
+}
+
+/// Re-pin an existing campaign to the workspace's current default sender
+/// (e.g. after switching to a Zoho alias). Allowed only while no message of
+/// the campaign has been queued or sent, and only within the same mailbox.
+pub async fn refresh_sales_campaign_sender(
+    db: &Db,
+    ctx: &Ctx,
+    campaign_id: Uuid,
+) -> Result<SalesCampaignSummary, AppError> {
+    require_campaign_scope(ctx)?;
+    require_crm_read_scope(ctx)?;
+    require_mail_read_scope(ctx)?;
+    let mut tx = db.begin(ctx.workspace_id).await?;
+    infrastructure::repo::sales_campaigns::lock_workspace_privacy_shared(&mut tx).await?;
+    let campaign = repo::lock_campaign(&mut tx, campaign_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("sales campaign not found"))?;
+    require_mail_compose(&mut tx, ctx, campaign.mail_account_id).await?;
+    let profile = resolve_campaign_sender(&mut tx).await?;
+    require_mail_compose(&mut tx, ctx, profile.mail_account_id).await?;
+    if profile.mail_account_id != campaign.mail_account_id {
+        return Err(AppError::conflict(
+            "the default sender uses a different mailbox; create a new campaign instead",
+        ));
+    }
+    if profile.smtp_profile_id != campaign.smtp_profile_id {
+        if repo::campaign_has_outbound(&mut tx, campaign_id).await? {
+            return Err(AppError::conflict(
+                "this campaign already has queued or sent messages; create a new campaign to use another sender",
+            ));
+        }
+        repo::repin_campaign_sender(&mut tx, campaign_id, &profile).await?;
+        audit::record(
+            &mut tx,
+            audit_entry(
+                ctx,
+                "sales_campaign.sender_refreshed",
+                "sales_campaign",
+                campaign_id,
+                json!({
+                    "smtp_profile_id":profile.smtp_profile_id,
+                    "delivery_channel_id":profile.delivery_channel_id,
+                    "sender_identity_id":profile.sender_identity_id,
+                }),
+            ),
+        )
+        .await?;
+    }
+    let row = repo::get_campaign(&mut tx, campaign_id)
+        .await?
+        .ok_or_else(|| AppError::internal("sales campaign disappeared"))?;
+    tx.commit().await?;
     Ok(campaign_summary(row))
 }
 

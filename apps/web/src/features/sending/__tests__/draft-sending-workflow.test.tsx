@@ -53,7 +53,7 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Check send policy" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Delivery channel" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Freeze exact message" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request review" })).toBeNull();
   });
 
   it("freezes a campaign draft only on the campaign's bound delivery channel", async () => {
@@ -78,7 +78,7 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
       })
     ).toBeNull();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Freeze exact message" })
+      await screen.findByRole("button", { name: "Request review" })
     );
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(true)
@@ -111,7 +111,7 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
       screen.queryByRole("combobox", { name: "Delivery channel" })
     ).toBeNull();
     expect(
-      screen.queryByRole("button", { name: "Freeze exact message" })
+      screen.queryByRole("button", { name: "Request review" })
     ).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Request approval" })
@@ -159,7 +159,7 @@ describe("DraftSendingWorkflow sales campaign guard", () => {
       await screen.findByText("Save draft changes before freezing and requesting review.")
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Freeze exact message" })
+      screen.getByRole("button", { name: "Request review" })
     ).toBeDisabled();
     expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(false);
   });
@@ -479,9 +479,9 @@ describe("DraftSendingWorkflow", () => {
     fireEvent.change(meetingSelect, { target: { value: "meeting-1" } });
     expect(Array.from((channelSelect as HTMLSelectElement).options).map((o) => o.value)).not.toContain("channel-other");
 
-    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
     await waitFor(() => expect(calls.filter((call) => call.url.endsWith("/freeze"))).toHaveLength(1));
-    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
     await waitFor(() => expect(calls.filter((call) => call.url.endsWith("/freeze"))).toHaveLength(2));
 
     const freezes = calls.filter((call) => call.url.endsWith("/freeze"));
@@ -519,7 +519,7 @@ describe("DraftSendingWorkflow", () => {
     expect(optionValues).not.toContain("channel-1");
 
     fireEvent.change(channelSelect, { target: { value: "channel-marketing" } });
-    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(true)
     );
@@ -761,7 +761,7 @@ describe("DraftSendingWorkflow", () => {
     expect(optionValues).not.toContain("channel-marketing");
 
     fireEvent.change(channelSelect, { target: { value: "channel-1" } });
-    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith("/freeze"))).toBe(true)
     );
@@ -786,7 +786,7 @@ describe("DraftSendingWorkflow", () => {
     fireEvent.change(await screen.findByLabelText("Delivery channel"), {
       target: { value: "channel-1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Freeze exact message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Request review" }));
 
     await waitFor(() => {
       const freeze = calls.find((call) => call.url.endsWith("/freeze"));

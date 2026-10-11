@@ -23,6 +23,8 @@ import { idempotencyKey } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/problem";
 import {
   getSalesCampaign,
+  getSalesCampaignSender,
+  refreshSalesCampaignSender,
   queueSalesCampaignTarget,
   updateSalesCampaignTarget,
   type SalesCampaignTarget,
@@ -117,6 +119,28 @@ export function PersonalizedCampaignDetail({ campaignId }: { campaignId: string 
     refetchOnWindowFocus: !draggingTargetId && pendingTargetIds.size === 0,
     retry: false,
   });
+  // 기본 발신자(별칭 등)가 바뀌면 아직 발송 전인 캠페인도 곧바로 따라가도록 맞춘다.
+  const defaultSender = useQuery({
+    queryKey: ["sales-campaigns", "sender"],
+    queryFn: async () => (await getSalesCampaignSender()).data,
+    refetchInterval: 5_000,
+    retry: false,
+  });
+  const syncedSenderRef = useRef<string | null>(null);
+  const campaignSmtpProfileId = detail.data?.campaign.smtp_profile_id;
+  const defaultSmtpProfileId = defaultSender.data?.sender?.ready
+    ? defaultSender.data.sender.smtp_profile_id
+    : undefined;
+  useEffect(() => {
+    if (!campaignSmtpProfileId || !defaultSmtpProfileId) return;
+    if (campaignSmtpProfileId === defaultSmtpProfileId) return;
+    const key = `${campaignId}:${defaultSmtpProfileId}`;
+    if (syncedSenderRef.current === key) return;
+    syncedSenderRef.current = key;
+    void refreshSalesCampaignSender(campaignId)
+      .then(() => queryClient.invalidateQueries({ queryKey: ["sales-campaigns"] }))
+      .catch(() => undefined); // 이미 발송·예약된 캠페인은 그대로 둔다.
+  }, [campaignId, campaignSmtpProfileId, defaultSmtpProfileId, queryClient]);
   const isLegacyNotFound =
     detail.isError &&
     detail.error instanceof ApiError &&

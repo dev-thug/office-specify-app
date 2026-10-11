@@ -183,6 +183,19 @@ export function createSalesCampaign(
   );
 }
 
+/**
+ * `POST /sales-campaigns/{id}/sender/refresh` — 아직 발송·예약된 메시지가 없는 캠페인을
+ * 워크스페이스의 현재 기본 발신자로 맞춘다.
+ */
+export function refreshSalesCampaignSender(
+  campaignId: string
+): Promise<ApiResult<SalesCampaignSummary>> {
+  return mutate<SalesCampaignSummary>(
+    `${SALES_CAMPAIGNS_PATH}/${encodeURIComponent(campaignId)}/sender/refresh`,
+    { method: "POST" }
+  );
+}
+
 export function addSalesCampaignTarget(
   campaignId: string,
   input: AddSalesCampaignTargetInput,

@@ -702,12 +702,13 @@ async fn default_sender_is_explicit_stable_and_a_disabled_default_does_not_fall_
 
     let set_b = put_sender(&test, profile_b, "sales-sender-b-0001").await;
     assert_eq!(set_b.status(), StatusCode::OK);
-    let still_a = campaign_target_detail(&test, campaign_a["id"].as_str().unwrap()).await;
+    // A campaign that has produced no message yet follows the new default.
+    let follows_b = campaign_target_detail(&test, campaign_a["id"].as_str().unwrap()).await;
     assert_eq!(
-        still_a["campaign"]["smtp_profile_id"],
-        profile_a.to_string()
+        follows_b["campaign"]["smtp_profile_id"],
+        profile_b.to_string()
     );
-    assert_eq!(still_a["campaign"]["from_address"], from_a);
+    assert_ne!(follows_b["campaign"]["from_address"], from_a);
 
     let campaign_b = create_group(&test, "Pinned sender B", "sales-campaign-b-0001").await;
     assert_eq!(campaign_b["smtp_profile_id"], profile_b.to_string());
@@ -754,6 +755,79 @@ async fn default_sender_is_explicit_stable_and_a_disabled_default_does_not_fall_
     )
     .await;
     assert_eq!(create_with_stale_default.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn campaign_with_a_frozen_message_stays_pinned_when_the_default_sender_changes() {
+    let Some(test) = setup().await else { return };
+    let (profile_a, channel_a, sender_a, from_a) =
+        create_smtp_profile(&test, &Uuid::new_v4().simple().to_string()).await;
+    let (profile_b, _, _, _) =
+        create_smtp_profile(&test, &Uuid::new_v4().simple().to_string()).await;
+    assert_eq!(
+        put_sender(&test, profile_a, "sales-pin-sender-a-001")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let campaign = create_group(&test, "Pinned once frozen", "sales-pin-campaign-001").await;
+    let campaign_id = campaign["id"].as_str().unwrap();
+    let (company_id, contact_id, email_address_id) =
+        create_crm_target(&test, &Uuid::new_v4().simple().to_string()).await;
+    insert_marketing_basis(&test, email_address_id).await;
+    let target = add_target(
+        &test,
+        campaign_id,
+        company_id,
+        contact_id,
+        email_address_id,
+        "sales-pin-target-001",
+    )
+    .await
+    .json::<Value>()
+    .await
+    .unwrap()["data"]
+        .clone();
+    let draft = create_target_draft(
+        &test,
+        campaign_id,
+        target["id"].as_str().unwrap(),
+        "Pinned subject",
+        "Pinned body.",
+        "sales-pin-draft-001",
+    )
+    .await;
+    freeze_draft(
+        &test,
+        draft["draft_id"].as_str().unwrap(),
+        channel_a,
+        sender_a,
+        "sales-pin-freeze-001",
+    )
+    .await;
+
+    assert_eq!(
+        put_sender(&test, profile_b, "sales-pin-sender-b-001")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let detail = campaign_target_detail(&test, campaign_id).await;
+    assert_eq!(detail["campaign"]["smtp_profile_id"], profile_a.to_string());
+    assert_eq!(detail["campaign"]["from_address"], from_a);
+
+    // The explicit refresh is refused for the same reason.
+    let refresh = test
+        .app
+        .client
+        .post(test.app.url(&format!(
+            "/api/v1/sales-campaigns/{campaign_id}/sender/refresh"
+        )))
+        .header("x-csrf-token", &test.csrf)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refresh.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]

@@ -22,9 +22,12 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 15_000,
+            // 화면의 데이터는 실시간에 가깝게 유지한다: 창으로 돌아오거나 네트워크가
+            // 복구되면 즉시 다시 가져오고, 오래된 캐시를 오래 재사용하지 않는다.
+            staleTime: 3_000,
             retry: shouldRetry,
-            refetchOnWindowFocus: false,
+            refetchOnWindowFocus: true,
+            refetchOnReconnect: true,
           },
           mutations: {
             retry: false,
