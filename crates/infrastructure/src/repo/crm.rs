@@ -218,27 +218,86 @@ pub async fn lock_company(tx: &mut Tx<'_>, id: Uuid) -> Result<Option<CompanyRow
     .map_err(map_sqlx)
 }
 
-/// Cursor page: `(created_at DESC, id DESC)` keyset (B.1.5). `after` carries
-/// the (created_at, id) of the last row of the previous page.
+/// Company list ordering. Every order is a total order with `id` as the
+/// tie-breaker so keyset pages never skip or repeat a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompanySort {
+    /// `created_at DESC, id DESC` (default).
+    #[default]
+    CreatedDesc,
+    /// `updated_at DESC, id DESC`.
+    UpdatedDesc,
+    /// `lower(name) ASC, id ASC`.
+    NameAsc,
+}
+
+impl CompanySort {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "created_desc" => Some(Self::CreatedDesc),
+            "updated_desc" => Some(Self::UpdatedDesc),
+            "name_asc" => Some(Self::NameAsc),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CreatedDesc => "created_desc",
+            Self::UpdatedDesc => "updated_desc",
+            Self::NameAsc => "name_asc",
+        }
+    }
+}
+
+/// One listed company plus the exact keyset value of the active ordering.
+#[derive(Debug, sqlx::FromRow)]
+pub struct CompanyListRow {
+    #[sqlx(flatten)]
+    pub row: CompanyRow,
+    /// Text form of the sort column (RFC 3339 micros or `lower(name)`).
+    pub sort_key: String,
+}
+
+/// Cursor page ordered by `sort` (B.1.5). `after` carries the
+/// `(sort_key, id)` of the last row of the previous page.
 pub async fn list_companies(
     tx: &mut Tx<'_>,
     f: &CompanyFilter,
-    after: Option<(DateTime<Utc>, Uuid)>,
+    sort: CompanySort,
+    after: Option<(String, Uuid)>,
     limit: u32,
-) -> Result<Vec<CompanyRow>, AppError> {
-    let (after_ts, after_id) = after
-        .map(|(t, i)| (Some(t), Some(i)))
+) -> Result<Vec<CompanyListRow>, AppError> {
+    let (after_key, after_id) = after
+        .map(|(k, i)| (Some(k), Some(i)))
         .unwrap_or((None, None));
-    sqlx::query_as::<_, CompanyRow>(&format!(
-        "SELECT {COMPANY_COLS} FROM companies
+    let (key_expr, keyset_cmp, order_by) = match sort {
+        CompanySort::CreatedDesc => (
+            "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
+            "(created_at, id) < (($6::text)::timestamptz, $7::uuid)",
+            "created_at DESC, id DESC",
+        ),
+        CompanySort::UpdatedDesc => (
+            "to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
+            "(updated_at, id) < (($6::text)::timestamptz, $7::uuid)",
+            "updated_at DESC, id DESC",
+        ),
+        CompanySort::NameAsc => (
+            "lower(name)",
+            "(lower(name), id) > ($6::text, $7::uuid)",
+            "lower(name) ASC, id ASC",
+        ),
+    };
+    sqlx::query_as::<_, CompanyListRow>(&format!(
+        "SELECT {COMPANY_COLS}, {key_expr} AS sort_key FROM companies
           WHERE workspace_id = $1
             AND (($2::bool) = (archived_at IS NOT NULL))
             AND ($3::text IS NULL OR name ILIKE '%' || $3 || '%' ESCAPE '\\'
                               OR domain ILIKE '%' || $3 || '%' ESCAPE '\\')
             AND ($4::text IS NULL OR lifecycle_stage = $4)
             AND ($5::uuid IS NULL OR owner_principal_id = $5)
-            AND ($6::timestamptz IS NULL OR (created_at, id) < ($6, $7))
-          ORDER BY created_at DESC, id DESC
+            AND ($6::text IS NULL OR {keyset_cmp})
+          ORDER BY {order_by}
           LIMIT $8"
     ))
     .bind(tx.workspace_id())
@@ -246,7 +305,7 @@ pub async fn list_companies(
     .bind(&f.q)
     .bind(&f.lifecycle_stage)
     .bind(f.owner_principal_id)
-    .bind(after_ts)
+    .bind(after_key)
     .bind(after_id)
     .bind(i64::from(limit))
     .fetch_all(tx.conn())

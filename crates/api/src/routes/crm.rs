@@ -50,6 +50,8 @@ struct CompaniesQuery {
     owner_principal_id: Option<Uuid>,
     /// true = archived only; absent/false = active (default view).
     archived: Option<bool>,
+    /// `created_desc` (default) | `updated_desc` | `name_asc`.
+    sort: Option<String>,
     #[serde(default = "default_limit")]
     limit: u32,
     cursor: Option<String>,
@@ -163,6 +165,7 @@ async fn list_companies(
             lifecycle_stage: q.lifecycle_stage,
             owner_principal_id: q.owner_principal_id,
             archived: q.archived.unwrap_or(false),
+            sort: q.sort,
             limit: p.limit,
             cursor: p.cursor,
         },

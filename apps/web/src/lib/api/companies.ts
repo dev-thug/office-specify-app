@@ -423,6 +423,8 @@ export interface CompanyListFilter {
   owner_principal_id?: string;
   /** API filter selects archived rows only when true; default is active rows. */
   archived?: string;
+  /** 서버 정렬 — created_desc(기본) | updated_desc | name_asc. 페이지 전체에 적용된다. */
+  sort?: string;
 }
 
 export function companyListParams(f: CompanyListFilter): ListParams {
@@ -431,5 +433,6 @@ export function companyListParams(f: CompanyListFilter): ListParams {
     lifecycle_stage: f.lifecycle_stage || undefined,
     owner_principal_id: f.owner_principal_id || undefined,
     archived: f.archived || undefined,
+    sort: f.sort && f.sort !== "created_desc" ? f.sort : undefined,
   };
 }

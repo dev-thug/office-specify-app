@@ -42,7 +42,6 @@ fn initialization_explains_company_research_storage_and_human_handoffs() {
         "idempotency_key",
         "pending",
         "human",
-        "mail.send",
     ] {
         assert!(
             instructions.contains(required),
@@ -76,10 +75,11 @@ fn personalized_groups_explain_reuse_target_identity_and_approval_bound_batches(
     let initialized = mcp::jsonrpc::initialize_result();
     let instructions = initialized["instructions"].as_str().unwrap();
     assert!(instructions.contains("sales_campaigns_create_message"));
+    assert!(instructions.contains("sales_campaigns_freeze_message"));
     assert!(
         instructions
             .to_ascii_lowercase()
-            .contains("moving a card is not approval")
+            .contains("moving a card alone does not send")
     );
     assert!(instructions.contains("ten-minute batch"));
     let tools = mcp::all_tools();

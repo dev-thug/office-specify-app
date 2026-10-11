@@ -369,7 +369,7 @@ function CampaignTargetDraftEditor({
   const [pending, setPending] = useState(false);
   const [queueing, setQueueing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<"subject" | "body" | "variables", string>>>({});
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<"subject" | "body" | "variables" | "personal", string>>>({});
 
   const draftQueryKey = ["sales-campaigns", "draft", campaign.id, target.id, draftId] as const;
   const draftQuery = useQuery({
@@ -480,6 +480,14 @@ function CampaignTargetDraftEditor({
       return null;
     }
   }, [variablesJson]);
+  // 템플릿에 {{message.body}} 가 있으면 JSON 대신 전용 입력란으로 회사별 본문을 쓴다.
+  const personalBodyDeclared =
+    Boolean(templateVersion?.variable_schema?.properties?.["message.body"]) ||
+    (parsedVariables !== null && "message.body" in parsedVariables);
+  const personalBody =
+    typeof parsedVariables?.["message.body"] === "string"
+      ? (parsedVariables["message.body"] as string)
+      : "";
   const sampleValues = useMemo(
     () =>
       Object.fromEntries(
@@ -511,10 +519,11 @@ function CampaignTargetDraftEditor({
     event.preventDefault();
     if (pending || remoteConflict) return;
     // 저장 버튼은 항상 눌러 볼 수 있고, 비어 있는 항목은 여기서 알려 준다.
-    const problems: Partial<Record<"subject" | "body" | "variables", string>> = {};
+    const problems: Partial<Record<"subject" | "body" | "variables" | "personal", string>> = {};
     if (!subject.trim()) problems.subject = t("subjectRequired");
     if (!effectiveBodyText.trim()) problems.body = t("bodyRequired");
     if (parsedVariables === null) problems.variables = t("variablesInvalid");
+    else if (personalBodyDeclared && !personalBody.trim()) problems.personal = t("personalBodyRequired");
     setFieldErrors(problems);
     const missing = Object.keys(problems);
     if (missing.length > 0) {
@@ -522,12 +531,15 @@ function CampaignTargetDraftEditor({
         subject: t("subject"),
         body: t("fieldBody"),
         variables: t("variables"),
+        personal: t("personalBodyLabel"),
       };
       setError(`${t("fillRequired")} ${missing.map((key) => labels[key]).join(", ")}`);
       const focusId =
         problems.subject
           ? "campaign-target-subject"
-          : problems.body
+          : problems.personal
+            ? "campaign-target-personal-body"
+            : problems.body
             ? bodyEditorMode === "plain"
               ? "campaign-target-body"
               : "campaign-target-body-rich"
@@ -698,6 +710,33 @@ function CampaignTargetDraftEditor({
             <Alert variant="destructive">
               <AlertDescription>{t("templateLoadError")}</AlertDescription>
             </Alert>
+          ) : null}
+          {personalBodyDeclared ? (
+            <div className="grid gap-1.5 rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <Label htmlFor="campaign-target-personal-body">{t("personalBodyLabel")}</Label>
+              <Textarea
+                id="campaign-target-personal-body"
+                value={personalBody}
+                rows={6}
+                maxLength={5000}
+                placeholder={t("personalBodyPlaceholder")}
+                aria-invalid={fieldErrors.personal ? true : undefined}
+                onChange={(event) =>
+                  updateEditorValue(
+                    "variablesJson",
+                    JSON.stringify(
+                      { ...(parsedVariables ?? {}), "message.body": event.target.value },
+                      null,
+                      2
+                    )
+                  )
+                }
+              />
+              {fieldErrors.personal ? (
+                <p role="alert" className="text-2xs text-destructive">{fieldErrors.personal}</p>
+              ) : null}
+              <p className="text-2xs text-muted-foreground">{t("personalBodyHint")}</p>
+            </div>
           ) : null}
           <div className="grid gap-1.5">
             <Label htmlFor="campaign-target-subject">{t("subject")}</Label>

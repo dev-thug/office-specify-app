@@ -404,6 +404,10 @@
       "openBulkCampaign": "Open legacy bulk campaign"
     },
     "target": {
+      "personalBodyLabel": "Message for this company",
+      "personalBodyPlaceholder": "Write what to send only to this company, based on your research. An agent-written body is filled in here.",
+      "personalBodyHint": "Fills the template's Personal body variable. Line breaks are kept.",
+      "personalBodyRequired": "Enter the message for this company",
       "sendQueue": "Send to queue",
       "queueing": "Sending to queue…",
       "changeSender": "Change sender",

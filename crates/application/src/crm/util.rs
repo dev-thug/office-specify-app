@@ -186,6 +186,66 @@ pub(crate) fn page_for<R>(
     }
 }
 
+/// Keyset position whose sort key is text: `(sort_key, id)`.
+pub(crate) type TextKeyset = (String, Uuid);
+
+/// Decode a cursor whose first sort value is a text key (RFC 3339 time or a
+/// lower-cased name), bound to the principal and the canonical `filters`.
+pub(crate) fn decode_text_cursor(
+    encoded: Option<&str>,
+    hmac_key: &[u8],
+    ctx: &Ctx,
+    filters: &serde_json::Value,
+) -> Result<Option<TextKeyset>, AppError> {
+    let Some(enc) = encoded else { return Ok(None) };
+    let expected = Cursor::hash_filter(filters);
+    let cur = Cursor::decode(enc, hmac_key, ctx.principal_id, &expected)?;
+    let [key_v, id_v] = <[serde_json::Value; 2]>::try_from(cur.sort_values)
+        .map_err(|_| AppError::validation("invalid pagination cursor", vec![]))?;
+    let key = key_v
+        .as_str()
+        .ok_or_else(|| AppError::validation("invalid pagination cursor", vec![]))?
+        .to_string();
+    let id = Uuid::parse_str(id_v.as_str().unwrap_or_default())
+        .map_err(|_| AppError::validation("invalid pagination cursor", vec![]))?;
+    Ok(Some((key, id)))
+}
+
+/// Text-key variant of [`page_for`].
+pub(crate) fn page_for_text<R>(
+    rows: &mut Vec<R>,
+    limit: u32,
+    hmac_key: &[u8],
+    ctx: &Ctx,
+    filters: &serde_json::Value,
+    keyset_of: impl Fn(&R) -> TextKeyset,
+) -> Page {
+    let has_more = rows.len() as u32 > limit;
+    if has_more {
+        rows.truncate(limit as usize);
+    }
+    let next_cursor = if has_more && let Some(last) = rows.last() {
+        let (key, id) = keyset_of(last);
+        Some(
+            Cursor::new(
+                vec![
+                    serde_json::Value::String(key),
+                    serde_json::Value::String(id.to_string()),
+                ],
+                Cursor::hash_filter(filters),
+                ctx.principal_id,
+            )
+            .encode(hmac_key),
+        )
+    } else {
+        None
+    };
+    Page {
+        next_cursor,
+        has_more,
+    }
+}
+
 // ------------------------------------------------------------ row → DTO
 
 pub(crate) fn company_dto(r: &CompanyRow) -> CompanyResponse {

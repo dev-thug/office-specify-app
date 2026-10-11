@@ -20,8 +20,9 @@ describe("email authoring", () => {
   it("escapes recipient samples and never turns samples into active HTML", () => {
     expect(renderSampleEmail('<p>{{contact.name}}</p>', {'contact.name':'<img src=x onerror=bad()>'})).toBe('<p>&lt;img src=x onerror=bad()&gt;</p>');
   });
-  it("provides five distinct presets; generated links have no send-time defaults", () => {
-    expect(new Set(DEFAULT_EMAIL_VARIABLES.map(v => v.name)).size).toBe(5);
+  it("provides six distinct presets (incl. the per-company message.body); generated links have no send-time defaults", () => {
+    expect(new Set(DEFAULT_EMAIL_VARIABLES.map(v => v.name)).size).toBe(6);
+    expect(DEFAULT_EMAIL_VARIABLES.find(v => v.name === "message.body")).toMatchObject({ system: false, type: "string", maxLength: "5000" });
     expect(DEFAULT_EMAIL_VARIABLES.filter(v => v.system).map(v => v.name)).toEqual(['meeting.booking_url', 'compliance.unsubscribe_url']);
     expect(DEFAULT_EMAIL_VARIABLES.every(v => !("default" in v))).toBe(true);
   });
@@ -73,5 +74,9 @@ describe("email authoring", () => {
       html:'<table style="color:red"><tbody><tr><td style="color:red"><a href="{{meeting.booking_url}}">Book</a></td></tr></tbody></table>',
       removed:true,
     });
+  });
+  it("keeps line breaks of a substituted multi-line value in the sample preview, still escaped", () => {
+    const html = renderSampleEmail("<p>{{message.body}}</p>", { "message.body": "첫 줄 <b>\n둘째 줄" });
+    expect(html).toContain("첫 줄 &lt;b&gt;<br>둘째 줄");
   });
 });

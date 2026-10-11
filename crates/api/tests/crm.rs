@@ -1181,3 +1181,81 @@ async fn companies_list_cursor_pagination() {
     let res = app.get("/api/v1/companies?cursor=garbage").await;
     TestApp::problem(res, StatusCode::BAD_REQUEST).await;
 }
+
+/// Every sort order paginates as one stable sequence: pages never skip or
+/// repeat a company, and a cursor is bound to the sort it was minted for.
+#[tokio::test]
+async fn companies_list_sorts_paginate_without_gaps_or_repeats() {
+    let Some((db, world)) = setup().await else {
+        return;
+    };
+    let app = app_for(&db, &world).await;
+    let csrf = login(&app, world.admin.email.as_deref().unwrap()).await;
+    let marker = Uuid::new_v4().simple().to_string();
+    let names = [
+        "Delta", "alpha", "Charlie", "bravo", "Echo", "foxtrot", "Golf",
+    ];
+    for name in names {
+        create_company(&app, &csrf, &format!("{marker}-{name}"), None).await;
+    }
+
+    async fn walk(app: &TestApp, marker: &str, sort: &str, limit: u32) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut url = format!("/api/v1/companies?q={marker}&sort={sort}&limit={limit}");
+            if let Some(cursor) = &cursor {
+                url.push_str(&format!("&cursor={cursor}"));
+            }
+            let body: Value = app.get(&url).await.json().await.unwrap();
+            for row in body["data"].as_array().unwrap() {
+                out.push(row["name"].as_str().unwrap().to_string());
+            }
+            if body["page"]["has_more"] == true {
+                cursor = Some(body["page"]["next_cursor"].as_str().unwrap().to_string());
+            } else {
+                return out;
+            }
+        }
+    }
+
+    for sort in ["created_desc", "updated_desc", "name_asc"] {
+        let paged = walk(&app, &marker, sort, 2).await;
+        let whole = walk(&app, &marker, sort, 50).await;
+        assert_eq!(paged, whole, "{sort}: paging must equal the unpaged order");
+        assert_eq!(paged.len(), names.len(), "{sort}: no company skipped");
+        let unique: std::collections::HashSet<_> = paged.iter().collect();
+        assert_eq!(unique.len(), names.len(), "{sort}: no company repeated");
+    }
+    let by_name = walk(&app, &marker, "name_asc", 3).await;
+    let expected: Vec<String> = [
+        "alpha", "bravo", "Charlie", "Delta", "Echo", "foxtrot", "Golf",
+    ]
+    .iter()
+    .map(|n| format!("{marker}-{n}"))
+    .collect();
+    assert_eq!(
+        by_name, expected,
+        "name_asc is case-insensitive alphabetical"
+    );
+
+    // A cursor minted under one sort is rejected under another.
+    let body: Value = app
+        .get(&format!(
+            "/api/v1/companies?q={marker}&sort=name_asc&limit=2"
+        ))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let cursor = body["page"]["next_cursor"].as_str().unwrap();
+    let res = app
+        .get(&format!(
+            "/api/v1/companies?q={marker}&sort=created_desc&limit=2&cursor={cursor}"
+        ))
+        .await;
+    TestApp::problem(res, StatusCode::BAD_REQUEST).await;
+    // Unknown sort → 400.
+    let res = app.get("/api/v1/companies?sort=bogus").await;
+    TestApp::problem(res, StatusCode::BAD_REQUEST).await;
+}

@@ -687,6 +687,7 @@ async fn personalized_campaign_keeps_target_copy_and_queues_only_approved_curren
         "sales_campaigns_add_target",
         "sales_campaigns_create_message",
         "sales_campaigns_move_stage",
+        "sales_campaigns_freeze_message",
         "sales_campaigns_queue",
     ] {
         assert!(tool_names.contains(&name), "missing MCP tool {name}");
@@ -914,16 +915,25 @@ async fn personalized_campaign_keeps_target_copy_and_queues_only_approved_curren
         "sales-campaign-aurora",
     )
     .await;
-    let forge_frozen = freeze_and_request_review(
-        &rig,
-        forge_draft_id,
-        forge_message["version"].as_i64().unwrap(),
-        campaign_id,
-        forge_target_id,
-        None,
-        "sales-campaign-forge",
-    )
-    .await;
+    // The agent freezes its own draft; no human freeze or approval request.
+    let _ = forge_draft_id;
+    let freeze_args = json!({
+        "idempotency_key":new_key("sales-campaign-forge-agent-freeze"),
+        "campaign_id":campaign_id,
+        "target_id":forge_target_id
+    });
+    let forge_frozen = rig
+        .call("sales_campaigns_freeze_message", freeze_args.clone())
+        .await;
+    let forge_refrozen = rig
+        .call("sales_campaigns_freeze_message", freeze_args)
+        .await;
+    assert_eq!(
+        forge_frozen["outbound_message_id"],
+        forge_refrozen["outbound_message_id"]
+    );
+    assert!(forge_frozen["payload_hash"].is_string());
+    assert!(forge_frozen["target_version"].as_i64().unwrap() >= 1);
     let aurora_outbound = human_data(
         rig.api
             .get(&format!(

@@ -217,6 +217,7 @@ function VersionEditorForm({
   const [samples, setSamples] = useState<Record<string, string>>({
     "company.name": a("sampleCompany"), "contact.name": a("sampleContact"),
     "sender.display_name": a("sampleSender"),
+    "message.body": a("samplePersonalBody"),
     "meeting.booking_url": "https://example.invalid/booking/sample",
     "compliance.unsubscribe_url": "https://example.invalid/unsubscribe/sample",
   });
@@ -398,6 +399,7 @@ function VersionEditorForm({
                 </span>
               </Button>
               <p className="text-2xs text-muted-foreground">{a("bookingCtaHint")}</p>
+              <p className="text-2xs text-muted-foreground">{a("personalBodyHint")}</p>
               <p className="text-2xs text-muted-foreground">{a("systemHint")}</p>
               <details className="border-t pt-3">
                 <summary className="cursor-pointer text-xs font-medium">{a("sampleValues")}</summary>

@@ -2,8 +2,8 @@
 //!
 //! Each company target keeps its own CRM-bound recipient and message draft.
 //! Mutations reuse the application use cases and bind their explicit MCP
-//! idempotency key to the full request. Queueing only schedules an already
-//! frozen, independently approved message through the existing dispatcher.
+//! idempotency key to the full request. Agents freeze the current draft and
+//! queue it through the existing dispatcher without a human approval step.
 
 use crate::{ToolDef, arguments, result, tool_with_db};
 use contracts::sales_campaigns::{
@@ -75,6 +75,10 @@ struct SalesCampaignCreateMessageInput {
     /// Template variables for this target. Public booking and unsubscribe URLs
     /// are server-owned and must not be supplied here.
     variables: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Company-specific message body written from your research of this
+    /// target. It fills the template's `{{message.body}}` placeholder (the same
+    /// as `variables["message.body"]`, max 5000 characters, line breaks kept).
+    personal_body: Option<String>,
     /// Set true only to create a deliberate follow-up after a prior message
     /// was accepted by the provider; accepted targets otherwise stay read-only.
     #[serde(default)]
@@ -122,6 +126,24 @@ struct SalesCampaignQueueInput {
     /// Must equal the exact payload hash of the current frozen outbound message.
     expected_payload_hash: String,
     expected_target_version: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SalesCampaignFreezeInput {
+    /// Stable printable ASCII key (16–128 characters) for replaying this freeze.
+    idempotency_key: String,
+    campaign_id: Uuid,
+    target_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct SalesCampaignFreezeOutput {
+    outbound_message_id: Uuid,
+    /// Pass as expected_payload_hash to sales_campaigns_queue.
+    payload_hash: String,
+    /// Pass as expected_target_version to sales_campaigns_queue.
+    target_version: i64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -431,19 +453,36 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
         ),
         tool_with_db(
             "sales_campaigns_create_message",
-            "Create a target-specific email draft with its own subject, plain text, optional HTML, template version, and variables. template_version_id must come from the template tools. The server creates public booking and unsubscribe links; never pass those server-owned values in variables. Set explicit_follow_up=true only to intentionally start a new review after a prior message was accepted. Creating a draft does not freeze, approve, or send it. Requires campaign.compose, crm.read, and mail.read scopes plus current mailbox read and compose grants.",
+            "Create a target-specific email draft with its own subject, plain text, optional HTML, template version, and variables. For a different message per company: read the company with crm_get_company (research and notes), choose a template version whose body contains {{message.body}} (templates_get_version), pass that version's subject/body_text/body_html unchanged with template_version_id, and put the message you wrote from the research in personal_body. template_version_id must come from the template tools. The server creates public booking and unsubscribe links; never pass those server-owned values in variables. Set explicit_follow_up=true only to intentionally start a new review after a prior message was accepted. Creating a draft does not freeze, approve, or send it. Requires campaign.compose, crm.read, and mail.read scopes plus current mailbox read and compose grants.",
             idempotent_schema::<SalesCampaignCreateMessageInput>(),
             schema::<SalesCampaignDraftOutput>(),
             false,
             |db, ctx, value| async move {
                 let input = arguments::<SalesCampaignCreateMessageInput>(value)?;
                 validate_idempotency_key(&input.idempotency_key)?;
+                let mut variables = input.variables;
+                if let Some(personal_body) = input.personal_body {
+                    let map = variables.get_or_insert_with(serde_json::Map::new);
+                    if map
+                        .get("message.body")
+                        .is_some_and(|existing| existing != &serde_json::json!(personal_body))
+                    {
+                        return Err(contracts::AppError::validation(
+                            "personal_body conflicts with variables[\"message.body\"]; provide only one",
+                            vec![],
+                        ));
+                    }
+                    map.insert(
+                        "message.body".to_string(),
+                        serde_json::Value::String(personal_body),
+                    );
+                }
                 let request = CreateSalesCampaignDraftRequest {
                     subject: input.subject,
                     body_text: input.body_text,
                     body_html: input.body_html,
                     template_version_id: input.template_version_id,
-                    variables: input.variables,
+                    variables,
                     explicit_follow_up: input.explicit_follow_up,
                 };
                 application::sales_campaigns::preauthorize_sales_campaign_target(
@@ -553,8 +592,58 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
             },
         ),
         tool_with_db(
+            "sales_campaigns_freeze_message",
+            "Freeze the target's current draft into an immutable outbound snapshot using the campaign's bound SMTP sender. Returns outbound_message_id, payload_hash, and target_version to pass to sales_campaigns_queue. An already frozen unsubmitted outbound is returned unchanged. Freezing does not send. Requires campaign.compose plus the current mailbox compose grant.",
+            idempotent_schema::<SalesCampaignFreezeInput>(),
+            schema::<SalesCampaignFreezeOutput>(),
+            false,
+            |db, ctx, value| async move {
+                let input = arguments::<SalesCampaignFreezeInput>(value)?;
+                validate_idempotency_key(&input.idempotency_key)?;
+                let campaign_id = input.campaign_id;
+                let target_id = input.target_id;
+                let request_hash = request_hash(&serde_json::json!({
+                    "campaign_id": campaign_id,
+                    "target_id": target_id,
+                }));
+                let operation_scope = scope(
+                    &ctx,
+                    "MCP tools/call sales_campaigns_freeze_message",
+                    input.idempotency_key,
+                );
+                let outcome =
+                    infrastructure::idempotency::run(&db, &operation_scope, &request_hash, |tx| {
+                        let ctx = ctx.clone();
+                        async move {
+                            let (tx, frozen) =
+                                application::sales_campaigns::freeze_sales_campaign_target(
+                                    tx,
+                                    &ctx,
+                                    campaign_id,
+                                    target_id,
+                                )
+                                .await?;
+                            Ok((
+                                tx,
+                                infrastructure::idempotency::Stored {
+                                    status: 201,
+                                    body: SalesCampaignFreezeOutput {
+                                        outbound_message_id: frozen.outbound_message_id,
+                                        payload_hash: frozen.payload_hash,
+                                        target_version: frozen.target_version,
+                                    },
+                                },
+                            ))
+                        }
+                    })
+                    .await?
+                    .into_inner();
+                result(outcome.body)
+            },
+        ),
+        tool_with_db(
             "sales_campaigns_queue",
-            "Queue one current frozen outbound message by its exact expected_payload_hash; no separate human approval is needed. Requires campaign.compose, mail.submit_approved, and the current mailbox send grant. The server stores one idempotent durable dispatch job at the next ten-minute UTC boundary; this tool does not approve or send mail immediately. Unknown sends are never retried automatically.",
+            "Queue one current frozen outbound message by its exact expected_payload_hash (from sales_campaigns_freeze_message); no human freeze or approval is needed. Requires campaign.compose, mail.submit_approved, and the current mailbox send grant. The server stores one idempotent durable dispatch job at the next ten-minute UTC boundary; this tool does not approve or send mail immediately. Unknown sends are never retried automatically.",
             idempotent_versioned_schema::<SalesCampaignQueueInput>(),
             schema::<QueueSalesCampaignTargetResponse>(),
             true,
@@ -636,6 +725,7 @@ mod tests {
                 "sales_campaigns_add_target",
                 "sales_campaigns_create_message",
                 "sales_campaigns_move_stage",
+                "sales_campaigns_freeze_message",
                 "sales_campaigns_queue",
             ]
         );

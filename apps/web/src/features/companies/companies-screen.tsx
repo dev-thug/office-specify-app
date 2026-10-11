@@ -54,20 +54,18 @@ export function CompaniesScreen() {
     lifecycle_stage: stage === ALL ? undefined : stage,
     owner_principal_id: owner === ALL ? undefined : owner,
     archived: archivedOnly ? "true" : undefined,
-  }), [debounced, stage, owner, archivedOnly]);
+    sort,
+  }), [debounced, stage, owner, archivedOnly, sort]);
+  // 정렬은 서버가 전체 목록에 적용하므로 "더 보기"로 이어 붙여도 순서가 어긋나지 않는다.
   const list = useCursorList<Company>({
-    queryKey: ["companies", "list", params, sort],
+    queryKey: ["companies", "list", params],
     path: companiesPath(),
     params,
   });
-  const rows = useMemo(() => {
-    const items = list.data?.pages.flatMap((page) => page.data ?? []) ?? [];
-    return [...items].sort((a, b) => sort === "name_asc"
-      ? a.name.localeCompare(b.name)
-      : sort === "updated_desc"
-        ? (b.updated_at ?? "").localeCompare(a.updated_at ?? "")
-        : (b.created_at ?? "").localeCompare(a.created_at ?? ""));
-  }, [list.data, sort]);
+  const rows = useMemo(
+    () => list.data?.pages.flatMap((page) => page.data ?? []) ?? [],
+    [list.data]
+  );
   const lastPage = list.data?.pages.at(-1);
   const selectedRows = selection.kind === "rows"
     ? rows.filter((row) => selection.ids.has(row.id))

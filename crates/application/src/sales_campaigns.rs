@@ -1033,6 +1033,78 @@ pub async fn create_sales_campaign_target_draft<'db>(
     Ok((tx, draft))
 }
 
+/// Result of freezing a target's current draft for the agent send path.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FrozenSalesCampaignTarget {
+    pub outbound_message_id: Uuid,
+    pub payload_hash: String,
+    pub target_version: i64,
+}
+
+/// Freeze the target's current draft with the campaign's bound sender so it
+/// can be queued without a separate human freeze step. An already frozen,
+/// unsubmitted current outbound is returned as-is.
+pub async fn freeze_sales_campaign_target<'db>(
+    mut tx: Tx<'db>,
+    ctx: &Ctx,
+    campaign_id: Uuid,
+    target_id: Uuid,
+) -> Result<(Tx<'db>, FrozenSalesCampaignTarget), AppError> {
+    require_campaign_scope(ctx)?;
+    infrastructure::repo::sales_campaigns::lock_workspace_privacy_shared(&mut tx).await?;
+    let campaign = repo::lock_campaign(&mut tx, campaign_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("sales campaign not found"))?;
+    let target = repo::lock_target(&mut tx, campaign_id, target_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("sales campaign target not found"))?;
+    let Some(draft_id) = target.current_draft_id else {
+        return Err(AppError::conflict(
+            "the target needs a current draft before it can be frozen",
+        ));
+    };
+    let draft = infrastructure::repo::sending::get_draft(&mut tx, draft_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("message draft not found"))?;
+    let (mut tx, outbound_message_id, payload_hash) = if draft.status == "draft" {
+        let freeze = contracts::sending::FreezeMessageDraftRequest {
+            delivery_channel_id: campaign.delivery_channel_id,
+            sender_identity_id: None,
+            meeting_type_id: campaign.meeting_type_id,
+            tracking_requested: false,
+        };
+        let (tx, frozen) =
+            crate::sending::freeze_draft_in_tx(tx, ctx, draft_id, draft.version, &freeze).await?;
+        (tx, frozen.outbound_message_id, frozen.payload_hash)
+    } else {
+        let row = repo::get_target_board_row(&mut tx, campaign_id, target_id)
+            .await?
+            .ok_or_else(|| AppError::not_found("sales campaign target not found"))?;
+        match (row.draft_outbound_message_id, row.outbound_payload_hash) {
+            (Some(id), Some(hash)) if row.outbound_status.as_deref() == Some("draft") => {
+                (tx, id, hash)
+            }
+            _ => {
+                return Err(AppError::conflict(
+                    "the current draft is not freezable and has no unsubmitted outbound",
+                ));
+            }
+        }
+    };
+    let target_version = repo::lock_target(&mut tx, campaign_id, target_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("sales campaign target not found"))?
+        .version;
+    Ok((
+        tx,
+        FrozenSalesCampaignTarget {
+            outbound_message_id,
+            payload_hash,
+            target_version,
+        },
+    ))
+}
+
 pub async fn queue_sales_campaign_target(
     tx: &mut Tx<'_>,
     ctx: &Ctx,

@@ -1137,6 +1137,58 @@ describe("personalized campaign routes", () => {
     expect(patches).toEqual([]);
   });
 
+  it("shows a dedicated company-specific body field when the draft uses message.body", async () => {
+    const data = salesCampaign([
+      campaignTarget({ id: "personal-target", stage: "draft", current_draft: { ...EXISTING_DRAFT, draft_id: "personal-draft" } }),
+    ]);
+    const patches: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://localhost");
+        if (init?.method === "PATCH") patches.push(JSON.parse(String(init.body)));
+        let payload: unknown = [];
+        if (url.pathname === "/api/v1/message-drafts/personal-draft") {
+          payload = {
+            draft_id: "personal-draft",
+            mail_account_id: "mailbox-1",
+            status: "draft",
+            version: 1,
+            subject: "Hello",
+            body_text: "Hi {{message.body}}",
+            body_html: null,
+            template_version_id: "tv-1",
+            variables: { "message.body": "Saw your launch." },
+            outbound_message_id: null,
+          };
+        }
+        return new Response(JSON.stringify({ data: payload }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      })
+    );
+    mount(
+      <CampaignTargetDetailDialog
+        campaign={data.campaign}
+        target={data.targets[0]!}
+        queueNotice={null}
+        open
+        onOpenChange={() => undefined}
+        onChanged={() => undefined}
+      />
+    );
+
+    const field = await screen.findByLabelText("Message for this company");
+    expect(field).toHaveValue("Saw your launch.");
+    fireEvent.change(field, { target: { value: "Congrats on the launch,\nlet's talk." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(patches).toHaveLength(1));
+    expect(patches[0]).toMatchObject({
+      variables: { "message.body": "Congrats on the launch,\nlet's talk." },
+    });
+  });
+
   it("keeps Save draft enabled and names the empty fields when it is pressed", async () => {
     const data = salesCampaign([
       campaignTarget({ id: "empty-target", stage: "research", current_draft: null }),

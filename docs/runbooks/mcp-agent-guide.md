@@ -13,7 +13,8 @@ Office MCP는 HTTP API를 무조건 대행하는 서버가 아닙니다. 에이�
 
 기업마다 다른 영업 메일을 작성할 때는 `sales_campaigns_*` 도구를 사용합니다.
 한 캠페인 안에 여러 기업의 담당자를 넣고, 대상마다 별도의 초안을 작성·검토합니다.
-카드를 발송 대기로 보내면(`sales_campaigns_queue`) 별도 승인 없이 다음 10분 배치에 예약됩니다.
+에이전트가 `sales_campaigns_freeze_message`로 초안을 동결하고 `sales_campaigns_queue`로
+보내면 사람 동결·승인 없이 다음 10분 배치에 예약됩니다.
 설정과 전체 호출 순서는 [기업별 맞춤 캠페인 가이드](personalized-sales.md)를 참고하세요.
 기존 `campaign_*` 도구는 공통 템플릿을 사용하는 일괄 발송 캠페인용입니다.
 

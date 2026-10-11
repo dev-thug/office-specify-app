@@ -3,6 +3,8 @@ export const DEFAULT_EMAIL_VARIABLES = [
   { name: "company.name", label: "company", type: "string", maxLength: "300", system: false },
   { name: "contact.name", label: "contact", type: "string", maxLength: "300", system: false },
   { name: "sender.display_name", label: "sender", type: "string", maxLength: "300", system: false },
+  // 회사마다 다른 본문 — 에이전트가 조사 내용으로 작성해 채운다 (줄바꿈 유지).
+  { name: "message.body", label: "personalBody", type: "string", maxLength: "5000", system: false },
   { name: "meeting.booking_url", label: "booking", type: "uri", maxLength: "2048", system: true },
   { name: "compliance.unsubscribe_url", label: "unsubscribe", type: "uri", maxLength: "2048", system: true },
 ] as const;
@@ -379,7 +381,9 @@ export function escapeEmailText(value: string): string {
 }
 export function renderSampleEmail(html: string, values: Record<string, string>): string {
   return cleanEmailHtml(html).html.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\}\}/g,
-    (placeholder, name: string) => Object.hasOwn(values, name) ? escapeEmailText(values[name]!) : placeholder);
+    (placeholder, name: string) => Object.hasOwn(values, name)
+      ? escapeEmailText(values[name]!).replace(/\r\n/g, "\n").replace(/\n/g, "<br>")
+      : placeholder);
 }
 export function emailPreviewDocument(html: string): string {
   const content = document.createElement("template");

@@ -43,6 +43,7 @@ pub fn tools_with_key(hmac_key: &[u8]) -> Vec<ToolDef> {
                         lifecycle_stage: filters.lifecycle_stage,
                         owner_principal_id: filters.owner_principal_id,
                         archived: filters.archived.unwrap_or(false),
+                        sort: None,
                         limit,
                         cursor: input.cursor,
                     };

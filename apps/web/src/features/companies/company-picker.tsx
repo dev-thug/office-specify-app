@@ -5,6 +5,7 @@
  * 담당자 폼의 회사 필드와 병합 대화상자의 소스 선택에서 함께 쓴다.
  */
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { Check, ChevronsUpDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ export function CompanyPicker({
   excludeId,
   disabled,
 }: CompanyPickerProps) {
+  const tCommon = useTranslations("common");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -135,6 +137,18 @@ export function CompanyPicker({
               </li>
             ))
           )}
+          {list.hasNextPage ? (
+            <li>
+              <button
+                type="button"
+                className="w-full rounded-lg px-2 py-1.5 text-center text-xs text-muted-foreground hover:bg-accent disabled:opacity-60"
+                disabled={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
+                {list.isFetchingNextPage ? tCommon("table.loading") : tCommon("table.loadMore")}
+              </button>
+            </li>
+          ) : null}
           {!list.isPending && rows.length === 0 ? (
             <li className="px-2 py-1.5 text-sm text-muted-foreground">
               {emptyLabel}

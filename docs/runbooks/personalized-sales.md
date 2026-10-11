@@ -68,12 +68,18 @@
    기존 캠페인을 재사용하거나 만듭니다.
 4. `sales_campaigns_add_target`에는 실제 조회 결과의 `company_id`, `contact_id`,
    `email_address_id`를 넣습니다. 이메일 문자열이나 회사 이름을 ID 대신 넣지 않습니다.
-5. `sales_campaigns_create_message`로 각 대상에 다른 초안을 저장합니다.
+5. 회사마다 다른 본문은 템플릿의 `{{message.body}}`("개별 본문") 자리에 에이전트가
+   조사 내용으로 작성해 채웁니다. 템플릿 편집기의 **변수 삽입 → 개별 본문**으로
+   한 번만 넣어 두면 됩니다. `templates_get_version`으로 해당 버전의 subject/body를
+   그대로 읽고, `sales_campaigns_create_message`에는 그 값과 `template_version_id`,
+   그리고 회사별 본문을 `personal_body`(최대 5000자, 줄바꿈 유지)로 넣습니다.
+   `sales_campaigns_create_message`로 각 대상에 다른 초안을 저장합니다.
    선택 사항인 `template_version_id`는 템플릿 컨테이너 ID와 다릅니다.
    `meeting.booking_url`과 `compliance.unsubscribe_url`은 서버가 생성하므로 직접 값을 넣지 않습니다.
 6. `sales_campaigns_move_stage`는 `research`, `draft`, `review` 준비 상태만 바꿉니다.
-7. 준비가 끝나면 최신 보드를 다시 읽고 `sales_campaigns_queue`에 현재 대상 버전,
-   확정(동결)된 메시지 ID와 정확한 해시를 넣습니다. 별도의 사람 승인 요청은
+7. 준비가 끝나면 `sales_campaigns_freeze_message`로 현재 초안을 캠페인 발신 채널로
+   동결합니다. 응답의 `outbound_message_id`, `payload_hash`, `target_version`을 그대로
+   `sales_campaigns_queue`에 넣습니다. 별도의 사람 승인 요청은
    필요하지 않으며, 카드를 발송 대기로 보내는 것이 곧 발송 지시입니다.
    `mail.submit_approved`와 현재 발송 grant가 필요합니다. 동일 작업 재시도는 같은
    idempotency key를 사용합니다.

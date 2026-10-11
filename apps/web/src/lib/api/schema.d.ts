@@ -8261,6 +8261,8 @@ export interface operations {
                 owner_principal_id: string | null;
                 /** @description true = archived only; absent/false = active (default view). */
                 archived: boolean | null;
+                /** @description `created_desc` (default) | `updated_desc` | `name_asc`. */
+                sort: string | null;
                 limit: number;
                 cursor: string | null;
             };

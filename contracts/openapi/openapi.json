@@ -13951,6 +13951,18 @@
             }
           },
           {
+            "description": "`created_desc` (default) | `updated_desc` | `name_asc`.",
+            "in": "path",
+            "name": "sort",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "in": "path",
             "name": "limit",
             "required": true,

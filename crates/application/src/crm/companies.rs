@@ -21,7 +21,7 @@ use infrastructure::audit::{self, AuditEntry};
 use infrastructure::db::{Db, Tx};
 use infrastructure::idempotency::Stored;
 use infrastructure::jobs;
-use infrastructure::repo::crm::{self, CompanyFilter, CompanyInsert, CompanyRow};
+use infrastructure::repo::crm::{self, CompanyFilter, CompanyInsert, CompanyRow, CompanySort};
 use uuid::Uuid;
 
 use super::util;
@@ -39,22 +39,26 @@ pub struct CompanyListQuery {
     pub owner_principal_id: Option<Uuid>,
     /// None/false = non-archived (default view); true = archived only.
     pub archived: bool,
+    /// `created_desc` (default) | `updated_desc` | `name_asc`.
+    pub sort: Option<String>,
     pub limit: u32,
     pub cursor: Option<String>,
 }
 
-fn filters_json(q: &CompanyListQuery) -> serde_json::Value {
+fn filters_json(q: &CompanyListQuery, sort: CompanySort) -> serde_json::Value {
     serde_json::json!({
         "endpoint": "GET /api/v1/companies",
         "q": q.q,
         "lifecycle_stage": q.lifecycle_stage,
         "owner_principal_id": q.owner_principal_id,
         "archived": q.archived,
+        "sort": sort.as_str(),
         "limit": q.limit,
     })
 }
 
-/// `GET /companies` — search/filter + signed cursor page (B.1.5).
+/// `GET /companies` — search/filter/sort + signed cursor page (B.1.5). The
+/// cursor is bound to the sort order, so it cannot be replayed under another.
 pub async fn list(
     db: &Db,
     ctx: &Ctx,
@@ -70,8 +74,14 @@ pub async fn list(
             vec![util::violation("lifecycle_stage", "ENUM")],
         ));
     }
-    let filters = filters_json(q);
-    let after = util::decode_cursor(q.cursor.as_deref(), hmac_key, ctx, &filters)?;
+    let sort = match q.sort.as_deref() {
+        None => CompanySort::default(),
+        Some(value) => CompanySort::parse(value).ok_or_else(|| {
+            util::bad_request("invalid sort", vec![util::violation("sort", "ENUM")])
+        })?,
+    };
+    let filters = filters_json(q, sort);
+    let after = util::decode_text_cursor(q.cursor.as_deref(), hmac_key, ctx, &filters)?;
     let filter = CompanyFilter {
         q: q.q.as_deref().map(dcrm::escape_like),
         lifecycle_stage: q.lifecycle_stage.clone(),
@@ -79,12 +89,15 @@ pub async fn list(
         archived: q.archived,
     };
     let mut tx = db.begin(ctx.workspace_id).await?;
-    let mut rows = crm::list_companies(&mut tx, &filter, after, q.limit + 1).await?;
+    let mut rows = crm::list_companies(&mut tx, &filter, sort, after, q.limit + 1).await?;
     tx.commit().await?;
-    let page = util::page_for(&mut rows, q.limit, hmac_key, ctx, &filters, |r| {
-        (r.created_at, r.id)
+    let page = util::page_for_text(&mut rows, q.limit, hmac_key, ctx, &filters, |r| {
+        (r.sort_key.clone(), r.row.id)
     });
-    Ok((rows.iter().map(util::company_dto).collect(), page))
+    Ok((
+        rows.iter().map(|r| util::company_dto(&r.row)).collect(),
+        page,
+    ))
 }
 
 /// `GET /companies/{id}` — 404 hides other-workspace rows (RLS + T01).

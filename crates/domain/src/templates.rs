@@ -287,7 +287,11 @@ fn render_part(
             return Err(TemplateError::HeaderBreak(name.to_string()));
         }
         out.push_str(&match ctx {
-            Ctx::Html => html_escape(&value),
+            // Multi-line values (e.g. an agent-written personal body) keep
+            // their line breaks; the value itself stays HTML-escaped.
+            Ctx::Html => html_escape(&value)
+                .replace("\r\n", "\n")
+                .replace('\n', "<br>"),
             _ => value,
         });
         rest = &after[close + 2..];
@@ -1055,6 +1059,32 @@ mod tests {
         assert_eq!(r.subject, "안내 A&B <Co>");
         assert_eq!(r.body_text, "Hi Kim \"x\" d");
         assert_eq!(r.body_html.as_deref(), Some("<p>A&amp;B &lt;Co&gt;</p>"));
+    }
+
+    #[test]
+    fn multi_line_values_keep_line_breaks_in_html_and_stay_escaped() {
+        let vars = serde_json::Map::from_iter([
+            (
+                "company.name".into(),
+                json!("first <b>line</b>\r\nsecond line\n\nthird"),
+            ),
+            ("contact.name".into(), json!("Kim")),
+        ]);
+        let r = render(
+            &specs(),
+            "s",
+            "{{company.name}}",
+            Some("<p>{{company.name}}</p>"),
+            &vars,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            r.body_html.as_deref(),
+            Some("<p>first &lt;b&gt;line&lt;/b&gt;<br>second line<br><br>third</p>")
+        );
+        // Plain text keeps raw newlines.
+        assert!(r.body_text.contains("second line\n\nthird"));
     }
 
     #[test]
