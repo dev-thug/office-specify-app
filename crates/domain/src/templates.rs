@@ -454,6 +454,7 @@ pub fn render(
 }
 
 const EMAIL_HTML_TAGS: &[&str] = &[
+    "img",
     "a",
     "abbr",
     "b",
@@ -492,7 +493,7 @@ const EMAIL_HTML_TAGS: &[&str] = &[
 ];
 
 const DANGEROUS_EMAIL_TAGS: &[&str] = &[
-    "script", "style", "img", "picture", "iframe", "object", "embed", "form", "input", "meta",
+    "script", "style", "picture", "iframe", "object", "embed", "form", "input", "meta",
     "link", "base", "svg", "math", "applet", "frame", "frameset", "audio", "video", "source",
     "track",
 ];
@@ -529,6 +530,7 @@ pub fn safe_email_html_builder() -> ammonia::Builder<'static> {
     let generic_attributes = ["lang", "title", "style"].into_iter().collect();
     let tag_attributes = HashMap::from([
         ("a", HashSet::from(["href"])),
+        ("img", HashSet::from(["src", "alt", "width", "height"])),
         (
             "table",
             HashSet::from(["align", "cellpadding", "cellspacing", "width"]),
@@ -932,6 +934,8 @@ fn html_has_dangerous_constructs(html: &str, allow_template_url_placeholders: bo
     let mut parser = ammonia::Builder::default();
     parser
         .clean_content_tags(HashSet::new())
+        .add_tags(["img"])
+        .add_tag_attributes("img", &["src", "alt", "width", "height"])
         .add_generic_attributes(&["style", "data-template-unsafe", "src", "srcset", "srcdoc"])
         .generic_attribute_prefixes(["on"].into_iter().collect())
         .url_schemes(
@@ -957,9 +961,8 @@ fn html_has_dangerous_constructs(html: &str, allow_template_url_placeholders: bo
         if DANGEROUS_EMAIL_TAGS.contains(&tag)
             || name == "data-template-unsafe"
             || name.starts_with("on")
-            || tag == "img"
             || name == "srcset"
-            || name == "src"
+            || (name == "src" && (tag != "img" || value != "https://specify.app/logo.png"))
             || name == "srcdoc"
         {
             invalid_attr.store(true, Ordering::Relaxed);
@@ -1387,6 +1390,30 @@ mod tests {
             "additionalProperties": false
         });
         assert!(parse_variable_schema(&schema).is_err());
+    }
+
+    #[test]
+    fn email_brand_logo_is_preserved() {
+        let html = r#"<img src="https://specify.app/logo.png" alt="Specify" width="36" height="36" style="display:block;width:36px">"#;
+        assert!(!is_dangerous_html(html));
+        let cleaned = sanitize_email_html(html).unwrap();
+        assert!(cleaned.contains("https://specify.app/logo.png"));
+        assert!(cleaned.contains("alt=\"Specify\""));
+        assert!(cleaned.contains("width=\"36\""));
+    }
+
+    #[test]
+    fn email_brand_logo_rejects_untrusted_sources_and_attributes() {
+        for html in [
+            r#"<img src="https://specify.app/logo.png?recipient=private">"#,
+            r#"<img src="http://specify.app/logo.png">"#,
+            r#"<img src="https://specify.app.evil.example/logo.png">"#,
+            r#"<img src="data:image/png;base64,AAAA">"#,
+            r#"<img src="https://specify.app/logo.png" onerror="alert(1)">"#,
+            r#"<img src="https://specify.app/logo.png" srcset="https://evil.example/pixel 2x">"#,
+        ] {
+            assert!(is_dangerous_html(html), "accepted: {html}");
+        }
     }
 
     #[test]

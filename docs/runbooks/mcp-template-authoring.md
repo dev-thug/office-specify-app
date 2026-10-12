@@ -105,7 +105,12 @@ Font sizes must be 8–72px or 6–54pt; relative font sizes are rejected.
 Foreground text colors must be at least 80% opaque so CSS cannot make the
 message nearly invisible. This is a visibility guard, not a contrast checker.
 
-Scriptable or embedded content, inline event handlers, images, frames, forms,
+Only the fixed branding image `https://specify.app/logo.png` is permitted via
+`img` with `src`, `alt`, `width`, and `height`. Other image URLs, query strings,
+`srcset`, and event handlers remain rejected. Keep the logo decorative and
+include meaningful alt text; email clients may still block remote images.
+
+Scriptable or embedded content, inline event handlers, other images, frames, forms,
 style blocks, `url()`, `expression()`, `@import`, CSS comments and escapes,
 unknown properties, `position`, `behavior`, `display:none`, and `javascript:`
 URLs are rejected. CSS functions are disallowed except bounded `rgb()` and
